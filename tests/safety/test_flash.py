@@ -454,3 +454,49 @@ def test_max_flashes_below_one_is_rejected():
 def test_deterministic():
     samples = _random_signal(random.Random(3))
     assert limited(samples)[0] == limited(samples)[0]
+
+
+# --- red flashes: an independent adjacent-state oracle and a near-red palette --------------------------
+# The library's red counter remembers a state and compares against that state's colour. This oracle does
+# not: a red transition is any two ADJACENT samples on opposite sides of the saturated-red test whose
+# u'v' colours are more than 0.2 apart. Before the adjacent reading was added to _RedSwings, 4 of 300
+# random signals (6 of 300 with near-red colours) exceeded 3 red flashes a second through the limiter.
+_NEAR_RED = [(1.0, 0.6, 0.0), (1.0, 0.3, 0.0), (1.0, 0.15, 0.1), (0.9, 0.25, 0.25), (1.0, 0.4, 0.2), (0.8, 0.1, 0.0)]
+
+
+def oracle_red_worst_flashes(samples):
+    times = []
+    for (_t0, a), (t1, b) in zip(samples, samples[1:]):
+        if is_saturated_red(a) != is_saturated_red(b):
+            (u0, v0), (u1, v1) = chromaticity(a), chromaticity(b)
+            if math.hypot(u1 - u0, v1 - v0) > 0.2:
+                times.append(t1)
+    worst, lo = 0, 0
+    for hi, t in enumerate(times):
+        while times[lo] <= t - 1.0 + 1e-9:
+            lo += 1
+        worst = max(worst, hi - lo + 1)
+    return math.ceil(worst / 2)
+
+
+def _near_red_signal(rng, seconds=8.0, fps=FPS):
+    palette = [RED, WHITE, BLACK] + _NEAR_RED
+    out, t, colour, hold = [], 0.0, rng.choice(palette), 0.0
+    while t < seconds:
+        if t >= hold:
+            colour = rng.choice(palette) if rng.random() < 0.85 else tuple(rng.random() for _ in range(3))
+            hold = t + rng.choice([0.02, 0.04, 0.08, 0.12, 0.2, 0.5])
+        out.append((t, colour))
+        t += 1.0 / fps
+    return out
+
+
+@pytest.mark.parametrize("make", [_random_signal, _near_red_signal])
+def test_fuzz_red_cap_holds_by_an_adjacent_state_oracle(make):
+    rng = random.Random(7)
+    worst = 0
+    for _ in range(300):
+        out, _lim = limited(make(rng))
+        worst = max(worst, oracle_red_worst_flashes(out))
+        assert oracle_red_worst_flashes(out) <= 3
+    assert worst >= 2, "the fuzz barely produced red flashes, so it proves little"

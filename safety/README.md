@@ -39,10 +39,11 @@ When a change would be a counted transition beyond the budget, the limiter **hol
 A held output cannot create a transition, so the cap is a guarantee for the emitted signal, not a
 target. It is checked, not assumed: 300 random strobing colour signals must come out within the cap
 by the library's counter **and** by a separately written per-window counter that shares no code with
-it, and the streaming counter is compared against an offline re-implementation. 45 tests, Python 3.11,
+it, and the streaming counter is compared against an offline re-implementation. 47 tests, Python 3.11,
 3.12 and 3.13. Reverting any single piece (no hold, no float tolerance, red rule ignored, the 0.80
 rule, the 10% threshold, off-by-one cap, ...) fails at least one test; the red rule has its own test on
 an isoluminant red/green strobe, where luminance does not change at all.
+The red counter counts a transition under either of two readings (the light left its remembered red / non-red state, or two adjacent samples are on opposite sides of the red test and more than 0.2 apart in u'v'). The first version had only the first, and an independent adjacent-state oracle found 4 of 300 random signals (6 of 300 with near-red colours) above 3 red flashes a second through the limiter; the second reading closed that. The WCAG wording leaves the exact red-transition rule open, so this is a conservative reading, not the definition.
 
 ## The case the review found
 

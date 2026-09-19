@@ -145,31 +145,48 @@ class _Swings:
 
 
 class _RedSwings:
-    """Counts transitions to or from a saturated red whose chromaticity moved by more than 0.2."""
+    """Counts transitions to or from a saturated red whose chromaticity moved by more than 0.2.
+
+    A transition is counted under EITHER of two readings, so the count can only be higher than either alone:
+    (state) the light left the red / non-red state it was in, and is now more than 0.2 from that state's
+    colour; (adjacent) this sample and the one before it are on opposite sides of the red test and are
+    more than 0.2 apart. The state reading alone can miss a slow drift through near-red colours that
+    never flips its remembered state (measured: 4 of 300 random signals exceeded 3 red flashes a second
+    through the limiter, 6 of 300 with near-red colours in the palette, before the adjacent reading was added).
+    """
 
     def __init__(self):
         self.red: bool | None = None
         self.ref_uv = _WHITE_UV
+        self.prev: tuple[bool, tuple[float, float]] | None = None    # (is red, u'v') of the previous sample
+
+    def _adjacent(self, red: bool, uv: tuple[float, float]) -> bool:
+        if self.prev is None or self.prev[0] == red:
+            return False
+        return math.hypot(uv[0] - self.prev[1][0], uv[1] - self.prev[1][1]) > RED_CHROMA_DELTA
 
     def peek(self, rgb: RGB) -> bool:
         if self.red is None:
             return False
-        if is_saturated_red(rgb) == self.red:
+        red, uv = is_saturated_red(rgb), chromaticity(rgb)
+        if self._adjacent(red, uv):
+            return True
+        if red == self.red:
             return False
-        u, v = chromaticity(rgb)
-        return math.hypot(u - self.ref_uv[0], v - self.ref_uv[1]) > RED_CHROMA_DELTA
+        return math.hypot(uv[0] - self.ref_uv[0], uv[1] - self.ref_uv[1]) > RED_CHROMA_DELTA
 
     def update(self, rgb: RGB) -> bool:
         red, uv = is_saturated_red(rgb), chromaticity(rgb)
         if self.red is None:
-            self.red, self.ref_uv = red, uv
+            self.red, self.ref_uv, self.prev = red, uv, (red, uv)
             return False
-        if self.peek(rgb):
+        counted = self.peek(rgb)
+        if counted:
             self.red, self.ref_uv = red, uv
-            return True
-        if red == self.red:
+        elif red == self.red:
             self.ref_uv = uv                 # the state's colour follows the light while it stays a red / non-red
-        return False
+        self.prev = (red, uv)
+        return counted
 
 
 def _max_in_window(times: list[float], window: float) -> int:
