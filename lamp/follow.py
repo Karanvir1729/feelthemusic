@@ -26,6 +26,7 @@ import signal
 import sys
 import threading
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -108,6 +109,69 @@ class FaceTracker:
         return box.xmin + box.width / 2, box.ymin + box.height / 2, box.width / FACE_WIDTH_M
 
 
+class ObjectTracker:
+    """Last resort when there is no face and no hand: look at a person's upper body, or at a thing.
+
+    Google's EfficientDet-Lite0 (COCO classes) through MediaPipe. The model file is the copy already
+    on the lamp, read in place: nothing to download, nothing copied. It costs about 59 ms a frame on
+    the Pi 5, so it runs at most once a second, and only when the cheaper trackers found nothing.
+    """
+    MODEL = Path.home() / "lelamp-hackathon-2026/static/models/object_detection/efficientdet_lite0.tflite"
+    # nominal real widths in metres, for a rough distance; anything not listed is ignored
+    WIDTHS = {"person": 0.45, "cup": 0.09, "bottle": 0.08, "cell phone": 0.075, "book": 0.18, "laptop": 0.34,
+              "remote": 0.05, "teddy bear": 0.25, "sports ball": 0.20, "mouse": 0.06, "keyboard": 0.40,
+              "banana": 0.18, "apple": 0.08, "orange": 0.08, "wine glass": 0.08, "backpack": 0.35}
+
+    def __init__(self, period_s: float = 1.0, min_score: float = 0.55):
+        import mediapipe as mp
+        from mediapipe.tasks.python import BaseOptions, vision
+        self._mp = mp
+        self.detector = vision.ObjectDetector.create_from_options(vision.ObjectDetectorOptions(
+            base_options=BaseOptions(model_asset_path=str(self.MODEL)), running_mode=vision.RunningMode.IMAGE,
+            max_results=8, score_threshold=min_score))
+        self.period_s, self._next, self.label = period_s, 0.0, "object"
+
+    def locate(self, bgr):
+        if time.monotonic() < self._next:
+            return None
+        self._next = time.monotonic() + self.period_s
+        h, w = bgr.shape[:2]
+        image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB,
+                               data=np.ascontiguousarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)))
+        best = None
+        for det in self.detector.detect(image).detections:
+            cat, box = det.categories[0], det.bounding_box
+            name = cat.category_name
+            if name not in self.WIDTHS or box.width > 0.9 * w:          # a box filling the frame is a false alarm
+                continue
+            rank = (name == "person", cat.score)                         # a person beats a thing
+            if best is None or rank > best[0]:
+                best = (rank, name, box)
+        if best is None:
+            return None
+        _, name, box = best
+        self.label = name
+        x = (box.origin_x + box.width / 2) / w
+        # for a person aim at the head end of the box, not the belly
+        y = (box.origin_y + box.height * (0.15 if name == "person" else 0.5)) / h
+        cut_off = box.origin_x <= 2 or box.origin_x + box.width >= w - 2   # box runs off the picture: width is a lie
+        size = (box.width / w) / self.WIDTHS[name]
+        return x, y, (self.NOMINAL if cut_off else size)
+
+    NOMINAL = 0.85                              # picture widths per metre that mean "about 1 m away"; set from the camera model at start-up
+
+
+def recent_sightings(sightings: list[tuple], now: float) -> list[tuple]:
+    """Keep tracker samples for their own cadence.
+
+    Face and hand trackers run on every analysed frame, so a short window rejects a transient
+    detection. Object detection deliberately runs only once a second; its samples must survive the
+    skipped frames or it can never collect the three independent detections required below.
+    """
+    return [sample for sample in sightings
+            if now - sample[0] < (3.5 if sample[4] not in ("face", "hand") else 0.6)]
+
+
 # ----------------------------------------------------------------------------------------------
 # The one thing the SDK cannot do: switch the lamp's looped idle animation off and on. The SDK
 # resumes idle after every safe move, so with idle playing the head drifts off the person between
@@ -187,8 +251,8 @@ def describe(model: LampModel, units: dict) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--target", choices=["auto", "face", "hand"], default="auto",
-                    help="auto = a face if one is in view, otherwise a hand")
+    ap.add_argument("--target", choices=["auto", "face", "hand", "object"], default="auto",
+                    help="auto = a face if one is in view, otherwise a hand, otherwise a person or a thing")
     ap.add_argument("--dry-run", action="store_true", help="see, locate and decide, but never move")
     ap.add_argument("--seconds", type=float, default=0, help="stop after this long (0 = until Ctrl-C)")
     ap.add_argument("--deadband-deg", type=float, default=10.0,
@@ -235,10 +299,17 @@ def main() -> None:
     cam.start()
     trackers = [(name, cls()) for name, cls in (("face", FaceTracker), ("hand", HandTracker))
                 if args.target in ("auto", name)]
+    if args.target in ("auto", "object"):
+        if ObjectTracker.MODEL.exists():
+            ObjectTracker.NOMINAL = model.fx / 1.0                # a cut-off box is treated as about 1 m away
+            trackers.append(("object", ObjectTracker()))
+        else:
+            print(f"object tracking off: no model at {ObjectTracker.MODEL}", flush=True)
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    watching = {"auto": "a face, or a hand if there is no face", "face": "a face", "hand": "a hand"}[args.target]
+    watching = {"auto": "a face, then a hand, then a person or a thing", "face": "a face", "hand": "a hand",
+                "object": "a person or a thing"}[args.target]
     print(f"watching for {watching}{' (dry run: will not move)' if args.dry_run else ''}. Ctrl-C to stop.", flush=True)
     idle_was = None if (args.dry_run or args.keep_idle) else idle_off(sdk.base)
 
@@ -263,14 +334,15 @@ def main() -> None:
         for name, tracker in trackers:                 # a face wins over a hand
             seen = tracker.locate(frame)
             if seen is not None:
-                kind = name
+                kind = tracker.label if name == "object" else name
                 break
-        sightings = [s for s in sightings if now - s[0] < 0.6 and s[4] == kind]
+        sightings = recent_sightings(sightings, now)
         if seen is None:
             if now - last_note > 2:
                 print("nobody in view" if args.target != "hand" else "no hand in view", flush=True)
                 last_note = now
             continue
+        sightings = [sample for sample in sightings if sample[4] == kind]
         sightings.append((now, *seen, kind))
         if len(sightings) < 3:                 # decide on a steady sighting, not on one frame
             continue
@@ -282,7 +354,7 @@ def main() -> None:
             print(f"cannot read joints: {exc}", flush=True)
             time.sleep(1)
             continue
-        near, far = (0.30, 2.5) if kind == "face" else (0.20, 1.2)
+        near, far = {"face": (0.30, 2.5), "hand": (0.20, 1.2)}.get(kind, (0.30, 3.0))
         distance = float(np.clip(model.distance_from_size(size, 1.0), near, far))   # size = picture widths per metre
         point = model.target_point(measured, (x, y), distance)
         error = model.aim_error_deg(measured, point)
