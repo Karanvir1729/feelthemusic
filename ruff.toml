@@ -1,0 +1,6 @@
+# Lint settings for this repository, so `uvx ruff check twin tests` gives the same answer everywhere.
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "B"]
