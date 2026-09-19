@@ -40,6 +40,44 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.c.tick(), 1)
         self.assertEqual(self.sent[0]["due_ns"], self.now)
 
+    def test_expired_head_at_front_does_not_release_future_light_early(self):
+        light_due = self.now + 10_000_000_000
+        self.assertTrue(self.c.submit(self.command(valid_until_ns=self.now + 10)))
+        self.assertTrue(self.c.submit(self.command(seq=2, kind="light", rgb=[0, .1, .1],
+                                                   due_ns=light_due)))
+        self.now += 11
+        self.assertEqual(self.c.tick(), 0)
+        self.assertEqual(self.c.stats["stale_target"], 1)
+        self.assertEqual(self.c.queued, 1)
+        self.assertEqual(self.sent, [])
+        self.now = light_due
+        self.assertEqual(self.c.tick(), 1)
+        self.assertEqual(self.c.queued, 0)
+        self.assertEqual(self.sent[0]["seq"], 2)
+
+    def test_submit_stale_generation_after_mode_change_rejects_invalid(self):
+        stale = self.command(kind="light", rgb=[0, .1, .1])
+        self.c.set_mode("dance", armed=True)
+        # Light is otherwise valid in both modes: only its generation is stale.
+        self.assertFalse(self.c.submit(stale))
+        self.assertEqual(self.c.stats["invalid"], 1)
+        self.assertEqual(self.c.queued, 0)
+        self.assertEqual(self.c.last_seq, -1)
+        self.assertTrue(self.c.submit(dict(stale, generation=self.c.generation)))
+
+    def test_submit_current_generation_while_unsynced_rejects_unsynced(self):
+        self.c.set_synced(False)
+        # Build after invalidation, so generation and light-mode checks cannot
+        # accidentally hide removal of the synchronization admission guard.
+        current = self.command(kind="light", rgb=[0, .1, .1])
+        self.assertFalse(self.c.submit(current))
+        self.assertEqual(self.c.stats["unsynced"], 1)
+        self.assertEqual(self.c.stats["invalid"], 0)
+        self.assertEqual(self.c.queued, 0)
+        self.assertEqual(self.c.last_seq, -1)
+        self.c.set_synced(True)
+        self.assertTrue(self.c.submit(current))
+
     def test_missing_boolean_nonfinite_and_far_future_rejected(self):
         for field in ("due_ns", "seq", "generation"):
             for bad in (None, True, 1.5, float("nan"), float("inf"), -1):
