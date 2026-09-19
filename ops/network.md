@@ -21,21 +21,29 @@ No WAN uplink is required or permitted during the demo. All clock synchronizatio
 |                   | Dedicated Router (5 GHz Pinned AP)    |                   |
 |                   | DHCP / Static Leases: 192.168.8.0/24  |                   |
 |                   +---------------------------------------+                   |
-|                      /          |              |           \                  |
-|                     /           |              |            \                 |
-|        192.168.8.10/            |              |             \192.168.8.100+  |
-|   +-------------------+  192.168.8.20   192.168.8.30   +--------------------+ |
-|   | Conductor Laptop  |  +------------+ +------------+ | Audience iPhones   | |
-|   | - Sync Master     |  | LeLamp Pi5 | | TitanCore  | | - Native App       | |
-|   | - Audio Analysis  |  | - SDK Gate | | - Serial / | | - Core Haptics     | |
-|   | - UDP 47300 Hub   |  |   Port 8081| |   ESP32    | | - UDP 47300 Client | |
-|   +-------------------+  +------------+ +------------+ +--------------------+ |
+|                      /          |                               \             |
+|                     /           |                                \            |
+|        192.168.8.10/            | 192.168.8.20                    \192.168.8.100+
+|   +-------------------+  +------------+                 +--------------------+|
+|   | Conductor Laptop  |  | LeLamp Pi5 |                 | Audience iPhones   ||
+|   | - Sync Master     |  | - SDK Gate |                 | - Native App       ||
+|   | - Audio Analysis  |  |   Port 8081|                 | - Core Haptics     ||
+|   | - UDP 47300 Hub   |  +------------+                 | - UDP 47300 Client ||
+|   +---------+---------+                                 +--------------------+|
+|             | USB Serial @ 115200                                             |
+|             v                                                                 |
+|      +------------+                                                           |
+|      | TitanCore  |                                                           |
+|      | Controller |                                                           |
+|      +------------+                                                           |
 +-------------------------------------------------------------------------------+
 ```
 
 ---
 
 ## 2. Network Topology & IP Allocation
+
+*Note: The subnet `192.168.8.0/24`, channel choices (36/149), and dummy DNS are operational design choices proposed for demo day (unmeasured on hardware).*
 
 The demo network uses the private subnet `192.168.8.0/24` to avoid collision with standard venue default subnets (`192.168.0.0/24`, `192.168.1.0/24`, `10.0.0.0/8`).
 
@@ -44,7 +52,7 @@ The demo network uses the private subnet `192.168.8.0/24` to avoid collision wit
 | **Dedicated Router** | AP / Gateway / DHCP | `192.168.8.1` | Static Gateway | UDP 53 (DNS dummy), UDP 67 (DHCP) |
 | **Conductor Laptop** | Time Master & Event Broadcaster | `192.168.8.10` | Static / DHCP Reserved | UDP 47300 (Sync/Events), HTTP 8080 (Web visuals) |
 | **LeLamp Robot (Pi 5)** | Robot Visual & Motion Performer | `192.168.8.20` | DHCP Reserved | HTTP 8081 (SDK Gateway), UDP 47300 (Sync client) |
-| **TitanCore Controller** | Haptic Transducer Hub (if on Wi-Fi) | `192.168.8.30` | DHCP Reserved | UDP 47300 (Sync client) / USB Serial @ 115200 |
+| **TitanCore Controller** | Haptic Transducer Kit | *None (USB Serial)* | *N/A (Tethered)* | USB UART @ 115200 baud (to Conductor) |
 | **Demo iPhones (1-5)** | Audience Taptic Haptics | `192.168.8.100` - `.120` | Dynamic DHCP | UDP 47300 (Sync/Events client) |
 | **Guest Android/Web** | Auxiliary Visual Display | `192.168.8.150` - `.199` | Dynamic DHCP | HTTP 8080 / WS 8080 |
 
