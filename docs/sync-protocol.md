@@ -1,6 +1,6 @@
 # Feel the Music: Sync Protocol Specification (Version 1)
 
-Status: Canonical specification, written 2026-09-19. Implemented in `conductor/` and verified against the reference architecture and live App Store client.
+Status: Wire specification proposal based on architecture and conductor/wire.py. Aligns port 47300 and Bonjour service type `_feelthemusic._udp`. Direct interop verification with the live App Store client (Task #10) is pending.
 
 ---
 
@@ -78,11 +78,14 @@ Clock estimation uses round-trip network delay filtering:
 
 ---
 
-## 6. Service Discovery
+## 6. Service Discovery & Wire Format Status
 
 - **mDNS / Bonjour**:
-  - Service Type: `_feelmusic._udp.local.` (or `_feelthemusic._udp.local.`).
+  - Service Type: `_feelthemusic._udp.local.` (matches the shipped App Store app `apple/Shared/FTMProtocol.swift:388-389`).
   - Port: `47300`.
   - TXT Record: `v=1`, `role=conductor`.
 - **Manual Fallback**:
   - Clients accept command-line or settings inputs formatted as `IP:PORT` (defaulting to port 47300 if omitted).
+
+> [!NOTE]
+> The JSON wire message schema described in Section 3 is our Python conductor proposal (implemented in `conductor/wire.py`). The native reference conductor uses binary access units. Full protocol alignment and end-to-end verification against a physical App Store iPhone is tracked in Task #10.

@@ -37,30 +37,23 @@ The board selects its operating mode at boot via hardware jumpers on specific GP
 - **Baud Rate**: `115200` baud, 8 data bits, no parity, 1 stop bit (8N1).
 - **Command Syntax**: Text-based ASCII commands terminated with a semicolon `;` or newline `\n`.
 
-### Command Grammar
+### 3.1 Verified Datasheet Grammar
 1. **Frame Configuration (`F`)**:
    ```
    F <frameFreq> <frameSize>;
    ```
-   - `frameFreq`: Waveform sampling frequency in Hz (typically 100 to 1000 Hz).
-   - `frameSize`: Number of samples per frame (typically 16 to 64 bytes).
+   - Confirmed in vendor quick start: sets frame frequency and buffer size. Exact operating ranges and clock source are pending bench measurement (Task #9).
 2. **Streaming PCM Data (`PCM`)**:
    ```
    PCM <v0> <v1> <v2> ... <vN>;
    ```
-   - `v0..vN`: 8-bit unsigned integer values (0 to 255, with 128 representing the zero-current rest state).
-3. **Transient Channel Trigger (`CHNL`)**:
-   ```
-   CHNL M <amplitude> <duration_ms>;
-   ```
-   - `amplitude`: Integer intensity (0 to 255).
-   - `duration_ms`: Duration of impact pulse (5 to 100 ms).
+   - Confirmed in vendor quick start: 8-bit unsigned integer values.
 
----
-
-## 4. Software Safety Limits & Driver Guardrails
-
-To protect the voice coils and H-bridge from thermal damage:
-1. **Continuous Current Clamping**: Continuous signals on Channels L/R must not exceed 0.6 A sustained.
-2. **Duty Cycle Guard on Channel M**: High-energy transient strikes on Channel M must have a minimum inter-strike interval of 50 ms to prevent coil overheating.
-3. **Slew-Rate Limiting**: Step transitions in PCM streams must be smoothed across at least 2 samples to eliminate mechanical clicking and coil ringing.
+### 3.2 Driver Implementation Assumptions (Unverified on Hardware)
+The following parameters are implemented in `titancore/driver.py` as design proposals and must be verified on physical hardware (Task #9) before driving real voice coils:
+- **Zero-Current Rest Value**: Assumed to be `128` for unsigned 8-bit DAC centering (Task #9 will bench-measure true quiescent DC offset).
+- **Transient Pulse Command (`CHNL`)**: `CHNL M <amplitude> <duration_ms>;` is our driver proposal for triggering Channel M DRV8212 pulses.
+- **Guardrails**:
+  - `MAX_SLEW_STEP = 40` per sample to mitigate acoustic clicking and inductive spikes.
+  - `MIN_STRIKE_INTERVAL_S = 0.050` (50 ms) thermal cooldown on Channel M.
+- Driver currently verified against `FakeSerialPort` in unit tests; physical bench testing blocked pending Task #9.
