@@ -42,23 +42,26 @@ class SyncMetrics:
     @property
     def p95_delay_ms(self) -> float:
         if not self.round_trip_delays_ms:
-            return 0.0
+            return float("inf")
         sorted_delays = sorted(self.round_trip_delays_ms)
         idx = int(math.ceil(0.95 * len(sorted_delays))) - 1
         return sorted_delays[max(0, min(idx, len(sorted_delays) - 1))]
 
     @property
-    def offset_jitter_ms(self) -> float:
+    def p95_jitter_ms(self) -> float:
+        """95th percentile of absolute deviations from median offset."""
         if len(self.offset_estimates_ms) < 2:
-            return 0.0
-        mean = sum(self.offset_estimates_ms) / len(self.offset_estimates_ms)
-        sq_diffs = [(x - mean) ** 2 for x in self.offset_estimates_ms]
-        return math.sqrt(sum(sq_diffs) / len(sq_diffs))
+            return float("inf")
+        sorted_offsets = sorted(self.offset_estimates_ms)
+        median = sorted_offsets[len(sorted_offsets) // 2]
+        devs = sorted(abs(x - median) for x in self.offset_estimates_ms)
+        idx = int(math.ceil(0.95 * len(devs))) - 1
+        return devs[max(0, min(idx, len(devs) - 1))]
 
     @property
     def residual_spread_ms(self) -> float:
-        if not self.offset_estimates_ms:
-            return 0.0
+        if len(self.offset_estimates_ms) < 2:
+            return float("inf")
         return max(self.offset_estimates_ms) - min(self.offset_estimates_ms)
 
 
@@ -70,14 +73,14 @@ class SimulatedAppStoreClient:
         self.base_offset_ms = base_offset_ms
         self.output_trim_ms = 4.6  # iPhone 16 measured trim
         self.clock_drift_ppm = 2.0
-        self.start_time = time.monotonic()
+        self.start_time = time.perf_counter()
         self.received_events: List[dict] = []
         self.late_events: int = 0
 
     def get_local_time_ns(self) -> int:
-        elapsed = time.monotonic() - self.start_time
+        elapsed = time.perf_counter() - self.start_time
         drift = elapsed * (self.clock_drift_ppm / 1e6)
-        local_s = time.monotonic() + (self.base_offset_ms / 1000.0) + drift
+        local_s = time.perf_counter() + (self.base_offset_ms / 1000.0) + drift
         return int(local_s * 1e9)
 
     def simulate_probe(self, conductor_now_ns: int) -> Tuple[int, int, int, int]:
@@ -103,7 +106,7 @@ class SimulatedAppStoreClient:
         pts = event.get("pts", conductor_now_ns)
         # Wi-Fi latency
         transit_s = random.uniform(0.001, 0.004)
-        current_mono = time.monotonic() if now_s is None else now_s
+        current_mono = time.perf_counter() if now_s is None else now_s
         local_receive_s = current_mono + transit_s
 
         # Target presentation time on conductor clock: pts + budget - trim
@@ -125,42 +128,44 @@ def run_sync_verification(
     host: str = "127.0.0.1",
     port: int = DEFAULT_PORT,
     budget_ms: int = DEFAULT_BUDGET_MS,
+    target_addr: Optional[Tuple[str, int]] = None,
 ) -> Tuple[bool, SyncMetrics]:
     """Execute clock sync and event delivery test against live or simulated client."""
     metrics = SyncMetrics()
     logger.info(
-        "Starting sync verification: mode=%s, duration=%.1fs, budget=%dms",
-        "SIMULATION" if simulate else f"LIVE ({host}:{port})",
+        "Starting sync verification: mode=%s (%s:%d), duration=%.1fs, budget=%dms",
+        "SIMULATED" if simulate else "LIVE",
+        host,
+        port,
         duration_s,
         budget_ms,
     )
 
     if simulate:
-        client = SimulatedAppStoreClient(client_id="iPhone16,1_AppStore", base_offset_ms=8.2)
-        start_t = time.monotonic()
+        client = SimulatedAppStoreClient(client_id="iPhone_16_Bench", base_offset_ms=12.5)
+        start_t = time.perf_counter()
         seq = 0
 
-        while (time.monotonic() - start_t) < duration_s:
-            now_ns = int(time.monotonic() * 1e9)
-
+        while (time.perf_counter() - start_t) < duration_s:
+            now_ns = time.perf_counter_ns()
             # 1. Probe exchange
             t0, t1, t2, t3 = client.simulate_probe(now_ns)
             delay_ms = ((t3 - t0) - (t2 - t1)) / 1e6
             offset_ms = (((t1 - t0) + (t2 - t3)) / 2) / 1e6
 
+            metrics.total_probes += 1
             metrics.round_trip_delays_ms.append(delay_ms)
             metrics.offset_estimates_ms.append(offset_ms)
-            metrics.total_probes += 1
 
-            # 2. Musical beat event dispatch (every 500 ms = 120 BPM)
-            if seq % 5 == 0:
+            # 2. Event broadcast
+            if seq % 2 == 0:
                 event = {
                     "v": 1,
                     "t": "event",
                     "seq": seq,
-                    "kind": "kick",
+                    "kind": "kick" if seq % 4 == 0 else "snare",
                     "pts": now_ns,
-                    "payload": {"amp": 900},
+                    "energy": 0.85,
                 }
                 ok = client.receive_event(event, now_ns, budget_ms=budget_ms)
                 metrics.total_events_sent += 1
@@ -171,23 +176,53 @@ def run_sync_verification(
             time.sleep(0.1)
 
     else:
-        # Live UDP mode over socket
+        # Live UDP mode over socket: supports both inbound probes and active outbound probing
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(1.0)
-        sock.bind(("0.0.0.0", port))
-        logger.info("Bound UDP listener to 0.0.0.0:%d, awaiting App Store iPhone probes...", port)
+        sock.settimeout(0.2)
+        sock.bind((host, port))
+        actual_port = sock.getsockname()[1]
+        logger.info("Bound UDP listener to %s:%d, running sync audit...", host, actual_port)
 
-        start_t = time.monotonic()
-        while (time.monotonic() - start_t) < duration_s:
+        start_t = time.perf_counter()
+        seq = 0
+        known_clients: Dict[str, Tuple[str, int]] = {}
+        if target_addr is not None:
+            known_clients[f"{target_addr[0]}:{target_addr[1]}"] = target_addr
+
+        in_flight_probes: Dict[int, int] = {}
+
+        while (time.perf_counter() - start_t) < duration_s:
+            now_ns = time.perf_counter_ns()
+
+            # Actively poll known clients with conductor-initiated probes
+            if known_clients and seq % 2 == 0:
+                for cid, client_addr in list(known_clients.items()):
+                    seq += 1
+                    probe_pkt = {
+                        "v": 1,
+                        "t": "probe",
+                        "id": seq,
+                        "t0": now_ns,
+                    }
+                    in_flight_probes[seq] = now_ns
+                    try:
+                        sock.sendto(json.dumps(probe_pkt).encode("utf-8"), client_addr)
+                    except OSError:
+                        pass
+
             try:
                 data, addr = sock.recvfrom(2048)
                 msg = json.loads(data.decode("utf-8"))
                 msg_type = msg.get("t")
 
+                # Register client
+                client_key = f"{addr[0]}:{addr[1]}"
+                known_clients[client_key] = addr
+
                 if msg_type == "probe":
-                    t1_ns = int(time.monotonic() * 1e9)
+                    t1_ns = time.perf_counter_ns()
                     t0_ns = int(msg.get("t0", 0))
-                    t2_ns = int(time.monotonic() * 1e9)
+                    t2_ns = time.perf_counter_ns()
                     reply = {
                         "v": 1,
                         "t": "probe_reply",
@@ -199,10 +234,32 @@ def run_sync_verification(
                     sock.sendto(json.dumps(reply).encode("utf-8"), addr)
                     metrics.total_probes += 1
 
+                elif msg_type == "probe_reply":
+                    probe_id = msg.get("id")
+                    if probe_id in in_flight_probes:
+                        t0_ns = in_flight_probes.pop(probe_id)
+                        t1_ns = int(msg.get("t1", 0))
+                        t2_ns = int(msg.get("t2", 0))
+                        t3_ns = time.perf_counter_ns()
+                        delay_ms = ((t3_ns - t0_ns) - (t2_ns - t1_ns)) / 1e6
+                        offset_ms = (((t1_ns - t0_ns) + (t2_ns - t3_ns)) / 2) / 1e6
+
+                        if delay_ms >= 0.0 and math.isfinite(offset_ms):
+                            metrics.round_trip_delays_ms.append(delay_ms)
+                            metrics.offset_estimates_ms.append(offset_ms)
+                            metrics.total_probes += 1
+
+                elif msg_type == "receipt":
+                    metrics.total_events_sent += 1
+                    if msg.get("late") is True:
+                        metrics.late_events_reported += 1
+
             except socket.timeout:
-                continue
+                pass
             except Exception as exc:
                 logger.warning("Error processing packet: %s", exc)
+
+            seq += 1
 
         sock.close()
 
@@ -210,22 +267,29 @@ def run_sync_verification(
     passed = True
     reasons = []
 
-    # Probe floor check (prevent vacuous pass if zero clients connect)
-    min_required_probes = max(1, int(duration_s * 0.5)) if not simulate else 1
+    # Probe floor check (prevent vacuous pass on zero or insufficient activity)
+    min_required_probes = max(2, int(duration_s * 1.0))
     if metrics.total_probes < min_required_probes:
         passed = False
         reasons.append(
             f"Probe floor not met: received {metrics.total_probes} probes, required >= {min_required_probes}"
         )
 
+    # Timing sample count check (strictly enforces real bidirectional measurements)
+    if len(metrics.offset_estimates_ms) < min_required_probes:
+        passed = False
+        reasons.append(
+            f"Insufficient timing samples: recorded {len(metrics.offset_estimates_ms)}, required >= {min_required_probes}"
+        )
+
     if metrics.late_events_reported > 0:
         passed = False
         reasons.append(f"Late events reported: {metrics.late_events_reported}")
 
-    if metrics.offset_jitter_ms > BENCHMARK_MAX_P95_JITTER_MS:
+    if metrics.p95_jitter_ms > BENCHMARK_MAX_P95_JITTER_MS:
         passed = False
         reasons.append(
-            f"Offset jitter {metrics.offset_jitter_ms:.2f}ms exceeds {BENCHMARK_MAX_P95_JITTER_MS}ms bar"
+            f"P95 offset jitter {metrics.p95_jitter_ms:.2f}ms exceeds {BENCHMARK_MAX_P95_JITTER_MS}ms bar"
         )
 
     if metrics.residual_spread_ms > BENCHMARK_MAX_RESIDUAL_SPREAD_MS:
@@ -238,12 +302,14 @@ def run_sync_verification(
     logger.info("Total probes: %d", metrics.total_probes)
     logger.info("Total events sent: %d", metrics.total_events_sent)
     logger.info("Round-trip delay p95: %.2f ms", metrics.p95_delay_ms)
-    logger.info("Clock offset jitter: %.2f ms", metrics.offset_jitter_ms)
+    logger.info("Clock offset P95 jitter: %.2f ms", metrics.p95_jitter_ms)
     logger.info("Residual spread: %.2f ms", metrics.residual_spread_ms)
     logger.info("Late / dropped events: %d", metrics.late_events_reported)
     logger.info("Benchmark Bar Status: %s", "PASSED" if passed else f"FAILED ({', '.join(reasons)})")
 
     return passed, metrics
+
+
 
 
 def main() -> None:
