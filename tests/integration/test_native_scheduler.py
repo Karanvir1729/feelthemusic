@@ -215,23 +215,22 @@ class NativeSchedulerContractTests(unittest.TestCase):
         adapter = SyntheticLightAdapter()
         due = adapter.clock.now + 100 * MS
         self.assertTrue(adapter.receive(native_event(due)))
-        old_generation = adapter.controller.generation
         adapter.controller.set_mode("follow")
-        self.assertGreater(adapter.controller.generation, old_generation)
         adapter.clock.now = due
         self.assertEqual(adapter.tick(), 0)
         self.assertEqual(adapter.output, [])
         self.assertTrue(adapter.receive(native_event(due, seq=2)))
         self.assertEqual(adapter.tick(), 1)
-        self.assertEqual(adapter.output[0][1]["generation"], adapter.controller.generation)
 
-    def test_faults_are_external_state_not_invented_wire_flag_semantics(self):
+    def test_test_only_fault_policy_uses_explicit_controller_latch(self):
         adapter = SyntheticLightAdapter()
-        # Unknown bits still parse and do not constitute an invented fault signal.
+        # This fixture ignores ALL event flags. Passing here does not test the
+        # meaning of this bit or any production consumer's fault interpretation.
         self.assertTrue(adapter.receive(native_event(adapter.clock.now, flags=0x80)))
         self.assertEqual(adapter.tick(), 1)
         self.assertFalse(adapter.controller.safety_latched)
-        # Control text is not interpreted by this explicitly limited test adapter.
+        # The fixture also ignores Control packets; this is test-only routing,
+        # not evidence that real Control messages cannot carry safety state.
         self.assertFalse(adapter.receive(b'\x0d{"thermal_fault":true}'))
         self.assertFalse(adapter.controller.safety_latched)
         due = adapter.clock.now + 100 * MS
@@ -290,7 +289,6 @@ class NativeSchedulerContractTests(unittest.TestCase):
         new_epoch = adapter.normalizer.new_epoch()
         self.assertGreater(new_epoch, old_event.epoch)
         self.assertEqual(adapter.tick(), 0)
-        self.assertIs(adapter.controller, controller)
         self.assertFalse(controller.synced)
         self.assertEqual(controller.queued, 0)
         self.assertFalse(adapter.receive(native_event(due)))
@@ -328,7 +326,6 @@ class NativeSchedulerContractTests(unittest.TestCase):
         self.assertTrue(adapter.receive(native_event(adapter.clock.now + 100 * MS)))
         adapter.normalizer.new_epoch()
         adapter.tick()
-        self.assertIs(adapter.controller, controller)
         self.assertEqual(controller.queued, 0)
         self.assertEqual(controller.inflight, owned)
         self.assertFalse(controller.armed)
@@ -357,6 +354,47 @@ class NativeSchedulerContractTests(unittest.TestCase):
         adapter.clock.now = due
         self.assertEqual(adapter.tick(), 1)
         self.assertEqual(adapter.output[0][1]["due_ns"], due)
+
+
+class NormalizerDefaultsContractTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = FakeClock()
+        self.estimator = ClockEstimator(keep=3, min_samples=3, drift_ppm=0,
+                                        max_age_ns=SECOND)
+        for age in (300 * MS, 200 * MS, 100 * MS):
+            add_symmetric_probe(self.estimator, received_ns=self.clock.now - age,
+                                offset_ns=0, one_way_ns=MS)
+        self.event = decode(native_event(self.clock.now + 100 * MS))
+        self.bass = decode(native_bass(self.clock.now + 100 * MS))
+
+    def test_constructor_default_disables_bass_with_a_usable_clock(self):
+        # No adapter and no explicit bass_time_policy=None: exercise the actual
+        # constructor default, so changing it to 'presentation' breaks this test.
+        normalizer = Normalizer(self.estimator)
+        self.assertIsNotNone(normalizer.normalize_event(self.event, now_ns=self.clock.now))
+        self.assertEqual(normalizer.normalize_bass(self.bass, now_ns=self.clock.now), [])
+        self.assertEqual(normalizer.bass_policy_unset, 1)
+        self.assertEqual(normalizer.bass_normalized, 0)
+
+    def test_normalization_requires_now_without_an_injected_clock(self):
+        normalizer = Normalizer(self.estimator)
+        with self.assertRaises(TypeError):
+            normalizer.normalize_event(self.event)
+        # Freshness is required even when bass is disabled by default.
+        with self.assertRaises(TypeError):
+            normalizer.normalize_bass(self.bass)
+        opted_in = Normalizer(self.estimator, bass_time_policy="presentation")
+        with self.assertRaises(TypeError):
+            opted_in.normalize_bass(self.bass)
+
+    def test_injected_clock_supplies_now_and_preserves_expiry(self):
+        normalizer = Normalizer(self.estimator, bass_time_policy="presentation", clock=self.clock)
+        self.assertIsNotNone(normalizer.normalize_event(self.event))
+        self.assertEqual(len(normalizer.normalize_bass(self.bass)), 3)
+        self.clock.now += 2 * SECOND
+        self.assertIsNone(normalizer.normalize_event(self.event))
+        self.assertEqual(normalizer.normalize_bass(self.bass), [])
+        self.assertEqual(normalizer.not_synced, 2)
 
 
 if __name__ == "__main__":

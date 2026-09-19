@@ -45,14 +45,18 @@ Native `master_ts` is treated as the presentation deadline under the source-repo
 contract: subtract conductor-minus-local offset and output trim once; add no
 second 300 ms room budget. The suite exercises positive and negative offsets,
 early waiting, zero-tolerance late dropping, unsynced and expired clocks, unknown
-kinds, mode-generation invalidation, and an externally supplied fault latch.
-Unknown wire flag bits and Control text are not interpreted as fault commands.
+kinds, queued-work invalidation on mode changes, and an explicitly invoked
+Controller fault latch. The test adapter ignores all flags and Control text by
+construction. That test demonstrates this fixture's policy and the Controller's
+explicit latch behavior, not native fault semantics or production routing.
 
 The clock-aging regression requires fresh higher-RTT probes to restore usable
 clock state after old minimum-RTT probes expire. It remains a normal failing test
 against a dependency revision that permanently retains those old minima; it is
-not marked expected-failure or skipped. Bass-envelope normalization must produce
-no output by default. The separate opt-in case checks per-sample deadline
+not marked expected-failure or skipped. Direct Normalizer tests exercise the
+constructor's default-disabled bass policy without the adapter explicitly
+passing `None`. They also require either `now_ns` or an injected clock, and check
+that an injected clock still enforces expiry. The separate opt-in case checks per-sample deadline
 conversion under the chosen `presentation` hypothesis; it does not verify that
 the real conductor uses that timestamp meaning.
 
