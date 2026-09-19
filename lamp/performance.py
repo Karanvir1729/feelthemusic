@@ -23,6 +23,7 @@ import logging
 import math
 import queue
 import socket
+import struct
 import threading
 import time
 from dataclasses import dataclass, field
@@ -149,13 +150,17 @@ class MusicPerformer:
             self.clock_offset = offsets[len(offsets) // 2]
             self.stats.clock_sync_count += 1
 
-    def conductor_to_local_time(self, pts: float) -> float:
-        """Map conductor pts to local monotonic target fire time with room budget and trim."""
+    def conductor_to_local_time(self, pts: float, pre_budgeted: bool = False) -> float:
+        """Map conductor pts to local monotonic target fire time with room budget and trim.
+
+        If pre_budgeted is True (e.g. native masterTs from Show.swift:301 already includes L=300ms),
+        we subtract trim and clock offset, and do not add L a second time.
+        """
         pts_s = (pts / 1e9) if pts > 1e8 else pts
         with self._lock:
             offset = self.clock_offset
-        # pts_local = pts_s - offset
-        # target_fire_time = pts_local + L - trim
+        if pre_budgeted:
+            return (pts_s - offset) - self.config.lamp_trim_s
         return (pts_s - offset) + self.config.room_latency_s - self.config.lamp_trim_s
 
     def render_light(self, t: float, bass_level: float) -> Optional[Tuple[RGB_255, float]]:
@@ -308,12 +313,13 @@ class MusicPerformer:
                 self.stats.events_dropped_no_pts += 1
             return False
 
+        is_pre_budgeted = bool(event.get("pre_budgeted", False))
         try:
             val = float(pts)
             if not math.isfinite(val):
                 # Reject NaN or Inf pts
                 return False
-            target_time = self.conductor_to_local_time(val)
+            target_time = self.conductor_to_local_time(val, pre_budgeted=is_pre_budgeted)
         except (ValueError, TypeError):
             return False
 
@@ -461,6 +467,43 @@ class PerformanceBridge(threading.Thread):
                 elif sender_ip != self.pinned_sender:
                     continue  # Ignore foreign packets
 
+                # 1. Native little-endian binary protocol support
+                if len(data) == 3 and data[0] == 1:
+                    # SyncReq: <BH (type 1, req_id)
+                    _, req_id = struct.unpack("<BH", data)
+                    t1_ns = int(time.monotonic() * 1e9)
+                    t2_ns = int(time.monotonic() * 1e9)
+                    resp = struct.pack("<BHQQ", 2, req_id, t1_ns, t2_ns)
+                    self.sock.sendto(resp, addr)
+                    continue
+
+                if len(data) == 26 and data[0] == 3:
+                    # EventPacket: <BIBBBBHHBQI
+                    _, seq, kind_code, flags, intensity, sharpness, duration_ms, freq_hz, target, master_ts, lead_us = struct.unpack(
+                        "<BIBBBBHHBQI", data
+                    )
+                    kind_map = {0: "click", 1: "kick", 2: "snare", 3: "bass", 4: "build", 5: "drop"}
+                    packet = {
+                        "type": "event",
+                        "seq": seq,
+                        "kind": kind_map.get(kind_code, "kick"),
+                        "pts": master_ts,
+                        "pre_budgeted": True,
+                        "payload": {
+                            "amp": intensity / 255.0,
+                            "sharpness": sharpness / 255.0,
+                            "duration_ms": duration_ms,
+                            "freq_hz": freq_hz,
+                        },
+                    }
+                    try:
+                        self._event_queue.put_nowait(packet)
+                    except queue.Full:
+                        with self.performer._lock:
+                            self.performer.stats.events_dropped_late += 1
+                    continue
+
+                # 2. Canonical JSON wire message support
                 packet = json.loads(data.decode("utf-8"))
                 if isinstance(packet, dict):
                     # Answer wire probes immediately without queue delay

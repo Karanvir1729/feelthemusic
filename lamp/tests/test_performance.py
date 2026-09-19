@@ -421,3 +421,83 @@ def test_mode_switch_from_dance_to_follow_during_sleep_suppresses_gesture():
     assert ok is False  # Invalidation dropped the stale generation event
     assert len(sdk.animations) == 0  # No dance gesture emitted
 
+
+def test_pre_budgeted_scheduling_avoids_double_room_latency():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+    config = PerformanceConfig(room_latency_s=0.300, lamp_trim_s=0.030)
+    performer = MusicPerformer(sdk, config=config, clock_fn=lambda: simulated_time[0])
+    performer.clock_offset = 0.0
+
+    # For pre_budgeted=True, target_time = pts - trim (100.030 - 0.030 = 100.000)
+    # Does NOT add 0.300s room budget L again!
+    target = performer.conductor_to_local_time(100.030, pre_budgeted=True)
+    assert abs(target - 100.0) < 1e-6
+
+    # Normal non-budgeted: target_time = pts + L - trim (100.030 + 0.300 - 0.030 = 100.300)
+    normal_target = performer.conductor_to_local_time(100.030, pre_budgeted=False)
+    assert abs(normal_target - 100.300) < 1e-6
+
+
+def test_native_binary_packet_bridge():
+    import struct
+    sdk = MockLampSDK()
+    performer = MusicPerformer(sdk)
+    bridge = PerformanceBridge(performer, host="127.0.0.1", port=0)
+
+    # Bind ephemeral port
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", 0))
+    bridge.port = s.getsockname()[1]
+    s.close()
+
+    bridge.start()
+    time.sleep(0.1)
+
+    try:
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client.settimeout(1.0)
+
+        # 1. Send native SyncReq: <BH (type=1, req_id=42) = 3 bytes
+        req = struct.pack("<BH", 1, 42)
+        client.sendto(req, ("127.0.0.1", bridge.port))
+        resp, _ = client.recvfrom(64)
+        assert len(resp) == 19
+        resp_type, req_id, t1, t2 = struct.unpack("<BHQQ", resp)
+        assert resp_type == 2
+        assert req_id == 42
+        assert t1 > 0 and t2 >= t1
+
+        # 2. Send native EventPacket: <BIBBBBHHBQI = 26 bytes
+        # kind=1 (kick), intensity=200, masterTs=pre-budgeted presentation time
+        now_ns = int(time.monotonic() * 1e9)
+        # Target presentation time: now + trim => master_ts = now + 30ms
+        master_ts = now_ns + int(0.030 * 1e9)
+        event_pkt = struct.pack(
+            "<BIBBBBHHBQI",
+            3,  # type
+            101,  # seq
+            1,  # kind (kick)
+            2,  # flags (haptic)
+            200,  # intensity
+            128,  # sharpness
+            30,  # durationMs
+            60,  # freqHz
+            0xFF,  # target (all)
+            master_ts,
+            0,  # leadUs
+        )
+        client.sendto(event_pkt, ("127.0.0.1", bridge.port))
+        client.close()
+
+        # Wait for worker queue processing
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and performer.stats.events_received == 0:
+            time.sleep(0.02)
+
+        assert performer.stats.events_received >= 1
+    finally:
+        bridge.stop()
+        bridge.join(timeout=1.0)
+
+
