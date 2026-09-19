@@ -8,13 +8,19 @@ The caller must reset on session, mode or synchronization changes.
 
 from collections import deque
 from dataclasses import dataclass
-from statistics import median
+from itertools import pairwise
 
 
 @dataclass(frozen=True)
 class Pulse:
     period_ns: int
     anchor_ns: int
+
+    def __post_init__(self):
+        if type(self.period_ns) is not int or self.period_ns <= 0:
+            raise ValueError("period_ns must be a positive integer")
+        if type(self.anchor_ns) is not int or self.anchor_ns < 0:
+            raise ValueError("anchor_ns must be a nonnegative integer")
 
     def next_at_or_after(self, earliest_ns: int) -> int:
         """Choose an observed-phase pulse after the required preparation window."""
@@ -44,7 +50,7 @@ class PulseTracker:
         self.max_period_ns = max_period_ns
         self.tolerance_ns = tolerance_ns
         self.stale_after_ns = stale_after_ns
-        self._times = deque(maxlen=6)
+        self._times: deque[int] = deque(maxlen=6)
 
     def reset(self):
         self._times.clear()
@@ -68,14 +74,16 @@ class PulseTracker:
         if now_ns - self._times[-1] > self.stale_after_ns:
             return None
         times = list(self._times)
-        intervals = [b - a for a, b in zip(times, times[1:])]
-        period = int(median(intervals))
+        intervals = sorted(b - a for a, b in pairwise(times))
+        period = intervals[len(intervals) // 2]  # Five integer intervals.
         if not self.min_period_ns <= period <= self.max_period_ns:
             return None
         # Check cumulative phase as well as neighbouring gaps; slow drift must
         # not masquerade as a stable grid that will miss future visible beats.
         residuals = [t - i * period for i, t in enumerate(times)]
-        phase = int(median(residuals))
+        ordered = sorted(residuals)
+        # Six residuals: preserve integer nanoseconds even above float precision.
+        phase = (ordered[2] + ordered[3]) // 2
         if any(abs(value - phase) > self.tolerance_ns for value in residuals):
             return None
         return Pulse(period, phase + (len(times) - 1) * period)

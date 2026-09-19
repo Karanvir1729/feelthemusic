@@ -13,6 +13,7 @@ Reset it when the session, mode or clock synchronization changes.
 The trajectory schema is a JSON list of `{"time_s": 0, "positions_rad": {"joint-name": 0}}`, with every URDF joint present at every sample.
 This is a diagnostic input format, **not an SDK clip or normalized motor-unit format**.
 Mesh bytes and URDF bytes contribute to the model digest.
+Each mesh digest is bound to its original URDF reference, so exchanging two mesh files changes the model identity while relocating a relative-path model does not.
 The tool reports all sampled penetrations and joint-limit violations without guessing contact exclusions.
 Models without articulated joints or collision-enabled geometry are rejected.
 

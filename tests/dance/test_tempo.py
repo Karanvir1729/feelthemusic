@@ -1,6 +1,6 @@
 import pytest
 
-from dance.tempo import PulseTracker
+from dance.tempo import Pulse, PulseTracker
 
 
 def regular(period=500_000_000):
@@ -78,3 +78,19 @@ def test_bounded_history_and_inconsistent_policy():
     assert len(tracker._times) == 6
     with pytest.raises(ValueError):
         PulseTracker(tolerance_ns=500_000_000)
+
+
+def test_large_clock_origin_preserves_exact_pulse_phase():
+    origin = 2**60 + 17
+    tracker = PulseTracker()
+    for i in range(6):
+        tracker.observe(origin + i * 500_000_000)
+    pulse = tracker.estimate(origin + 2_500_000_000)
+    assert pulse.anchor_ns == origin + 2_500_000_000
+    assert pulse.next_at_or_after(origin + 3_000_000_000) == origin + 3_000_000_000
+
+
+@pytest.mark.parametrize("period,anchor", [(0, 0), (-1, 0), (True, 0), (1.5, 0), (1, -1), (1, True)])
+def test_invalid_pulse_cannot_be_constructed(period, anchor):
+    with pytest.raises(ValueError):
+        Pulse(period, anchor)

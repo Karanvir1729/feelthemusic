@@ -1,7 +1,9 @@
 """Original tiny fixture, not the vendor's model. MuJoCo is an explicit test dependency."""
+import shutil
+
 import pytest
 
-from dance.urdf_replay import replay
+from dance.urdf_replay import load_model, replay
 
 pytest.importorskip("mujoco", reason="install mujoco==3.13.0 for URDF replay checks")
 
@@ -70,7 +72,7 @@ def test_penetration_is_reported_not_suppressed_as_baseline(robot):
     assert report["contact_body_pairs"]
 
 
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), True, "0"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), True, "0", pytest.param(10**1000, id="huge-int")])
 def test_invalid_positions_fail_closed(robot, bad):
     with pytest.raises(ValueError):
         replay(robot, samples(bad))
@@ -85,3 +87,33 @@ def test_repeated_time_and_missing_joint_rejected(robot):
     trajectory[1]["positions_rad"] = {}
     with pytest.raises(ValueError):
         replay(robot, trajectory)
+
+
+def test_unrepresentable_time_rejected(robot):
+    trajectory = samples()
+    trajectory[1]["time_s"] = 10**1000
+    with pytest.raises(ValueError, match="time_s"):
+        replay(robot, trajectory)
+
+
+def test_mesh_digest_binds_bytes_to_their_references(robot):
+    tetrahedron = "v 0 0 0\nv {size} 0 0\nv 0 {size} 0\nv 0 0 {size}\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n"
+    first, second = robot.parent / "first.obj", robot.parent / "second.obj"
+    small, large = tetrahedron.format(size="0.1"), tetrahedron.format(size="0.2")
+    first.write_text(small)
+    second.write_text(large)
+    robot.write_text(robot.read_text().replace(
+        '<collision><geometry><sphere radius="0.1"/></geometry></collision>',
+        '<collision><geometry><mesh filename="first.obj"/></geometry></collision>'
+        '<collision><origin xyz="1 0 0"/><geometry><mesh filename="second.obj"/></geometry></collision>',
+    ))
+    _, before = load_model(robot)
+    first.write_text(large)
+    second.write_text(small)
+    _, after = load_model(robot)
+    assert before != after, "swapping mesh contents changes geometry even when the hash multiset is unchanged"
+    copied = robot.parent / "relocated"
+    copied.mkdir()
+    for asset in (robot, first, second):
+        shutil.copyfile(asset, copied / asset.name)
+    assert load_model(copied / robot.name)[1] == after

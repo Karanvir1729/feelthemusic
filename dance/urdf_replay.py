@@ -10,8 +10,17 @@ import argparse
 import hashlib
 import json
 import math
-from pathlib import Path
 import xml.etree.ElementTree as ET
+from pathlib import Path
+
+
+def _finite_number(value):
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def load_model(urdf_path):
@@ -21,14 +30,14 @@ def load_model(urdf_path):
     root = ET.parse(path).getroot()
     if root.tag != "robot":
         raise ValueError("expected a URDF robot")
-    assets = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()}
+    urdf_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assets = {}
     for mesh in root.iter("mesh"):
-        filename = mesh.get("filename", "")
-        if filename.startswith("package://"):
-            filename = filename[len("package://"):]
+        reference = mesh.get("filename", "")
+        filename = reference.removeprefix("package://")
         asset = (path.parent / filename).resolve(strict=True)
         mesh.set("filename", str(asset))
-        assets[str(asset)] = hashlib.sha256(asset.read_bytes()).hexdigest()
+        assets[reference] = hashlib.sha256(asset.read_bytes()).hexdigest()
     model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
     if any(kind != mujoco.mjtJoint.mjJNT_HINGE for kind in model.jnt_type):
         raise ValueError("this replay supports revolute joints only")
@@ -36,8 +45,12 @@ def load_model(urdf_path):
         raise ValueError("model has no articulated joints")
     if not any(model.geom_contype) and not any(model.geom_conaffinity):
         raise ValueError("model has no collision-enabled geometry")
-    # Hash the bytes of every loaded mesh, not just the URDF reference strings.
-    digest = hashlib.sha256(json.dumps(sorted(assets.values())).encode()).hexdigest()
+    # Bind each mesh hash to its original URDF reference. A multiset of hashes
+    # would miss two meshes swapping bytes while preserving the same file names.
+    # Original references also make relative-path models portable across checkouts.
+    digest = hashlib.sha256(json.dumps(
+        {"urdf": urdf_digest, "meshes": assets}, sort_keys=True,
+    ).encode()).hexdigest()
     return model, digest
 
 
@@ -63,7 +76,7 @@ def replay(urdf_path, samples):
         if not isinstance(sample, dict) or set(sample) != {"time_s", "positions_rad"}:
             raise ValueError("sample must contain time_s and positions_rad")
         stamp, pose = sample["time_s"], sample["positions_rad"]
-        if type(stamp) not in (int, float) or not math.isfinite(stamp) or stamp < 0 or stamp <= previous:
+        if not _finite_number(stamp) or stamp < 0 or stamp <= previous:
             raise ValueError("time_s must be finite, nonnegative and strictly increasing")
         if previous >= 0:
             max_gap = max(max_gap, stamp - previous)
@@ -71,7 +84,7 @@ def replay(urdf_path, samples):
         if not isinstance(pose, dict) or set(pose) != set(names):
             raise ValueError("positions_rad must specify exactly every URDF joint")
         values = [pose[name] for name in names]
-        if any(type(v) not in (int, float) or not math.isfinite(v) for v in values):
+        if not all(_finite_number(v) for v in values):
             raise ValueError("joint positions must be finite numbers in radians")
         outside = False
         for i, value in enumerate(values):
