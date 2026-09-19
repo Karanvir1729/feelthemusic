@@ -151,13 +151,23 @@ class LampSDK:
         try:
             action = self._call("POST", "/api/sdk/v1/actions", json=request)["action"]
         except SDKError as exc:
-            if exc.status != 401:
+            if exc.status == 401:
+                self._session_expires = 0.0           # session expired, runtime restarted, or the lamp's clock jumped
+                SESSION_CACHE.unlink(missing_ok=True)  # the cached session is the one that just failed
+                self.http.headers.pop("X-LeLamp-SDK-Session", None)
+                self._ensure_session()
+                action = self._call("POST", "/api/sdk/v1/actions", json=request)["action"]
+            elif exc.status in (0, 500):
+                # The answer was lost (timeout, connection drop, a gateway hiccup), but the lamp may have
+                # accepted the command. Error replies never carry the action id, so the only safe recovery
+                # is the same idempotency key: it returns the first record and cannot run the move twice.
+                time.sleep(1.0)
+                try:
+                    action = self._call("POST", "/api/sdk/v1/actions", json=request)["action"]
+                except SDKError as again:
+                    raise SDKError(409, "lost_track", f"do not know whether the lamp accepted this: {again}") from None
+            else:
                 raise
-            self._session_expires = 0.0           # session expired, runtime restarted, or the lamp's clock jumped
-            SESSION_CACHE.unlink(missing_ok=True)  # the cached session is the one that just failed
-            self.http.headers.pop("X-LeLamp-SDK-Session", None)
-            self._ensure_session()
-            action = self._call("POST", "/api/sdk/v1/actions", json=request)["action"]
         estimate = (action.get("result") or {}).get("estimated_duration_seconds")
         if isinstance(estimate, (int, float)):
             wait_s = min(wait_s, float(estimate) + 1.5 + 4.0)      # planned duration + settle + margin
@@ -189,7 +199,11 @@ class LampSDK:
     def move(self, positions: dict[str, float]) -> dict:
         """A safe, planned move. Always pass ALL joints: a joint left out is held at its *measured*
         position, and on a gravity-loaded joint that is a little lower every time."""
-        return self.action("motion.move", {"positions": {k: round(float(v), 2) for k, v in positions.items()}})
+        action = self.action("motion.move", {"positions": {k: round(float(v), 2) for k, v in positions.items()}})
+        result = action.get("result") or {}
+        if result.get("reached") is not True:
+            raise SDKError(409, "not_reached", "the move ended without reaching its target", result)
+        return action
 
     def glow(self, rgb: tuple[int, int, int], luminance: float | None = None) -> dict:
         payload: dict = {"color": [int(c) for c in rgb]}
