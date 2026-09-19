@@ -6,6 +6,7 @@ import math
 import os
 import sys
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -285,24 +286,29 @@ class FakeClock:
 
 
 class FakeMotors:
-    """The runtime's tracking route as measured: says ok at once, and `latency` later the arm has
-    made only `delivery` of the commanded delta (the rest is lost to the servo's P gain and torque
-    limit). A command that arrives while the last one is still pending replaces it."""
+    """Acknowledges at once, starts after `latency`, and interpolates for the requested duration.
+    Only `delivery` of the requested delta lands; another command replaces an unfinished move."""
 
     def __init__(self, clock, start, delivery=0.5, latency=0.15):
         self.clock, self.delivery, self.latency = clock, delivery, latency
-        self.frm, self.to, self.t0 = dict(start), dict(start), 0.0
-        self.posts = []
+        self.frm, self.to, self.t0, self.t1 = dict(start), dict(start), 0.0, 0.0
+        self.posts, self.before, self.superseded = [], [], 0
 
     def positions(self):
-        return dict(self.to if self.clock() >= self.t0 else self.frm), True
+        fraction = (float(np.clip((self.clock() - self.t0) / (self.t1 - self.t0), 0.0, 1.0))
+                    if self.t1 > self.t0 else 1.0)
+        return {j: self.frm[j] + fraction * (self.to[j] - self.frm[j]) for j in JOINTS}, True
 
     def post(self, pose, ms):
         here, _ = self.positions()
+        if self.clock() < self.t1 and F.moved_units(pose, here) > 0.05:
+            self.superseded += 1                       # a measured-pose settle is deliberately allowed
         self.posts.append((self.clock(), dict(pose), ms))
+        self.before.append(dict(here))
         self.frm = here
         self.to = {j: here[j] + (pose[j] - here[j]) * self.delivery for j in JOINTS}
         self.t0 = self.clock() + self.latency
+        self.t1 = self.t0 + ms / 1000.0
 
 
 class FakeCamera:
@@ -342,6 +348,347 @@ class NoThermal:
         return None
 
 
+class OneAxisModel:
+    """An angular yaw-only model for controller tests, requiring no robot files or hardware."""
+    limits = dict(F.DEFAULT_LIMITS)
+    fx = 1.0
+
+    def head(self, measured):
+        return {"position": np.zeros(3)}
+
+    def project(self, measured, point):
+        if point[1] <= 0:
+            return None
+        return 0.5 + (point[0] - measured["base_yaw"]) / 90.0, 0.5
+
+    def distance_from_size(self, size, width):
+        return self.fx / size
+
+    def target_point(self, measured, where, distance):
+        return np.array([measured["base_yaw"] + (where[0] - 0.5) * 90.0, 1.0, 0.0])
+
+    def aim_error_deg(self, measured, point):
+        return abs(point[0] - measured["base_yaw"])
+
+    def look_at(self, point, prefer_distance):
+        return pose(base_yaw=float(point[0])), {"rejected": []}
+
+    def problems(self, measured):
+        return []
+
+
+@pytest.fixture
+def one_axis_follow():
+    clock = FakeClock()
+    model = OneAxisModel()
+    motors = FakeMotors(clock, pose(), delivery=0.5, latency=0.20)
+    camera = FakeCamera(clock, motors, model, [30.0, 1.0, 0.0])
+    follower = F.LiveFollower(model, motors, camera, [("face", FakeFaces())], NoThermal(),
+                              F.LiveConfig(search=False), clock=clock, sleep=clock.sleep,
+                              out=lambda *a, **k: None)
+    return follower, clock, motors, camera
+
+
+def run_cycles(follower, clock, count):
+    for _ in range(count):
+        follower.cycle()
+        follower.poster.wait_idle()
+        clock.sleep(0.12)                               # newer than the requested camera frame threshold
+
+
+def test_fake_motors_include_transport_latency_and_motion_duration():
+    clock = FakeClock()
+    motors = FakeMotors(clock, pose(), delivery=0.5, latency=0.20)
+    motors.post(pose(base_yaw=10), 250)
+    clock.sleep(0.19)
+    assert motors.positions()[0]["base_yaw"] == pytest.approx(0)
+    clock.sleep(0.135)
+    assert motors.positions()[0]["base_yaw"] == pytest.approx(2.5)
+    clock.sleep(0.125)
+    assert motors.positions()[0]["base_yaw"] == pytest.approx(5)
+
+
+def test_live_loop_waits_for_landing_before_another_correction(one_axis_follow):
+    follower, clock, motors, _ = one_axis_follow
+    run_cycles(follower, clock, 60)
+    assert len(motors.posts) >= 3
+    assert motors.superseded == 0
+    assert all(b[0] - a[0] >= follower.cfg.land_settle - 1e-9
+               for a, b in zip(motors.posts, motors.posts[1:]))
+    assert follower.aim_error < follower.cfg.deadband_deg
+    assert not follower.guard.stalled and follower.fatal is None
+
+
+def test_delivered_half_steps_do_not_false_stall_when_target_direction_changes(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    for index in range(60):
+        camera.point[0] = 8.0 if index % 2 else -8.0
+        run_cycles(follower, clock, 1)
+    assert follower.commands >= 4
+    assert not follower.guard.stalled
+    assert follower.guard.misses == 0
+    assert follower.settles == 0 and follower.fatal is None
+    assert motors.superseded == 0
+
+
+def test_deadband_noise_does_not_start_repeated_corrections(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    for index in range(40):
+        camera.point[0] = 5.0 if index % 2 else -5.0  # outside 4-degree stop band, inside 6-degree start band
+        run_cycles(follower, clock, 1)
+    assert motors.posts == []
+    assert not follower.guard.stalled
+
+
+def test_correction_continues_inside_start_band_then_stays_stopped(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    camera.point[0] = 10.0
+    run_cycles(follower, clock, 20)
+    # First half-step leaves a 5-degree error: keep correcting until inside the 4-degree stop band.
+    assert len(motors.posts) == 2
+    assert motors.positions()[0]["base_yaw"] == pytest.approx(7.5)
+    camera.point[0] = 12.5                             # a new 5-degree error must not restart corrections
+    run_cycles(follower, clock, 12)
+    assert len(motors.posts) == 2
+
+
+def test_missing_face_requires_three_fresh_consecutive_sightings(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    run_cycles(follower, clock, 1)
+    camera.point[1] = -1.0
+    run_cycles(follower, clock, 1)
+    camera.point[1] = 1.0
+    run_cycles(follower, clock, 2)
+    assert motors.posts == []                         # the pre-loss sighting must not count
+    run_cycles(follower, clock, 1)
+    assert len(motors.posts) == 1
+
+
+def test_missing_face_resets_active_correction_hysteresis(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    camera.point[0] = 10.0
+    run_cycles(follower, clock, 3)                     # first command has been accepted
+    assert len(motors.posts) == 1
+    camera.point[1] = -1.0
+    run_cycles(follower, clock, 6)                     # allow its motion to finish with no detection
+    camera.point[1] = 1.0                             # now only 5 degrees away: below the start threshold
+    run_cycles(follower, clock, 8)
+    assert len(motors.posts) == 1
+
+
+def test_confirmed_centered_face_with_intermittent_misses_does_not_trigger_search(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    follower.cfg.search = True
+    camera.point[0] = 0.0
+    run_cycles(follower, clock, 3)
+    assert follower.aim_error == pytest.approx(0.0)
+    started = clock()
+    for index in range(60):
+        camera.point[1] = -1.0 if index % 3 == 2 else 1.0
+        run_cycles(follower, clock, 1)
+        assert follower.state not in ("searching", "parked")
+    assert clock() - started > 5.0
+    assert motors.posts == [] and follower.commands == 0
+
+
+def test_slow_replacement_detection_does_not_mix_expired_face_samples(one_axis_follow, monkeypatch):
+    follower, clock, motors, camera = one_axis_follow
+    run_cycles(follower, clock, 2)                     # two observations of A, not yet confirmed
+    tracker = follower.trackers[0][1]
+    locate = tracker.locate
+
+    def slow_locate(frame):
+        clock.sleep(0.61)                             # the old lock and both A observations expire
+        return locate(frame)
+
+    monkeypatch.setattr(tracker, "locate", slow_locate)
+    camera.point[0] = -30.0                           # replacement B appears on the other side
+    run_cycles(follower, clock, 1)
+    assert len(follower.sightings) == 1
+    assert follower.sightings[0][1][0] == pytest.approx(-30.0)
+    assert follower.aim_error is None and not follower.correcting
+    assert motors.posts == []
+
+    monkeypatch.setattr(tracker, "locate", locate)
+    run_cycles(follower, clock, 2)
+    assert len(motors.posts) == 1
+    assert motors.posts[0][1]["base_yaw"] < 0           # only B's three fresh samples may command motion
+
+
+@pytest.mark.parametrize("slow_stage", ["detector", "ik"])
+def test_landing_deadline_uses_actual_submission_after_slow_perception(one_axis_follow, monkeypatch, slow_stage):
+    follower, clock, motors, _ = one_axis_follow
+    if slow_stage == "detector":
+        tracker = follower.trackers[0][1]
+        locate, calls = tracker.locate, [0]
+
+        def slow_locate(frame):
+            calls[0] += 1
+            if calls[0] == 3:
+                clock.sleep(0.3)                      # still inside the three-sighting freshness window
+            return locate(frame)
+
+        monkeypatch.setattr(tracker, "locate", slow_locate)
+    else:
+        look_at = follower.model.look_at
+
+        def slow_look_at(*args, **kwargs):
+            clock.sleep(0.4)
+            return look_at(*args, **kwargs)
+
+        monkeypatch.setattr(follower.model, "look_at", slow_look_at)
+    run_cycles(follower, clock, 3)
+    assert len(motors.posts) == 1
+    assert follower.pending[0][0] >= motors.posts[0][0] + follower.cfg.land_settle - 1e-9
+
+
+def test_slow_post_gets_a_full_landing_allowance_after_completion(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+
+    def slow_post(commanded, ms):
+        clock.sleep(0.8)                              # runtime accepts only after the original deadline
+        motors.post(commanded, ms)
+
+    follower.poster = F.LivePoster(slow_post, follower.cfg.period, clock=clock)
+    run_cycles(follower, clock, 3)
+    completed = follower.poster.last_completed
+    assert completed - follower.poster.last_sent > follower.cfg.land_settle
+    assert len(motors.posts) == 1 and len(follower.pending) == 1
+    camera.point[1] = -1.0                            # no new command when the first landing is assessed
+
+    clock.t = completed + follower.cfg.land_settle - 0.01
+    follower.cycle()
+    assert len(follower.pending) == 1
+    assert follower.guard.last == "" and follower.guard.misses == 0
+
+    clock.sleep(0.02)
+    follower.cycle()
+    assert follower.pending == [] and follower.guard.last
+    assert follower.guard.misses == 0 and not follower.guard.stalled
+    assert motors.positions()[0]["base_yaw"] == pytest.approx(5.0)
+    assert len(motors.posts) == 1 and follower.settles == 0
+
+
+def test_rejected_post_is_not_assessed_as_a_failed_landing(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+
+    def reject_post(commanded, ms):
+        raise F.LiveRefused(422, "fixture refusal")
+
+    follower.poster = F.LivePoster(reject_post, follower.cfg.period, clock=clock)
+    run_cycles(follower, clock, 3)
+    assert len(follower.pending) == 1
+    camera.point[1] = -1.0
+    clock.sleep(follower.cfg.land_settle + 0.1)
+    follower.cycle()                                  # consumes the rejection before assessing a landing
+    assert follower.refusals == 1 and follower.pending == []
+    assert follower.guard.last == "" and follower.guard.misses == 0
+    assert not follower.guard.stalled and follower.settles == 0
+    assert motors.posts == [] and follower.poster.posts == 0
+
+
+def test_throttled_object_detections_still_acquire_three_sightings(one_axis_follow):
+    follower, clock, motors, _ = one_axis_follow
+    detected = []
+
+    class ThrottledObject:
+        label = "cup"
+
+        def locate(self, frame):
+            if detected and clock() - detected[-1] < 1.0:
+                return None
+            detected.append(clock())
+            return frame["face"]
+
+    follower.cfg.target = "object"
+    follower.trackers = [("object", ThrottledObject())]
+    run_cycles(follower, clock, 18)
+    assert len(detected) == 2 and len(follower.sightings) == 2
+    assert motors.posts == []
+    run_cycles(follower, clock, 1)
+    assert len(detected) == 3 and len(follower.sightings) == 3
+    assert len(motors.posts) == 1
+    assert motors.posts[0][0] >= detected[2]
+    assert follower.state == "tracking" and follower.fatal is None
+
+
+def face_detection(x, width):
+    box = SimpleNamespace(xmin=x - width / 2, ymin=0.4, width=width, height=0.2)
+    return SimpleNamespace(location_data=SimpleNamespace(relative_bounding_box=box))
+
+
+@pytest.fixture
+def face_lock(monkeypatch):
+    clock, detections = FakeClock(), []
+    detector = SimpleNamespace(process=lambda frame: SimpleNamespace(detections=detections))
+    fake_mp = SimpleNamespace(solutions=SimpleNamespace(face_detection=SimpleNamespace(
+        FaceDetection=lambda **kwargs: detector)))
+    monkeypatch.setitem(sys.modules, "mediapipe", fake_mp)
+    tracker = F.FaceTracker(clock=clock)
+    return tracker, clock, detections, np.zeros((8, 8, 3), dtype=np.uint8)
+
+
+def test_face_tracker_keeps_lock_when_another_face_becomes_larger(face_lock):
+    tracker, clock, detections, frame = face_lock
+    detections[:] = [face_detection(0.25, 0.20), face_detection(0.75, 0.18)]
+    assert tracker.locate(frame)[0] == pytest.approx(0.25)
+    clock.sleep(0.1)
+    detections[:] = [face_detection(0.25, 0.19), face_detection(0.75, 0.28)]
+    assert tracker.locate(frame)[0] == pytest.approx(0.25)
+
+
+def test_face_tracker_reports_loss_before_reacquiring_a_distant_face(face_lock):
+    tracker, clock, detections, frame = face_lock
+    detections[:] = [face_detection(0.25, 0.20)]
+    assert tracker.locate(frame)[0] == pytest.approx(0.25)
+    detections[:] = [face_detection(0.75, 0.30)]
+    clock.sleep(0.1)
+    assert tracker.locate(frame) is None
+    clock.sleep(0.4)
+    assert tracker.locate(frame) is None
+    clock.sleep(0.11)
+    # Reacquisition itself is immediate; the follower supplies three-frame confirmation.
+    assert tracker.locate(frame)[0] == pytest.approx(0.75)
+
+
+def test_face_tracker_retains_lock_across_modest_frame_to_frame_camera_motion(face_lock):
+    tracker, clock, detections, frame = face_lock
+    detections[:] = [face_detection(0.25, 0.04)]
+    assert tracker.locate(frame)[0] == pytest.approx(0.25)
+    # Each frame shifts less than the 0.06 floor, even after cumulative displacement is larger.
+    for x in (0.30, 0.35, 0.40, 0.45):
+        clock.sleep(0.1)
+        detections[:] = [face_detection(x, 0.04), face_detection(0.85, 0.20)]
+        assert tracker.locate(frame)[0] == pytest.approx(x)
+
+
+def test_expired_face_lock_does_not_prefer_a_nearby_box_over_a_larger_face(face_lock):
+    tracker, clock, detections, frame = face_lock
+    detections[:] = [face_detection(0.25, 0.20)]
+    assert tracker.locate(frame)[0] == pytest.approx(0.25)
+    detections.clear()
+    clock.sleep(0.3)
+    assert tracker.locate(frame) is None
+    clock.sleep(0.31)
+    detections[:] = [face_detection(0.26, 0.20), face_detection(0.75, 0.30)]
+    assert tracker.locate(frame)[0] == pytest.approx(0.75)
+
+
+@pytest.mark.parametrize("width,jump,accepted", [(0.20, 0.14, True), (0.20, 0.16, False),
+                                               (0.04, 0.05, True), (0.04, 0.07, False)])
+def test_face_tracker_rejects_spatial_jumps_using_previous_box_width(face_lock, width, jump, accepted):
+    tracker, clock, detections, frame = face_lock
+    detections[:] = [face_detection(0.25, width)]
+    assert tracker.locate(frame)[0] == pytest.approx(0.25)
+    clock.sleep(0.1)
+    detections[:] = [face_detection(0.25 + jump, width)]
+    result = tracker.locate(frame)
+    if accepted:
+        assert result is not None and result[0] == pytest.approx(0.25 + jump)
+    else:
+        assert result is None
+
+
 @needs_model
 def test_live_loop_turns_to_a_face_at_the_edge_and_locks_on(model):
     clock = FakeClock()
@@ -361,7 +708,7 @@ def test_live_loop_turns_to_a_face_at_the_edge_and_locks_on(model):
     f = F.LiveFollower(model, motors, cam, [("face", FakeFaces())], NoThermal(), cfg,
                        clock=clock, sleep=clock.sleep, out=lambda *a, **k: lines.append(" ".join(map(str, a))))
     errors, states = [], []
-    for _ in range(12):
+    for _ in range(32):                              # commands wait for latency plus the full timed move
         states.append(f.cycle())
         f.poster.wait_idle()
         if f.aim_error is not None:
@@ -407,7 +754,7 @@ def test_live_loop_searches_when_nobody_is_there_and_stalls_against_an_obstructi
     clock = FakeClock()
     motors = FakeMotors(clock, pose(base_yaw=20, base_pitch=-49.3, elbow_pitch=-22.5, wrist_pitch=30), delivery=0.5)
     cam = FakeCamera(clock, motors, model, np.array([0.0, -1.0, 0.3]))   # behind the lamp: never in the picture
-    cfg = F.LiveConfig(target="face", live_ms=250, period=0.25, step=10.0, land_settle=0.3)
+    cfg = F.LiveConfig(target="face", live_ms=250, period=0.25, step=10.0)
     f = F.LiveFollower(model, motors, cam, [("face", FakeFaces())], NoThermal(), cfg,
                        clock=clock, sleep=clock.sleep, out=lambda *a, **k: None)
     states = []

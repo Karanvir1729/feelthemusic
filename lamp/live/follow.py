@@ -26,6 +26,7 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -46,7 +47,8 @@ class Camera(threading.Thread):
         super().__init__(daemon=True)
         self.sdk, self.fps = sdk, fps
         self._lock = threading.Lock()
-        self._frame, self._stamp = None, 0.0
+        self._frame: np.ndarray | None = None
+        self._stamp = 0.0
         self.error, self.running = "", True
 
     def run(self) -> None:
@@ -97,16 +99,49 @@ class HandTracker:
 
 
 class FaceTracker:
-    def __init__(self):
+    """Keep the geometrically associated face, not whichever box is largest this frame.
+
+    This is box continuity, not person recognition. A brief loss holds the old selection but
+    returns no target; after expiry the follower must confirm the newly selected face afresh.
+    """
+    LOST_S = 0.6
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         import mediapipe as mp
         self.faces = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.35)
+        self.clock = clock
+        self._locked: tuple[float, float, float] | None = None
+        self._last_seen = float("-inf")
 
-    def locate(self, bgr):
+    def locate(self, bgr: np.ndarray) -> tuple[float, float, float] | None:
         result = self.faces.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-        if not result.detections:
+        now = self.clock()
+        boxes: list[tuple[float, float, float]] = []
+        for detection in result.detections or []:
+            box = detection.location_data.relative_bounding_box
+            candidate = (box.xmin + box.width / 2, box.ymin + box.height / 2, box.width)
+            if all(math.isfinite(v) for v in candidate) and 0 < candidate[2] <= 1:
+                boxes.append(candidate)
+        if now - self._last_seen >= self.LOST_S:
+            self._locked = None
+        if not boxes:
             return None
-        box = max((d.location_data.relative_bounding_box for d in result.detections), key=lambda b: b.width)
-        return box.xmin + box.width / 2, box.ymin + box.height / 2, box.width / FACE_WIDTH_M
+        if self._locked is None:
+            selected = max(boxes, key=lambda b: b[2])
+        else:
+            x, y, width = self._locked
+            aspect = bgr.shape[0] / bgr.shape[1]
+
+            def separation(box):
+                return math.hypot(box[0] - x, (box[1] - y) * aspect)
+
+            nearby = [b for b in boxes if 0.5 <= b[2] / width <= 2.0
+                      and separation(b) <= max(0.06, 0.75 * width)]
+            if not nearby:
+                return None
+            selected = min(nearby, key=separation)
+        self._locked, self._last_seen = selected, now
+        return selected[0], selected[1], selected[2] / FACE_WIDTH_M
 
 
 class ObjectTracker:
@@ -194,7 +229,8 @@ class Thermal:
     PATH = "/sys/class/thermal/thermal_zone0/temp"
 
     def __init__(self, warm_c: float, hot_c: float):
-        self.warm_c, self.hot_c, self.peak_c, self._last, self._temp = warm_c, hot_c, 0.0, 0.0, None
+        self.warm_c, self.hot_c, self.peak_c, self._last = warm_c, hot_c, 0.0, 0.0
+        self._temp: float | None = None
 
     def celsius(self) -> float | None:
         if time.monotonic() - self._last > 2.0:
@@ -318,7 +354,8 @@ class StallGuard:
 
     def __init__(self, min_ask: float = 3.0, fraction: float = 0.25, strikes: int = 3, release_deg: float = 15.0):
         self.min_ask, self.fraction, self.strikes, self.release_deg = min_ask, fraction, strikes, release_deg
-        self.misses, self.stalled, self.aim_at_stall = 0, False, None
+        self.misses, self.stalled = 0, False
+        self.aim_at_stall: float | None = None
         self.last = ""                                   # commanded vs landed, for the log line
 
     def record(self, before: dict, commanded: dict, landed: dict, aim_error: float | None) -> bool:
@@ -378,8 +415,12 @@ class LivePoster:
 
     def __init__(self, post, period: float, clock=time.monotonic):
         self._post, self.period, self.clock = post, period, clock
-        self._lock, self._busy, self._thread = threading.Lock(), False, None
-        self.last_sent, self.posts, self.rtt_ms, self._error = float("-inf"), 0, None, None
+        self._lock, self._busy = threading.Lock(), False
+        self._thread: threading.Thread | None = None
+        self.last_sent, self.posts = float("-inf"), 0
+        self.last_completed = float("-inf")
+        self.rtt_ms: float | None = None
+        self._error: Exception | None = None
 
     def ready(self, now: float | None = None) -> bool:
         now = self.clock() if now is None else now
@@ -408,6 +449,7 @@ class LivePoster:
         finally:
             self.rtt_ms = (time.perf_counter() - t0) * 1000
             with self._lock:
+                self.last_completed = self.clock()
                 self._busy = False
 
     def take_error(self) -> Exception | None:
@@ -473,13 +515,19 @@ class LiveFollower:
         self.clock, self.sleep, self.out = clock, sleep or (lambda s: self.stop.wait(s)), out
         self.poster = poster or LivePoster(link.post, cfg.period, clock)
         self.guard = StallGuard()
-        self.search = None                                # made on the first measured pose
-        self.sightings, self.history, self.pending = [], [], []
+        self.search: Search | None = None                 # made on the first measured pose
+        self.sightings: list[tuple[float, np.ndarray, str]] = []
+        self.history: list[tuple[float, dict]] = []
+        self.pending: list[tuple[float, dict, dict]] = []
         self.face_hold_until, self.fresh_after, self.last_note = float("-inf"), float("-inf"), float("-inf")
-        self.state, self.aim_error, self.fatal = "holding", None, None
+        self.state = "holding"
+        self.aim_error: float | None = None
+        self.fatal: str | None = None
         self.commands, self.refusals, self.read_failures, self.post_failures, self.consecutive_refusals = 0, 0, 0, 0, 0
         self.settles = 0
         self.stalled_noted, self.parked_noted = False, False
+        self.correcting = False
+        self.confirmed_face_until = float("-inf")
 
     # -------------------------------------------------------------- helpers
     def _pose_at(self, stamp: float) -> dict:
@@ -504,8 +552,12 @@ class LiveFollower:
 
     def _feed_guard(self, now: float, measured: dict) -> None:
         """Commands whose motion has had time to play: compare where the arm landed with what was asked."""
-        due = [p for p in self.pending if now >= p[0]]
-        self.pending = [p for p in self.pending if now < p[0]]
+        if not self.poster.ready(now):
+            return
+        # A slow request must not spend the landing allowance before the runtime accepts it.
+        completed = self.poster.last_completed + self.cfg.land_settle
+        due = [p for p in self.pending if now >= max(p[0], completed)]
+        self.pending = [p for p in self.pending if now < max(p[0], completed)]
         for _, before, commanded in due:
             tripped_before = self.guard.stalled
             self.guard.record(before, commanded, measured, self.aim_error)
@@ -517,6 +569,8 @@ class LiveFollower:
 
     def _send(self, now: float, measured: dict, goal: dict) -> tuple[dict | None, str]:
         """Step from the measured pose toward `goal` and post it. Returns (step or None, note)."""
+        if self.pending:
+            return None, "waiting for the last step to land"
         step = step_towards(measured, goal, self.cfg.step, self.model)
         if moved_units(step, measured) < 0.05:
             return None, "hold"
@@ -527,9 +581,7 @@ class LiveFollower:
         if not self.poster.submit(step, self.cfg.live_ms):
             return None, "busy"
         self.commands += 1
-        self.pending.append((now + self.cfg.land_settle, dict(measured), dict(step)))
-        if len(self.pending) > 8:
-            self.pending = self.pending[-8:]
+        self.pending.append((self.poster.last_sent + self.cfg.land_settle, dict(measured), dict(step)))
         return step, "sent"
 
     def _post_errors(self) -> None:
@@ -537,6 +589,7 @@ class LiveFollower:
         if exc is None:
             self.consecutive_refusals = self.post_failures = 0     # both counters mean "in a row"
             return
+        self.pending.clear()                            # a failed POST is not a landed movement sample
         if isinstance(exc, LiveRefused):
             self.refusals += 1
             self.consecutive_refusals += 1
@@ -601,6 +654,7 @@ class LiveFollower:
                 kind = tracker.label if name == "object" else name
                 break
         detect_ms = (time.perf_counter() - t0) * 1000
+        now = self.clock()                               # inference time counts against sighting freshness
         if kind == "face" and seen is not None:
             self.face_hold_until = now + self.FACE_STICKY_S
 
@@ -612,22 +666,37 @@ class LiveFollower:
             point = model.target_point(self._pose_at(stamp), (x, y), distance)
             window = 0.6 if kind in ("face", "hand") else 3.5
             self.sightings = [s for s in self.sightings if now - s[0] < window and s[2] == kind]
+            if not self.sightings:
+                self.correcting, self.aim_error = False, None
             self.sightings.append((now, point, kind))
             del self.sightings[:-self.SIGHTINGS]
-            self.search.saw(now, measured["base_yaw"])
-            self.parked_noted = False
+            # A confirmed face can blink out for a frame without starting a search. Only the
+            # associated incumbent survives this grace period; new selection follows lock expiry.
+            if kind == "face" and now < self.confirmed_face_until:
+                self.search.saw(now, measured["base_yaw"])
+                self.confirmed_face_until = now + FaceTracker.LOST_S
             if len(self.sightings) < self.SIGHTINGS:      # decide on a steady sighting, not on one frame
                 self.state, note = "tracking", f"{kind} sighted ({len(self.sightings)}/{self.SIGHTINGS})"
             else:
+                self.search.saw(now, measured["base_yaw"])
+                self.parked_noted = False
+                if kind == "face":
+                    self.confirmed_face_until = now + FaceTracker.LOST_S
                 target = np.median(np.array([s[1] for s in self.sightings]), axis=0)
                 self.aim_error = model.aim_error_deg(measured, target)
+                # Once centered, small detector noise must not restart a correction. A genuine
+                # correction continues to the tighter stop band before this latch clears.
+                if self.aim_error < cfg.deadband_deg:
+                    self.correcting = False
+                elif self.aim_error >= 1.5 * cfg.deadband_deg:
+                    self.correcting = True
                 if self.guard.blocked(self.aim_error):
                     self.state, note = "stalled", "holding until the target moves"
                 elif target[1] < 0.05:
                     self.state, note = "holding", "behind me: no reachable pose"
-                elif self.aim_error < cfg.deadband_deg:
+                elif not self.correcting:
                     self.state, note = "tracking", "on target"
-                elif not self.poster.ready(now):
+                elif self.pending or not self.poster.ready(now):
                     self.state, note = "tracking", "waiting for the last step"
                 else:
                     t1 = time.perf_counter()
@@ -639,6 +708,9 @@ class LiveFollower:
                         note += " (whole-arm pose refused; yaw+tilt from neutral)"
         else:
             self.aim_error = None
+            self.correcting = False
+            if cfg.target in ("face", "hand") or (self.sightings and self.sightings[-1][2] in ("face", "hand")):
+                self.sightings.clear()
             self.state, want = self.search.want(now)
             if self.state == "stalled" or self.guard.blocked(None):
                 self.state, note = "stalled", "holding until the target moves"
@@ -649,7 +721,7 @@ class LiveFollower:
                 if not self.parked_noted:
                     self.out("no face for a minute: parked at neutral, still looking", flush=True)
                     self.parked_noted = True
-            elif self.poster.ready(now):
+            elif not self.pending and self.poster.ready(now):
                 step, note = self._send(now, measured, want)
             else:
                 note = "waiting for the last step"
@@ -766,7 +838,8 @@ def main() -> None:
           flush=True)
     cam = Camera(sdk, args.fps)
     cam.start()
-    trackers = [(name, cls()) for name, cls in (("face", FaceTracker), ("hand", HandTracker))
+    trackers: list[tuple[str, FaceTracker | HandTracker | ObjectTracker]] = [
+                (name, cls()) for name, cls in (("face", FaceTracker), ("hand", HandTracker))
                 if args.target in ("auto", name)]
     if args.target in ("auto", "object"):
         if ObjectTracker.MODEL.exists():
@@ -808,7 +881,8 @@ def main() -> None:
         return
 
     started = last_note = time.monotonic()
-    fresh_after, sightings, moves, refused, failures = time.monotonic(), [], 0, 0, 0
+    fresh_after, moves, refused, failures = time.monotonic(), 0, 0, 0
+    sightings: list[tuple[float, float, float, float, str]] = []
     not_reached = 0            # consecutive moves that ended short of target
     while not stop.is_set() and (not args.seconds or time.monotonic() - started < args.seconds):
         if thermal.too_hot():
@@ -829,10 +903,13 @@ def main() -> None:
         for name, tracker in trackers:                 # a face wins over a hand
             seen = tracker.locate(frame)
             if seen is not None:
-                kind = tracker.label if name == "object" else name
+                kind = tracker.label if isinstance(tracker, ObjectTracker) else name
                 break
+        now = time.monotonic()                           # do not blend pre-inference sightings after a slow frame
         sightings = [s for s in sightings if now - s[0] < (3.5 if kind not in ("face", "hand") else 0.6) and s[4] == kind]
         if seen is None:
+            if args.target in ("face", "hand") or (sightings and sightings[-1][4] in ("face", "hand")):
+                sightings.clear()
             if now - last_note > 2:
                 print("nobody in view" if args.target != "hand" else "no hand in view", flush=True)
                 last_note = now
