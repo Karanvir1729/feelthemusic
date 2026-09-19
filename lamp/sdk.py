@@ -196,7 +196,9 @@ class LampSDK:
         try:
             body = self._call(method, path, json=json, timeout=timeout)
         except SDKError as exc:
-            if exc.status == 0 or (exc.code == "invalid_response" and exc.status < 400):
+            if method == "GET" or exc.status == 0 or exc.status >= 500 or (
+                exc.code == "invalid_response" and exc.status < 400
+            ):
                 # A malformed/lost response is not proof the action was refused.
                 # Preserve the existing caller contract: 409 means stop issuing moves.
                 raise SDKError(409, "lost_track", "action outcome unknown: invalid or lost gateway response") from None

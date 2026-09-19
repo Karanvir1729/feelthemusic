@@ -130,6 +130,32 @@ def test_transport_failure_after_submission_is_terminal_and_not_retried(client, 
     assert client.http.request.call_count == 1
 
 
+@pytest.mark.parametrize("status", [500, 502, 503])
+def test_server_failure_is_an_unknown_outcome_not_a_refusal(client, monkeypatch, status):
+    monkeypatch.setattr(client, "_ensure_session", Mock())
+    client.http.request.return_value = response({"error": {"message": "unavailable"}}, status)
+    with pytest.raises(SDKError) as failure:
+        client.action("motion.move", {})
+    assert failure.value.status == 409
+    assert failure.value.code == "lost_track"
+    assert client.http.request.call_count == 1
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 429, 500])
+def test_poll_failure_never_becomes_a_retryable_move_refusal(client, monkeypatch, status):
+    monkeypatch.setattr(client, "_ensure_session", Mock())
+    monkeypatch.setattr("sdk.time.sleep", lambda _: None)
+    client.http.request.side_effect = [
+        response({"action": {"action_id": "a", "state": "running"}}),
+        response({"error": {"message": "unavailable"}}, status),
+    ]
+    with pytest.raises(SDKError) as failure:
+        client.action("motion.move", {})
+    assert failure.value.status == 409
+    assert failure.value.code == "lost_track"
+    assert client.http.request.call_count == 2
+
+
 @pytest.mark.parametrize("session", [None, {}, {"session_id": "a", "expires_at": float("nan")},
                                      {"session_id": [], "expires_at": 1000}])
 def test_malformed_session_is_rejected_before_header_mutation(client, session):

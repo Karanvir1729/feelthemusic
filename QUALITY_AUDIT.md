@@ -39,7 +39,7 @@ uv run --isolated --no-project --python 3.12 --with-requirements requirements-de
 
 | Check | Result |
 | --- | --- |
-| Audit branch, Python 3.11 and 3.12 | 65 passed; 9 private-model tests skipped |
+| Audit branch, Python 3.11 and 3.12 | 73 passed; 9 private-model tests skipped |
 | Root correctness lint | Passed |
 | Changed SDK module type-check | Passed on both Python versions |
 | Whole `lamp` type-check | 10 pre-existing errors in `lamp/spatial.py`, listed below |
