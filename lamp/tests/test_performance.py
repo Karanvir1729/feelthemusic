@@ -1,4 +1,5 @@
 import json
+import math
 import socket
 import time
 import pytest
@@ -89,7 +90,6 @@ def test_flash_limiter_caps_rapid_strobing():
             outputs.append(res[0])
 
     # Verify that the limiter held outputs once 3 flashes/s was hit
-    # (Consecutive identical outputs mean the limiter held the last state)
     held_count = sum(1 for i in range(1, len(outputs)) if outputs[i] == outputs[i - 1])
     assert held_count > 0
 
@@ -121,11 +121,10 @@ def test_gesture_cooldown_prevents_spamming():
 def test_handle_event_drops_late_events():
     sdk = MockLampSDK()
     simulated_time = [100.0]
-    # L = 0.3s, trim = 0.05s, target = pts + 0.25s. max_drop_late = 0.08s
     performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
     performer.clock_offset = 0.0
 
-    # Event with pts = 90.0 (target fire was 90.25s, current time is 100.0s -> over 9s late!)
+    # Event with pts = 90.0 (target fire was 90.27s, current time is 100.0s -> over 9s late!)
     late_event = {"pts": 90.0, "kind": "kick", "strength": 1.0}
     fired = performer.handle_event(late_event)
 
@@ -134,49 +133,76 @@ def test_handle_event_drops_late_events():
     assert performer.stats.events_fired == 0
 
 
-def test_handle_event_dispatches_kinds():
+def test_clock_sync_works_when_clocks_far_apart():
     sdk = MockLampSDK()
-    simulated_time = [100.0]
+    # Local clock at 5000.0, conductor at 12.0
+    simulated_time = [5000.0]
     performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
 
-    # On-time bass event: target = 99.75 + 0.25 = 100.0
-    bass_event = {"pts": 99.75, "kind": "bass", "value": 0.8}
-    assert performer.handle_event(bass_event) is True
-    assert len(sdk.glows) == 1
-
-    # On-time drop event
-    drop_event = {"pts": 99.75, "kind": "drop"}
-    assert performer.handle_event(drop_event) is True
-    assert sdk.animations == ["excited"]
-
-    # Clock sync event
-    sync_event = {"pts": 200.0, "kind": "clock_sync"}
+    sync_event = {"pts": 12.0, "kind": "clock_sync"}
     assert performer.handle_event(sync_event) is True
-    assert performer.clock_offset == pytest.approx(100.0)  # 200.0 - 100.0
+    # Offset is 12.0 - 5000.0 = -4988.0
+    assert performer.clock_offset == pytest.approx(-4988.0)
+
+    # Now a music event on conductor clock 12.0 + 0.5 = 12.5
+    # target = (12.5 - (-4988.0)) + 0.300 - 0.030 = 5000.5 + 0.27 = 5000.77
+    music_event = {"pts": 12.0 + (simulated_time[0] - 5000.0) - 0.27, "kind": "bass", "value": 0.5}
+    assert performer.handle_event(music_event) is True
 
 
-def test_handle_error_gracefully():
+def test_nan_and_inf_pts_safely_rejected():
     sdk = MockLampSDK()
     simulated_time = [100.0]
-    sdk.glow = lambda *args, **kwargs: (_ for _ in ()).throw(SDKError(400, "bad_request", "invalid"))
-    sdk.play_animation = lambda *args, **kwargs: (_ for _ in ()).throw(SDKError(409, "rejected", "busy"))
-
     performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
 
-    # Glow error caught
-    assert performer.handle_bass_envelope(simulated_time[0], 0.7) is False
-    assert "glow failed" in performer.stats.last_error
+    nan_event = {"pts": float("nan"), "kind": "kick"}
+    assert performer.handle_event(nan_event) is False
 
-    # Gesture error caught
+    inf_event = {"pts": float("inf"), "kind": "kick"}
+    assert performer.handle_event(inf_event) is False
+
+
+def test_refusal_limit_latches_off():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+    # Simulate repeated 409 refusals
+    sdk.play_animation = lambda *args, **kwargs: (_ for _ in ()).throw(
+        SDKError(409, "lost_track", "action outcome unknown")
+    )
+    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
+
+    for i in range(3):
+        simulated_time[0] += 5.0
+        assert performer.play_musical_gesture("nod") is False
+
+    assert performer.latched_off is True
+    assert performer.stats.terminal_refusals >= 1
+
+    # Further attempts immediately rejected without invoking SDK
     assert performer.play_musical_gesture("nod") is False
-    assert "gesture failed" in performer.stats.last_error
 
 
-def test_performance_bridge_udp():
+def test_weak_kick_does_not_trigger_arm_nod():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
+
+    # Weak kick (strength 0.3) -> pulses light, but does NOT play whole-arm animation
+    weak_kick = {"kind": "kick", "strength": 0.3}
+    assert performer.handle_event(weak_kick) is True
+    assert len(sdk.animations) == 0
+
+    # Strong kick (strength 0.85) -> triggers whole-arm nod
+    strong_kick = {"kind": "kick", "strength": 0.85}
+    assert performer.handle_event(strong_kick) is True
+    assert sdk.animations == ["nod"]
+
+
+def test_performance_bridge_udp_sender_pinning():
     sdk = MockLampSDK()
     performer = MusicPerformer(sdk)
     bridge = PerformanceBridge(performer, host="127.0.0.1", port=0)
-    # Bind socket to an OS-assigned ephemeral port
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
     bridge.port = sock.getsockname()[1]
@@ -191,7 +217,6 @@ def test_performance_bridge_udp():
         sender.sendto(packet, ("127.0.0.1", bridge.port))
         sender.close()
 
-        # Wait briefly for bridge to receive and process
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline and performer.stats.events_received == 0:
             time.sleep(0.02)
