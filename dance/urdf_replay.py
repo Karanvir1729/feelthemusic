@@ -32,6 +32,10 @@ def load_model(urdf_path):
     model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
     if any(kind != mujoco.mjtJoint.mjJNT_HINGE for kind in model.jnt_type):
         raise ValueError("this replay supports revolute joints only")
+    if not model.njnt:
+        raise ValueError("model has no articulated joints")
+    if not any(model.geom_contype) and not any(model.geom_conaffinity):
+        raise ValueError("model has no collision-enabled geometry")
     # Hash the bytes of every loaded mesh, not just the URDF reference strings.
     digest = hashlib.sha256(json.dumps(sorted(assets.values())).encode()).hexdigest()
     return model, digest

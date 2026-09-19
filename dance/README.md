@@ -14,6 +14,7 @@ The trajectory schema is a JSON list of `{"time_s": 0, "positions_rad": {"joint-
 This is a diagnostic input format, **not an SDK clip or normalized motor-unit format**.
 Mesh bytes and URDF bytes contribute to the model digest.
 The tool reports all sampled penetrations and joint-limit violations without guessing contact exclusions.
+Models without articulated joints or collision-enabled geometry are rejected.
 
 ```sh
 uv run --python 3.12 --with-requirements requirements-dev.txt --with mujoco==3.13.0 python -m pytest tests/dance
@@ -39,3 +40,7 @@ The public model results are not validation of the borrowed lamp.
 Before generating SDK clips, task #25 still needs the exact CSV/manifest contract, verified normalized joint envelope, calibrated robot assets, and independent twin evidence from the architecture owner.
 The private mirror is currently inaccessible to this operator's account.
 No vendor assets belong in this public repository.
+
+Nyquist reported hardware observations on 2026-09-19: extended elbow poses sagged roughly 20-30 normalized units, and the vendor hardware model specifies 140 units/s versus the SDK admission cap of 300 units/s.
+These are teammate-reported measurements, not reproduced by this harness.
+Candidate choreography must not treat the higher admission cap as delivered physical speed, or assume a position-only replay models load-dependent sag.
