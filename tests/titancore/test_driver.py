@@ -111,14 +111,21 @@ def test_driver_channel_m_cooldown():
 def test_driver_emergency_stop():
     fake = FakeSerialPort()
     driver = TitanDriver(serial_instance=fake)
+    driver.arm()
+    assert driver.armed is True
 
     driver.send_pcm([200, 220])
+    lines_before = len(fake.written_lines)
     driver.emergency_stop()
 
-    assert "CHNL 0" in fake.written_lines[-3]
-    assert "pause 0" in fake.written_lines[-2]
-    assert "PCM 128,128,128,128,128,128,128,128" in fake.written_lines[-1]
-    assert driver._last_pcm_sample == 128
+    # Emergency stop disarms the driver to suppress all software writes
+    assert driver.armed is False
+    # No invented serial commands transmitted
+    assert len(fake.written_lines) == lines_before
+
+    # Subsequent writes are safely blocked while disarmed
+    assert driver.send_tick(channel=3, strength=0.5, duration_ms=20) is False
+    assert len(fake.written_lines) == lines_before
 
     driver.close()
     assert not driver.is_connected
@@ -202,7 +209,7 @@ def test_event_mapper_stop_and_unknown():
 
     stop_event = {"type": "stop"}
     assert mapper.handle_event(stop_event) is True
-    assert "pause 0" in fake.written_lines[-2]
+    assert driver.armed is False
 
     unknown_event = {"type": "laser_beam"}
     assert mapper.handle_event(unknown_event) is False
@@ -254,7 +261,7 @@ def test_event_mapper_late_stop_never_dropped():
     # Stop event with ancient pts (1.0s vs current 100.0s)
     late_stop = {"type": "stop", "pts": 1.0}
     assert mapper.handle_event(late_stop) is True
-    assert "pause 0" in fake.written_lines[-2]
+    assert driver.armed is False
     assert mapper.dropped_late_events == 0
 
 
@@ -314,7 +321,7 @@ def test_driver_arming_gate():
     # Disarming sends emergency stop then disarms
     driver.disarm()
     assert not driver.armed
-    assert "pause 0" in fake.written_lines[-2]
+    assert driver.send_tick(3, 1.0, 20) is False
 
 
 def test_driver_and_mapper_clamping():

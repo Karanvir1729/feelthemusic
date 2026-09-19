@@ -195,6 +195,8 @@ class TitanDriver:
         Recovered vendor grammar: PCM <v0>,<v1>,...,<vN>;
         Enforces rest-centering (128) and slew-rate clamping.
         """
+        if not self.armed:
+            return []
         if not samples:
             raise ValueError("Cannot send empty PCM sample block")
 
@@ -235,6 +237,8 @@ class TitanDriver:
 
         Grammar: CHNL <channel>; Tick <strength> <durationMs>;
         """
+        if not self.armed:
+            return False
         try:
             s_val = float(strength)
             d_val = float(duration_ms)
@@ -267,6 +271,8 @@ class TitanDriver:
 
         Grammar: CHNL <channel>; Pulse <strength> <durationMs>;
         """
+        if not self.armed:
+            return False
         try:
             s_val = float(strength)
             d_val = float(duration_ms)
@@ -307,6 +313,8 @@ class TitanDriver:
 
         Grammar: CHNL <channel>; vibrate <freqHz> <strength> <durationMs> <duty> <sharpness>;
         """
+        if not self.armed:
+            return False
         try:
             f = float(freq_hz)
             s = float(strength)
@@ -328,6 +336,8 @@ class TitanDriver:
 
         Grammar: pause <durationMs>;
         """
+        if not self.armed:
+            return False
         try:
             d = float(duration_ms)
             if not math.isfinite(d):
@@ -363,21 +373,17 @@ class TitanDriver:
         return self.send_tick(channel=3, strength=strength, duration_ms=dur_val)
 
     def emergency_stop(self) -> None:
-        """Instantly silence all channels and reset state to rest."""
-        if not self.is_connected:
-            return
-        # Force armed state to guarantee emergency stop commands are transmitted
-        was_armed = self.armed
-        self.armed = True
-        try:
-            # Neutralize all channels and reset L/R to rest (128)
-            self._write_command("CHNL 0; pause 0;")
-            rest_frame = [self.REST_VALUE] * 8
-            values_str = ",".join(str(v) for v in rest_frame)
-            self._write_command(f"PCM {values_str};")
-            self._last_pcm_sample = self.REST_VALUE
-        finally:
-            self.armed = was_armed
+        """Instantly suppress all software output dispatch and disarm the driver.
+
+        NOTE (AGENTS.md Rule 8 / Task #9):
+        The vendor firmware specification (Datasheet V2.1 TC-153286-B) defines no documented
+        emergency stop command. Rather than inventing unsourced serial commands that may have
+        unintended hardware side effects, this method immediately disarms the driver (self.armed = False)
+        to suppress all pending and subsequent software writes. Physical cancellation behavior
+        on the hardware remains unverified pending Task #9 bench measurements.
+        """
+        self.armed = False
+        self._last_pcm_sample = 0
 
     def close(self) -> None:
         """Shut down the driver and close serial connection."""

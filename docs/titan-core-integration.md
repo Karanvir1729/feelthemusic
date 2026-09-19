@@ -13,39 +13,38 @@ The TITAN Core haptic kit pairs an ESP32 microcontroller with two distinct ampli
                           USB UART (115200 baud, 8N1)
                                       |
                            +----------------------+
-                           |   TITAN Core ESP32   |
+                           |   TITAN Core Board   |
                            +----------------------+
                              /         |        \
                             /          |         \
-               (GPIO25 / DAC1)         |      (GPIO26 / DAC2)
-                     /           (GPIO18 / PWM)    \
-                    v                  |            v
-           +-----------------+         |   +-----------------+
-           | PAM8403 Class-D |         |   | PAM8403 Class-D |
-           | Audio Amp (L)   |         v   | Audio Amp (R)   |
-           +-----------------+  +--------+ +-----------------+
-                    |           | DRV8212|          |
-                    v           |H-Bridge|          v
+                           v           |          v
+            +-----------------+        |   +-----------------+
+            | PAM8403 Class-D |        |   | PAM8403 Class-D |
+            | Audio Amp (L)   |        v   | Audio Amp (R)   |
+            +-----------------+ +--------+ +-----------------+
+                     |          | DRV8212|          |
+                     v          |H-Bridge|          v
             +---------------+   +--------+  +---------------+
             | Left Voice    |       |       | Right Voice   |
-            | Coil (Sub-Bass)       v       | Coil (Sub-Bass)
+            | Coil (Channel 1)      v       | Coil (Channel 2)
             +---------------+ +-----------+ +---------------+
-                              | TacHammer |
-                              | (M Trans) |
+                              | Middle    |
+                              | Transducer|
+                              | (Ch 3, M) |
                               +-----------+
 ```
 
 | Channel | Driver / Amplifier | Output Ceiling | Transducer Type | Musical Role |
 |---|---|---|---|---|
-| **0 (All)** | Broadcast / All | Board Vin 4.75–5.25 V | All transducers | Broadcast commands (e.g. emergency silence) |
+| **0 (All)** | Broadcast / All | Board Vin 4.75–5.25 V | All transducers | Broadcast commands |
 | **1 (Left)** | PAM8403 Class-D Stereo | 5 V, 0.6 A / ch | Voice-coil actuator | Continuous sub-bass (50–100 Hz), stereo panning |
 | **2 (Right)** | PAM8403 Class-D Stereo | 5 V, 0.6 A / ch | Voice-coil actuator | Continuous sub-bass (50–100 Hz), stereo panning |
-| **3 (Middle)** | DRV8212 H-Bridge | Board Vin 4.75–5.25 V (2 A pk) | TacHammer / LRA | High-impact transients (kicks & sharp snares) |
+| **3 (Middle)** | DRV8212 H-Bridge | Board Vin 4.75–5.25 V (2 A pk) | High-impact transducer (M) | Transients (kicks & sharp snares) |
 
 > [!WARNING]
 > **Electrical Power Limits (Vendor Datasheet V2.1 TC-153286-B)**:
 > - **Board Vin Absolute Maximum**: **6.0 V**. Recommended operating range: **4.75–5.25 V** (standard 5V USB / power bank).
-> - **CAUTION**: **NEVER apply 12 V to the board or its power rails.** The 12 V rating in the DRV8212 IC datasheet is an internal chip maximum, NOT board Vin. Applying 12 V will destroy the ESP32 and logic stages.
+> - **CAUTION**: **NEVER apply 12 V to the board or its power rails.** The 12 V rating in the DRV8212 IC datasheet is an internal chip maximum, NOT board Vin. Board Vin ABS MAX is 6.0 V.
 > - **GPIO Logic**: Maximum 3.6 V (3.3 V logic).
 > - **Motor Current**: Peak 2.0 A, sustained lower. 1S LiPo JST-PH2 charger: 500 mA.
 
