@@ -1,0 +1,8 @@
+cadquery==2.6.1
+trimesh==4.8.3
+numpy==2.2.6
+scipy==1.15.3
+networkx==3.5
+lxml==6.0.2
+pytest==8.4.2
+mujoco==3.3.7
