@@ -456,3 +456,171 @@ def test_partial_run_keeps_the_library_and_leaves_the_alias_alone(tmp_path):
     m = json.loads((tmp_path / "MANIFEST.json").read_text())
     assert len(m["clips"]) == 12 and m["tiers"] == ["groove", "drop", "build"]
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted([f"{c['name']}.csv" for c in m["clips"]] + ["MANIFEST.json"])
+
+
+# ----------------------------------------------------------------------------- live path: bold, make_clip, atomic writes
+def test_bold_multiplier_maps_the_slider():
+    assert bc.bold_multiplier(1.0) == 1.0                    # exactly: the library is the bold-1.0 case
+    assert bc.bold_multiplier(0.0) == pytest.approx(0.35)
+    assert bc.bold_multiplier(0.6) == pytest.approx(0.74)
+    assert bc.bold_multiplier(2.0) == 1.0 and bc.bold_multiplier(-1.0) == pytest.approx(0.35)
+    assert bc.bold_multiplier(float("nan")) == pytest.approx(0.35)
+    raw = bc.raw_trajectory("hype", 128, "a")
+    assert bc.bold_trajectory("hype", 128, "a", 1.0) is not None
+    assert np.array_equal(bc.bold_trajectory("hype", 128, "a", 1.0), raw)          # untouched, not a float round trip
+    half = bc.bold_trajectory("hype", 128, "a", 0.0)
+    assert np.allclose(half - bc.START, 0.35 * (raw - bc.START))
+
+
+def test_bold_is_applied_before_the_speed_budget():
+    # a speed-bound joint: bold 1.0 is scaled by the budget; bold 0.0 is a third of the RAW pattern and,
+    # if that fits the budget, gets scale 1.0 -- so its commanded excursion is min(m * raw, budget), never more
+    bpm = 127.3
+    raw = bc.raw_trajectory("groove", bpm, "a")
+    s1 = bc.joint_scales(raw, bpm)
+    s0 = bc.joint_scales(bc.bold_trajectory("groove", bpm, "a", 0.0), bpm)
+    assert s1[bc.YAW] < 1.0 and s0[bc.YAW] > s1[bc.YAW]
+    assert (s0 >= s1 - 1e-12).all()
+    for bold in (0.0, 0.6, 1.0):
+        rows, meta = bc.make_clip("groove", "a", bpm, bold)
+        U = np.array(rows)
+        assert bc.peak_speed(U).max() <= bc.SPEED_DESIGN and not bc.envelope_violations(U)
+        assert np.allclose(U[0], bc.START) and np.allclose(U[-1], bc.START)
+        assert meta["ok"] is None and meta["frames"] == len(rows) == round(bc.clip_seconds(bpm) * bc.FPS)
+        assert meta["multiplier"] == pytest.approx(bc.bold_multiplier(bold))
+
+
+def _excursion(rows):
+    return np.abs(np.array(rows) - bc.START).max(axis=0)
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_make_clip_at_exact_bpm_passes_validation_and_grows_with_bold():
+    v = bc.Validator(ROBOTDESC)
+    bpm = 127.3
+    for tier, variant in COMBOS:
+        prev = None
+        for bold in (0.0, 0.6, 1.0):
+            rows, meta = bc.make_clip(tier, variant, bpm, bold, model=v)
+            assert meta["ok"] is True and meta["reasons"] == [], (tier, variant, bold, meta["reasons"])
+            assert isinstance(rows, list) and len(rows[0]) == 5 and isinstance(rows[0], tuple)
+            ok, report = bc.validate_rows(rows, v)
+            assert ok and report["ok"] and report["frames"] == len(rows) and report["peak_speed"]["base_yaw"] <= 140
+            exc = _excursion(rows)
+            if prev is not None:
+                # every joint's excursion is monotone in bold; a speed-bound joint sits at the budget for
+                # every bold (its scale is quantised in 0.005 steps, hence the 1 % tolerance)
+                assert (exc >= prev * 0.99 - 1e-6).all(), (tier, variant, bold, prev, exc)
+                assert exc.sum() > prev.sum()
+            prev = exc
+        # bold 0 is 35 % of bold 1 on a joint that neither the speed budget nor the envelope clamp binds.
+        # The clamp runs after the gain and may trim either clip (the build's shallow crouch at bold 0
+        # meets the flip-region floor before its elbow is lifted), so it is checked, not assumed.
+        def unclamped(bold):
+            rows, meta = bc.make_clip(tier, variant, bpm, bold)
+            raw = bc.bold_trajectory(tier, bpm, variant, bold)
+            pre = bc.apply_gain(bc.scaled(raw, [meta["scale"][j] for j in bc.JOINTS]))
+            return np.array(rows), meta, np.isclose(pre, np.array(rows)).all(axis=0)
+        U0, m0, free0 = unclamped(0.0)
+        U1, m1, free1 = unclamped(1.0)
+        lo, hi = _excursion(U0), _excursion(U1)
+        checked = 0
+        for j in range(5):
+            if free0[j] and free1[j] and m1["scale"][bc.JOINTS[j]] == 1.0 and hi[j] > 1.0:
+                assert lo[j] / hi[j] == pytest.approx(0.35, abs=0.01), (tier, variant, bc.JOINTS[j])
+                checked += 1
+        assert checked >= 1, (tier, variant)
+    # a bad row is caught, and lists of tuples are accepted like arrays
+    rows, _ = bc.make_clip("groove", "a", bpm, 0.6)
+    bad = list(rows); bad[40] = (0.0, -70.0, -22.0, 0.0, 30.0)
+    ok, report = bc.validate_rows(bad, v)
+    assert not ok and any("base_pitch" in r for r in report["reasons"])
+    assert bc.validate_rows([rows[0]], v) == (False, {"ok": False, "reasons": ["rows must be (n >= 2, 5), got (1, 5)"]})
+    with pytest.raises(ValueError):
+        bc.make_clip("groove", "a", 20.0, 0.5)
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_make_clip_bold_1_at_a_bucket_is_the_batch_file_byte_for_byte(tmp_path):
+    quiet = lambda *_: None  # noqa: E731
+    entries, failures = bc.generate(tmp_path, ["groove", "drop"], [128], ROBOTDESC, log=quiet, variants=("b",), aliases=False)
+    assert failures == []
+    for e in entries:
+        rows, meta = bc.make_clip(e["tier"], e["variant"], 128.0, 1.0, model=bc.Validator(ROBOTDESC))
+        text = bc.csv_text(rows)
+        assert (tmp_path / f"{e['name']}.csv").read_bytes() == text.encode()
+        assert hashlib.md5(text.encode()).hexdigest() == e["md5"] and meta["ok"] and meta["scale"] == e["scale"]
+    # ... and the library is unchanged by the refactor: every clip the OLD generator wrote (its manifest
+    # carries the md5) comes out the same from the shared path, with or without going through make_clip
+    manifest = bc.DEFAULT_OUT / "MANIFEST.json"
+    if not manifest.exists():
+        pytest.skip(f"no generated library at {bc.DEFAULT_OUT}")
+    m = json.loads(manifest.read_text())
+    real = [c for c in m["clips"] if not c.get("alias_of")]
+    assert len(real) >= 12
+    for c in real:
+        _, U = bc.build_clip(c["tier"], c["bpm"], c["variant"])
+        assert hashlib.md5(bc.csv_text(U).encode()).hexdigest() == c["md5"], c["name"]
+    for c in real[::37]:
+        rows, _ = bc.make_clip(c["tier"], c["variant"], float(c["bpm"]), 1.0)
+        assert hashlib.md5(bc.csv_text(rows).encode()).hexdigest() == c["md5"], c["name"]
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_validator_for_lamp_uses_the_given_checkout_and_calibration():
+    v = bc.Validator.for_lamp(ROBOTDESC / "pi5_feetech_r1", ROBOTDESC / "lelamp-calibration.json")
+    assert v.model.robot_dir == ROBOTDESC / "pi5_feetech_r1" and "lelamp-calibration.json" in v.model.scale_source
+    rows, _ = bc.make_clip("build", "c", 127.3, 1.0)
+    assert bc.validate_rows(rows, v)[0] and bc.validate_rows(rows, v.model)[0]     # a LampModel works too
+    assert bc.validate_rows(rows, v)[1] == bc.validate_rows(rows, bc.Validator(ROBOTDESC))[1]
+    assert bc.LAMP_CALIBRATION == Path("/var/lib/lelamp/user-data/v1/calibration/lelamp.json")
+
+
+def test_write_clip_atomic_leaves_nothing_behind_on_failure(tmp_path, monkeypatch):
+    rows = [(0.0, -49.0, -22.0, 0.0, 30.0)] * 40
+    path = tmp_path / "live_2.csv"
+    md5 = bc.write_clip_atomic(path, rows)
+    assert path.read_text() == bc.csv_text(rows) and md5 == hashlib.md5(bc.csv_text(rows).encode()).hexdigest()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["live_2.csv"]                # no temp left
+    before = path.read_bytes()
+    # the fsync fails (disk gone): no temp file, the old file untouched
+    def boom(*a, **k): raise OSError("simulated")
+    monkeypatch.setattr(bc.os, "fsync", boom)
+    with pytest.raises(OSError):
+        bc.write_clip_atomic(path, rows[:10])
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["live_2.csv"] and path.read_bytes() == before
+    monkeypatch.undo()
+    # the rename fails: same
+    monkeypatch.setattr(bc.os, "replace", boom)
+    with pytest.raises(OSError):
+        bc.write_clip_atomic(tmp_path / "live_3.csv", rows)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["live_2.csv"]
+    monkeypatch.undo()
+    # the re-read does not match what was written: the file is removed, not left for the runtime
+    monkeypatch.setattr(bc.Path, "read_bytes", lambda self: b"corrupt")
+    with pytest.raises(IOError):
+        bc.write_clip_atomic(tmp_path / "live_4.csv", rows)
+    monkeypatch.undo()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["live_2.csv"]
+    # the temp name starts with '.' and lives in the same dir
+    seen = []
+    real_replace = bc.os.replace
+    monkeypatch.setattr(bc.os, "replace", lambda a, b: seen.append((Path(a), Path(b))) or real_replace(a, b))
+    bc.write_clip_atomic(tmp_path / "live_5.csv", rows)
+    (tmp, dst), = seen
+    assert tmp.parent == tmp_path and tmp.name.startswith(".live_5.csv.") and tmp.name.endswith(".tmp") and dst == tmp_path / "live_5.csv"
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_one_cli_writes_a_validated_clip_at_the_exact_bpm(tmp_path, capsys):
+    out = tmp_path / "one"
+    assert bc.main(["--one", "groove", "a", "127.3", "0.8", "--out", str(out), "--robotdesc", str(ROBOTDESC)]) == 0
+    files = sorted(p.name for p in out.iterdir())
+    assert files == ["live_groove_a_127p3_0p80.csv"]
+    lines = (out / files[0]).read_text().splitlines()
+    assert lines[0] == bc.CSV_HEADER and len(lines) - 1 == round(bc.clip_seconds(127.3) * bc.FPS)
+    rows, _ = bc.make_clip("groove", "a", 127.3, 0.8)
+    assert (out / files[0]).read_text() == bc.csv_text(rows)
+    assert "PASS" in capsys.readouterr().out
+    assert bc.main(["--one", "waltz", "a", "128", "0.5", "--out", str(out), "--robotdesc", str(ROBOTDESC)]) == 2
+    assert bc.one_name("hype", "c", 128.0, 1.0) == "live_hype_c_128_1p00"

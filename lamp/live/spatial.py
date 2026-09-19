@@ -72,6 +72,7 @@ class LampModel:
                  hfov_deg: float = 61.0, vfov_deg: float = 44.0,
                  table_margin: float = 0.06, base_margin: float = 0.02, limit_margin: float = 6.0):
         robot_dir = Path(robot_dir)
+        self.robot_dir = robot_dir                           # beat_clips reads the URDF inertials from here
         mapping = json.loads((robot_dir / "joint_mapping.yaml").read_text())   # the file holds JSON
         self.neutral = {j: float(mapping["neutral"][j]) for j in JOINTS}
         # Radians per unit. The vendor's joint map uses ONE approximate scale for every joint (it

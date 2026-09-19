@@ -169,7 +169,8 @@ class ObjectTracker:
 def idle_off(base: str) -> str | None:
     import requests
     try:
-        was = requests.get(f"{base}/api/animations/status", timeout=4).json().get("current_idle") or "idle"
+        # None means the runtime's idle is already off (the "none" sentinel): restore exactly that, never "idle".
+        was = requests.get(f"{base}/api/animations/status", timeout=4).json().get("current_idle") or "none"
         requests.post(f"{base}/api/animations/idle", json={"name": "none"}, timeout=8).raise_for_status()
         print(f"idle animation '{was}' switched off while tracking (restored on exit)", flush=True)
         return was
@@ -316,8 +317,10 @@ class StallGuard:
     below 25 % of an asked delta over 3 units, three commands in a row, is an obstruction. Then we
     stop commanding and hold until the target has moved by more than 15 deg of aim error."""
 
-    def __init__(self, min_ask: float = 3.0, fraction: float = 0.25, strikes: int = 3, release_deg: float = 15.0):
+    def __init__(self, min_ask: float = 3.0, fraction: float = 0.15, strikes: int = 4, release_deg: float = 15.0,
+                 retry_s: float = 3.0):
         self.min_ask, self.fraction, self.strikes, self.release_deg = min_ask, fraction, strikes, release_deg
+        self.retry_s, self.stalled_at = retry_s, None
         self.misses, self.stalled, self.aim_at_stall = 0, False, None
         self.last = ""                                   # commanded vs landed, for the log line
 
@@ -329,6 +332,7 @@ class StallGuard:
             self.misses = self.misses + 1 if got < self.fraction * asked else 0
             if self.misses >= self.strikes and not self.stalled:
                 self.stalled, self.aim_at_stall = True, aim_error
+                self.stalled_at = time.monotonic()
         return self.stalled
 
     def blocked(self, aim_error: float | None) -> bool:
@@ -339,10 +343,14 @@ class StallGuard:
                 self.aim_at_stall = aim_error
             elif abs(aim_error - self.aim_at_stall) > self.release_deg:
                 self.reset()
+        # A person standing still must not leave the lamp frozen: try again after retry_s (one
+        # step; if it stalls again the strikes accumulate again).
+        if self.stalled and self.stalled_at is not None and time.monotonic() - self.stalled_at > self.retry_s:
+            self.reset()
         return self.stalled
 
     def reset(self) -> None:
-        self.misses, self.stalled, self.aim_at_stall = 0, False, None
+        self.misses, self.stalled, self.aim_at_stall, self.stalled_at = 0, False, None, None
 
 
 class Search:
@@ -456,7 +464,9 @@ class LiveConfig:
         self.live_ms, self.period, self.step, self.search = int(live_ms), period, step, search
         self.dry_run, self.seconds = dry_run, seconds
         # motion starts 140-250 ms after the POST and plays for live_ms: read "landed" after that
-        self.land_settle = (0.30 + live_ms / 1000.0) if land_settle is None else land_settle
+        # Measured: the runtime starts 140-250 ms after the POST and the servos lag ~100-150 ms after the
+        # move ends, so a command is judged only 0.65 s + its duration after it was sent.
+        self.land_settle = (0.65 + live_ms / 1000.0) if land_settle is None else land_settle
 
 
 class LiveFollower:
