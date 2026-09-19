@@ -158,22 +158,21 @@ else
     exit 1
 fi
 
-echo "[4/4] Verifying UDP 47300 Probe Exchange with LeLamp..."
+echo "[4/4] Verifying UDP 47300 Sync Probe with LeLamp..."
 python3 -c "
-import socket, json, time, sys
+import socket, struct, sys
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.settimeout(2.0)
-t0 = int(time.monotonic() * 1e9)
-req = json.dumps({'v': 1, 't': 'probe', 'id': 1, 't0': t0}).encode('utf-8')
+# Native SyncReq (type 1, u16 req_id) = 3 bytes
+req = struct.pack('<BH', 1, 42)
 try:
     s.sendto(req, ('$LAMP', 47300))
-    resp, _ = s.recvfrom(2048)
-    reply = json.loads(resp.decode('utf-8'))
-    if reply.get('t') == 'probe_reply':
-        print('  -> UDP 47300 verified: received probe_reply.')
+    resp, _ = s.recvfrom(64)
+    if len(resp) >= 3 and resp[0] in (1, 2):
+        print('  -> UDP 47300 verified: received valid sync response.')
         sys.exit(0)
     else:
-        print(f'  -> UDP error: unexpected packet {reply}')
+        print(f'  -> UDP error: unexpected response {resp!r}')
         sys.exit(1)
 except socket.timeout:
     print('CRITICAL: UDP 47300 probe timed out! LeLamp bridge not responding.')

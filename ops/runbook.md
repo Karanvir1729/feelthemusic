@@ -41,7 +41,7 @@ Verify all physical equipment is present before powering any circuit:
   - 1x PAM8403 Class-D stereo amplifier (driving Left and Right continuous bass voice coils).
   - 1x DRV8212 H-bridge driver (driving Middle transient tick actuator).
   - 1x High-speed USB-C to USB-A/C serial data cable (rated $\ge 115200$ baud).
-  - 1x Verified power source for TitanCore rails (5V rail for PAM8403; DRV8212 Channel M power rail; verify exact board revision and manual before chest wiring).
+  - 1x Verified 5V power source for TitanCore (board Vin recommended 4.75–5.25V, ABS MAX 6.0V via 5V 2A–2.5A USB power bank; NEVER apply 12V).
 
 ---
 
@@ -88,7 +88,7 @@ sequenceDiagram
      curl -s -m 2 http://192.168.8.20:8081/api/sdk/v1/system/status
      ```
 4. **Connect TitanCore Haptic Kit**:
-   - Connect the verified power rails to the TitanCore kit (5V for PAM8403, 12V for Channel M; verify against board manual per task #21).
+   - Connect the verified 5V power rail to the TitanCore kit (4.75–5.25V recommended, ABS MAX 6.0V; NEVER apply 12V).
    - Connect the USB data cable to the Conductor laptop.
    - Identify the serial port (`/dev/ttyUSB0` on Linux, `/dev/cu.usbserial-*` on macOS, `COM3`/`COM4` on Windows).
 5. **Connect Demo iPhones**:
