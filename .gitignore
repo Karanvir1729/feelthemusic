@@ -29,3 +29,10 @@ DerivedData/
 build/
 *.xcuserstate
 xcuserdata/
+
+# Vendor robot description. Human Computer Lab's lelamp-external-runtime is a private,
+# restricted distribution; it does not belong in this repository. Fetch it per sim/robot/README.md.
+sim/robot/pi5_feetech_r1/
+**/static/robots/lelamp_v1/
+*.stl
+*.onnx
