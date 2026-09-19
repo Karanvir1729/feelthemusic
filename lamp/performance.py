@@ -62,7 +62,8 @@ class PerformanceConfig:
     min_glow_interval_s: float = 0.030  # Allow fast updates for haptic-like light rhythm
     gesture_cooldown_s: float = 3.0  # Minimum seconds between whole-arm animations
     default_gesture_duration_s: float = 2.5
-    live_mode: bool = False  # Explicit flag required for non-loopback network listening
+    live_mode: bool = False  # Explicit flag required for real hardware network moves/light
+    fake_sink: bool = False  # Explicit capability flag for mock/fake sink output during dry-run
 
 
 @dataclass
@@ -90,6 +91,7 @@ class MusicPerformer:
         limiter: Optional[FlashLimiter] = None,
         clock_fn: Callable[[], float] = time.monotonic,
         sleep_fn: Callable[[float], None] = time.sleep,
+        fake_sink: Optional[bool] = None,
     ) -> None:
         self.sdk = sdk
         self.config = config or PerformanceConfig()
@@ -98,6 +100,16 @@ class MusicPerformer:
         self.sleep_fn = sleep_fn
         self.clock_offset = 0.0  # conductor_time - local_time
         self.stats = PerformanceStats()
+        self.generation: int = 0
+
+        # Explicit output capability gate: dry-run suppresses physical calls unless opted into a fake sink
+        if fake_sink is not None:
+            self._fake_sink = fake_sink
+        else:
+            self._fake_sink = (
+                getattr(self.config, "fake_sink", False)
+                or getattr(sdk, "fake_sink", False)
+            )
 
         self._last_glow_time = 0.0
         self._last_bass_level = -1.0
@@ -185,13 +197,17 @@ class MusicPerformer:
 
     def handle_bass_envelope(self, t: float, bass_level: float) -> bool:
         """Update lamp glow in response to a bass envelope sample."""
+        with self._lock:
+            if self.config.mode == "off":
+                return False
+
         rendered = self.render_light(t, bass_level)
         if rendered is None:
             return False
         rgb_255, lum = rendered
 
-        # Live mode gate: avoid sending real network HTTP requests in dry-run mode
-        if not self.config.live_mode and type(self.sdk).__name__ == "LampSDK":
+        # Explicit output capability gate: dry-run suppresses physical calls unless opted into fake sink
+        if not self.config.live_mode and not self._fake_sink:
             logger.debug("[DRY RUN] Would glow: %s (live_mode=False)", rgb_255)
             return True
 
@@ -207,13 +223,19 @@ class MusicPerformer:
         """Set operation mode: 'follow', 'dance', 'light_only', 'off'."""
         with self._lock:
             self.config.mode = mode
-            logger.info("Performer mode set to: %s", mode)
+            self.generation += 1
+            logger.info("Performer mode set to: %s (generation %d)", mode, self.generation)
 
     def play_musical_gesture(self, gesture_name: str, duration_s: Optional[float] = None) -> bool:
         """Play a built-in vendor gesture if not in cooldown and not latched off."""
         if self.latched_off:
             logger.warning("Gesture rejected: performer is latched off due to refusals")
             return False
+
+        with self._lock:
+            if self.config.mode in ("off", "light_only"):
+                self.stats.gestures_skipped += 1
+                return False
 
         now = self.clock()
         with self._lock:
@@ -223,8 +245,8 @@ class MusicPerformer:
             dur = duration_s or self.config.default_gesture_duration_s
             self._gesture_busy_until = now + dur + self.config.gesture_cooldown_s
 
-        # Live mode gate: avoid sending real physical moves in dry-run mode
-        if not self.config.live_mode and type(self.sdk).__name__ == "LampSDK":
+        # Explicit output capability gate: dry-run suppresses physical calls unless opted into fake sink
+        if not self.config.live_mode and not self._fake_sink:
             logger.info("[DRY RUN] Would play gesture '%s' (live_mode=False)", gesture_name)
             with self._lock:
                 self.stats.gestures_played += 1
@@ -253,8 +275,10 @@ class MusicPerformer:
 
     def handle_event(self, event: dict[str, Any]) -> bool:
         """Process an incoming event dictionary with presentation time scheduling."""
-        if self.config.mode == "off":
-            return False
+        with self._lock:
+            if self.config.mode == "off":
+                return False
+            event_gen = self.generation
 
         self.stats.events_received += 1
         now = self.clock()
@@ -305,12 +329,21 @@ class MusicPerformer:
             if lead_time <= self.config.max_early_hold_s:
                 self.sleep_fn(lead_time)
                 now = self.clock()
+                with self._lock:
+                    if self.config.mode == "off" or self.generation != event_gen:
+                        return False
             else:
                 # Event is too far in future (> max_early_hold_s)
                 # Drop rather than firing prematurely!
                 with self._lock:
                     self.stats.events_dropped_far_future += 1
                 return False
+
+        # Final dispatch check: verify mode and generation right before execution
+        with self._lock:
+            if self.config.mode == "off" or self.generation != event_gen:
+                return False
+            current_mode = self.config.mode
 
         self.stats.events_fired += 1
 
@@ -339,7 +372,7 @@ class MusicPerformer:
             # High energy drops / kicks trigger whole-arm gesture only in "dance" mode
             gesture_ok = False
             if strength >= 0.75 and kind in ("kick", "beat"):
-                if self.config.mode == "dance":
+                if current_mode == "dance":
                     gesture_ok = self.play_musical_gesture("nod", duration_s=1.5)
                 else:
                     with self._lock:

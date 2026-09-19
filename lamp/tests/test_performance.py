@@ -10,7 +10,10 @@ from sdk import LampSDK, SDKError
 
 
 class MockLampSDK(LampSDK):
+    fake_sink: bool = True
+
     def __init__(self):
+        self.fake_sink = True
         self.glows = []
         self.animations = []
         self.clips = []
@@ -340,4 +343,81 @@ def test_bridge_answers_conductor_probe():
         client.close()
         bridge.stop()
         bridge.join(timeout=1.0)
+
+
+def test_dry_run_subclass_wrapper_does_not_emit_real_calls():
+    class WrappedLampSDK(LampSDK):
+        def __init__(self):
+            self.glows = []
+            self.animations = []
+
+        def _ensure_session(self):
+            pass
+
+        def glow(self, rgb, luminance=None):
+            self.glows.append(rgb)
+            return {"state": "succeeded"}
+
+        def play_animation(self, name, wait_s=30.0):
+            self.animations.append(name)
+            return {"state": "succeeded"}
+
+    wrapped_sdk = WrappedLampSDK()
+    # live_mode is False by default, fake_sink is False by default
+    performer = MusicPerformer(wrapped_sdk, clock_fn=lambda: 100.0)
+    performer.clock_offset = 0.0
+
+    # Test bass glow in dry run
+    ok = performer.handle_event({"pts": 99.73, "kind": "bass", "value": 0.5})
+    assert ok is True
+    assert len(wrapped_sdk.glows) == 0  # Dry-run suppressed calls to wrapped SDK!
+
+    # Test gesture in dry run
+    performer.set_mode("dance")
+    ok = performer.play_musical_gesture("nod")
+    assert ok is True
+    assert len(wrapped_sdk.animations) == 0  # Dry-run suppressed gesture!
+
+
+def test_mode_switch_to_off_during_sleep_invalidates_queued_event():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+
+    def sleep_advance_and_turn_off(dur):
+        simulated_time[0] += dur
+        performer.set_mode("off")
+
+    performer = MusicPerformer(
+        sdk,
+        clock_fn=lambda: simulated_time[0],
+        sleep_fn=sleep_advance_and_turn_off,
+    )
+    performer.clock_offset = 0.0
+
+    # Event arrives with lead time (target_time = 99.83 + 0.300 - 0.030 = 100.10)
+    ok = performer.handle_event({"pts": 99.83, "kind": "bass", "value": 0.5})
+    assert ok is False
+    assert len(sdk.glows) == 0  # No glow was emitted because mode became 'off' during sleep!
+
+
+def test_mode_switch_from_dance_to_follow_during_sleep_suppresses_gesture():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+
+    def sleep_advance_and_switch_follow(dur):
+        simulated_time[0] += dur
+        performer.set_mode("follow")
+
+    performer = MusicPerformer(
+        sdk,
+        config=PerformanceConfig(mode="dance"),
+        clock_fn=lambda: simulated_time[0],
+        sleep_fn=sleep_advance_and_switch_follow,
+    )
+    performer.clock_offset = 0.0
+
+    # Event arrives with lead time in dance mode, but during sleep switched to follow
+    ok = performer.handle_event({"pts": 99.83, "kind": "kick", "strength": 0.9})
+    assert ok is False  # Invalidation dropped the stale generation event
+    assert len(sdk.animations) == 0  # No dance gesture emitted
 
