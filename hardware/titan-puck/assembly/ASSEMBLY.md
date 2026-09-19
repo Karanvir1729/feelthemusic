@@ -28,6 +28,7 @@ an example, so use the labels on your board. You cannot reach the jumper once th
 
 Do this before the board goes in. Connect MF to M, LF to L and LFi to R, with the red lead to + and the black lead to -.
 For each lead, loosen the screw from the top, push the bare end into the front hole, tighten the screw and tug the lead.
+In Bluetooth mode only L and R are driven, so LF and LFi vibrate and MF (on M) stays still. That is expected.
 
 ## 4. Lay LF and MF in their cradles, feet down
 

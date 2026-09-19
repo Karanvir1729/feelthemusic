@@ -961,7 +961,9 @@ def step03():
     ink.text((24, 24), "Close-up, front view", size=30, col=INK, box=True)
     notes = ["Before the board goes in: MF to M, LF to L, LFi to R. Red lead to +, black lead to -.",
              "For each hole: 1 loosen the screw from the top, 2 push the bare end into the front hole, 3 tighten, "
-             "4 tug the lead gently: it must not come out."]
+             "4 tug the lead gently: it must not come out.",
+             "In Bluetooth mode only L and R are driven: LF and LFi vibrate, MF (on M) stays still. That is "
+             "expected."]
     return save(page(3, "Wire the motors to the screw terminals", [A, B], notes), "step03.png")
 
 
@@ -993,8 +995,10 @@ def step04():
     ghost.items = [it for it in ghost.items if it[0] != "box"]
     ghost.items = [it[:-1] + ((0.86, 0.80, 0.98, 1),) if it[-1] != COL["ring"] else it for it in ghost.items]
     sc.add(ghost, R, t, alpha=0.38, layer=0)
-    feet = Part("MF_feet")
-    feet.items = [it for it in motor_part("MF").items if it[0] == "box"]
+    feet = Part("MF_feet")  # cut at the same plane as the base (x <= MF axis), so they stand on the floor line
+    dark = tuple(v * 0.72 for v in COL["MF"][:3]) + (1,)
+    for y0 in (M.FOOT_START, L_MOT - M.FOOT_START - M.FOOT_LEN):
+        feet.box(-M.FOOT_W / 2, 0.0, y0, y0 + M.FOOT_LEN, -CAP_R - PROT, -CAP_R + 1.5, dark)
     sc.add(feet, R, t)
     lead_stubs(sc, R, t, "MF", rise=3.2)
     camB = Cam((M.MF[0], M.MOTOR_Y_C, 4.6), az=90, el=14, ortho=17.0, H=560)
@@ -1059,7 +1063,7 @@ def step06():
     A = render(sc, camA)
     ink = Ink(A, camA)
     ink.label((0.5, 7.0, M.PCB_BOTTOM), "ledge", (220, 420), RGB["base"])
-    ink.label((19.7, 7.0, M.PCB_BOTTOM), "ledge", (900, 640), RGB["base"])
+    ink.label((19.7, 7.0, M.PCB_BOTTOM), "ledge", (900, 515), RGB["base"])
     ink.label((5.0, 38.5, M.PCB_BOTTOM), "pillar", (220, 140), RGB["base"])
     ink.label((15.3, 38.5, M.PCB_BOTTOM), "pillar", (1180, 120), RGB["base"])
     ink.label((M.USB_X, M.IY0 - 0.6, M.USB_Z - 3), "USB-C opening", (330, 525), INK)
@@ -1158,8 +1162,7 @@ def step08():
         ink.arrow((x, y, M.INNER_H + lift + 12), (x, y, M.INNER_H + lift + 2.5), RGB["lid"], w=10, head=30)
     ink.label((M.IX0 + 10, M.IY0 + 4, M.INNER_H + lift + 1.2), "lid: press down\nuntil it clicks", (200, 140),
               RGB["lid"])
-    ink.label((M.SPRINGS["MF-front"][0], M.SPRINGS["MF-front"][1], M.SPRING_FREE_Z + lift + 1), "4 spring posts",
-              (1180, 380), RGB["lid"])
+    # The spring posts are labelled in the cut-away below: seen through the lifted lid they land over the board.
     ink.label((M.LFI[0] + 3, M.LFI[1] + 5, M.LFI_RING_Z0 + lift + 2), "ring over LFi", (1150, 110), RGB["lid"])
 
     lid_in = M.lid({**{n: LIFT_SPRING for n in M.SPRINGS}, "board": LIFT_BOARD})
@@ -1177,7 +1180,7 @@ def step08():
     B = render(sc, camB)
     ink = Ink(B, camB)
     px, py = M.SPRINGS["MF-front"]
-    ink.label((px, py - 1.0, ZC_LYING + CAP_R + 0.8), "post on\nthe cap", (110, 300), RGB["lid"])
+    ink.label((px, py - 1.0, ZC_LYING + CAP_R + 0.8), "spring post\non the cap", (112, 300), RGB["lid"])
     ink.label((M.MF[0], M.SPRINGS["MF-rear"][1] - 5.0, M.INNER_H + 0.6), "spring tongue", (470, 70), RGB["lid"])
     ink.label((M.MF[0], M.MF[1], 5), "MF", (560, 330), RGB["MF"])
     ink.text((16, 522), "MF, cut along its axis", size=30, col=INK, box=True)
