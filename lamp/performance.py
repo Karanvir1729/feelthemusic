@@ -50,6 +50,7 @@ REFUSAL_LIMIT = 3
 
 @dataclass
 class PerformanceConfig:
+    mode: str = "follow"  # "follow" (head locked, light pulse only), "dance" (expressive gestures), "light_only", "off"
     room_latency_s: float = 0.300  # L = 300 ms room latency budget
     lamp_trim_s: float = 0.030  # Estimated lamp output latency trim (30 ms)
     max_drop_late_s: float = 0.080  # Drop events >80 ms past target
@@ -69,6 +70,9 @@ class PerformanceStats:
     events_received: int = 0
     events_fired: int = 0
     events_dropped_late: int = 0
+    events_dropped_no_pts: int = 0
+    events_dropped_far_future: int = 0
+    clock_sync_count: int = 0
     light_updates: int = 0
     gestures_played: int = 0
     gestures_skipped: int = 0
@@ -85,11 +89,13 @@ class MusicPerformer:
         config: Optional[PerformanceConfig] = None,
         limiter: Optional[FlashLimiter] = None,
         clock_fn: Callable[[], float] = time.monotonic,
+        sleep_fn: Callable[[float], None] = time.sleep,
     ) -> None:
         self.sdk = sdk
         self.config = config or PerformanceConfig()
-        self.limiter = limiter or FlashLimiter(margin_s=0.10)
+        self.limiter = limiter or FlashLimiter(margin_s=0.0)
         self.clock = clock_fn
+        self.sleep_fn = sleep_fn
         self.clock_offset = 0.0  # conductor_time - local_time
         self.stats = PerformanceStats()
 
@@ -175,6 +181,15 @@ class MusicPerformer:
             self.stats.last_error = f"glow failed: {exc}"
             return False
 
+    def set_mode(self, mode: str) -> None:
+        """Set operation mode: 'follow', 'dance', 'light_only', 'off'."""
+        valid_modes = {"follow", "dance", "light_only", "off"}
+        if mode not in valid_modes:
+            raise ValueError(f"Invalid mode {mode}. Expected one of: {valid_modes}")
+        with self._lock:
+            self.config.mode = mode
+            logger.info("Performer mode set to: %s", mode)
+
     def play_musical_gesture(self, gesture_name: str, duration_s: Optional[float] = None) -> bool:
         """Play a built-in vendor gesture if not in cooldown and not latched off."""
         if self.latched_off:
@@ -211,6 +226,9 @@ class MusicPerformer:
 
     def handle_event(self, event: dict[str, Any]) -> bool:
         """Process an incoming event dictionary with presentation time scheduling."""
+        if self.config.mode == "off":
+            return False
+
         self.stats.events_received += 1
         now = self.clock()
 
@@ -233,26 +251,39 @@ class MusicPerformer:
 
         # 2. Timing and Presentation Schedule check (pts + L - trim)
         pts = event.get("pts")
-        if pts is not None:
-            try:
-                val = float(pts)
-                if not math.isfinite(val):
-                    # Reject NaN or Inf pts
-                    return False
-                target_time = self.conductor_to_local_time(val)
-            except (ValueError, TypeError):
-                return False
+        if pts is None:
+            # Rule 5: Everything is scheduled on shared clock; packet arrival dispatch prohibited
+            with self._lock:
+                self.stats.events_dropped_no_pts += 1
+            return False
 
-            # Late event drop rule: pts + L - trim < now - 80ms
-            if now > target_time + self.config.max_drop_late_s:
+        try:
+            val = float(pts)
+            if not math.isfinite(val):
+                # Reject NaN or Inf pts
+                return False
+            target_time = self.conductor_to_local_time(val)
+        except (ValueError, TypeError):
+            return False
+
+        # Late event drop rule: pts + L - trim < now - 80ms
+        if now > target_time + self.config.max_drop_late_s:
+            with self._lock:
                 self.stats.events_dropped_late += 1
-                return False
+            return False
 
-            # Early hold rule: if event arrives ahead of time within lookahead window, hold
-            lead_time = target_time - now
-            if 0.0 < lead_time <= self.config.max_early_hold_s:
-                time.sleep(lead_time)
+        # Early hold rule: if event arrives ahead of time
+        lead_time = target_time - now
+        if lead_time > 0.0:
+            if lead_time <= self.config.max_early_hold_s:
+                self.sleep_fn(lead_time)
                 now = self.clock()
+            else:
+                # Event is too far in future (> max_early_hold_s)
+                # Drop rather than firing prematurely!
+                with self._lock:
+                    self.stats.events_dropped_far_future += 1
+                return False
 
         self.stats.events_fired += 1
 
@@ -278,19 +309,29 @@ class MusicPerformer:
             if not math.isfinite(strength):
                 return False
 
-            # High energy drops / kicks trigger whole-arm gesture only if strength >= 0.75
+            # High energy drops / kicks trigger whole-arm gesture only in "dance" mode
+            gesture_ok = False
             if strength >= 0.75 and kind in ("kick", "beat"):
-                gesture_ok = self.play_musical_gesture("nod", duration_s=1.5)
-                # Also deliver sharp haptic-like light flash
-                self.handle_bass_envelope(now, 1.0)
-                return gesture_ok
+                if self.config.mode == "dance":
+                    gesture_ok = self.play_musical_gesture("nod", duration_s=1.5)
+                else:
+                    with self._lock:
+                        self.stats.gestures_skipped += 1
+                # Deliver sharp haptic-like visual pulse
+                light_ok = self.handle_bass_envelope(now, 1.0)
+                return light_ok or gesture_ok
 
             # Moderate beats give haptic-like visual pulse
             return self.handle_bass_envelope(now, strength)
 
         elif kind in GESTURE_CATALOG:
-            mapped = GESTURE_CATALOG[kind]
-            return self.play_musical_gesture(mapped)
+            if self.config.mode == "dance":
+                mapped = GESTURE_CATALOG[kind]
+                return self.play_musical_gesture(mapped)
+            else:
+                with self._lock:
+                    self.stats.gestures_skipped += 1
+                return True
 
         return False
 

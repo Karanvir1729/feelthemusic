@@ -185,17 +185,66 @@ def test_refusal_limit_latches_off():
 def test_weak_kick_does_not_trigger_arm_nod():
     sdk = MockLampSDK()
     simulated_time = [100.0]
-    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
+    config = PerformanceConfig(mode="dance")  # Dance mode allows arm gestures
+    performer = MusicPerformer(sdk, config=config, clock_fn=lambda: simulated_time[0])
+
+    on_time_pts = 100.0 - (0.300 - 0.030)  # target = 100.0s
 
     # Weak kick (strength 0.3) -> pulses light, but does NOT play whole-arm animation
-    weak_kick = {"kind": "kick", "strength": 0.3}
+    weak_kick = {"pts": on_time_pts, "kind": "kick", "strength": 0.3}
     assert performer.handle_event(weak_kick) is True
     assert len(sdk.animations) == 0
 
-    # Strong kick (strength 0.85) -> triggers whole-arm nod
-    strong_kick = {"kind": "kick", "strength": 0.85}
+    # Strong kick (strength 0.85) in dance mode -> triggers whole-arm nod
+    strong_kick = {"pts": on_time_pts, "kind": "kick", "strength": 0.85}
     assert performer.handle_event(strong_kick) is True
     assert sdk.animations == ["nod"]
+
+
+def test_mode_arbitration_follow_vs_dance():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+    # Default mode is "follow" (head tracking locked, arm gestures suppressed)
+    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
+    on_time_pts = 100.0 - (0.300 - 0.030)
+
+    strong_kick = {"pts": on_time_pts, "kind": "kick", "strength": 0.95}
+
+    # In follow mode: light glows, but whole-arm gestures are strictly suppressed
+    assert performer.handle_event(strong_kick) is True
+    assert len(sdk.animations) == 0
+    assert performer.stats.gestures_skipped == 1
+    assert len(sdk.glows) == 1
+
+    # Switch to dance mode: whole-arm gestures now fire
+    performer.set_mode("dance")
+    assert performer.handle_event(strong_kick) is True
+    assert sdk.animations == ["nod"]
+    assert performer.stats.gestures_played == 1
+
+    # Switch to off mode: everything suppressed
+    performer.set_mode("off")
+    assert performer.handle_event(strong_kick) is False
+
+
+def test_events_without_pts_rejected():
+    sdk = MockLampSDK()
+    performer = MusicPerformer(sdk)
+    # Rule 5: Events without pts violate shared-clock scheduling
+    assert performer.handle_event({"kind": "kick", "strength": 0.9}) is False
+    assert performer.stats.events_dropped_no_pts == 1
+
+
+def test_far_future_events_dropped():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
+
+    # Event target is 102.0s (2.0s in future, way beyond max_early_hold_s 0.350s)
+    future_pts = 102.0 - (0.300 - 0.030)
+    assert performer.handle_event({"pts": future_pts, "kind": "kick"}) is False
+    assert performer.stats.events_dropped_far_future == 1
+    assert performer.stats.events_fired == 0
 
 
 def test_performance_bridge_udp_sender_pinning():
@@ -213,7 +262,9 @@ def test_performance_bridge_udp_sender_pinning():
 
     try:
         sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        packet = json.dumps({"kind": "bass", "value": 0.65}).encode("utf-8")
+        # Supply valid pts in packet
+        target_pts = time.monotonic() - (0.300 - 0.030)
+        packet = json.dumps({"pts": target_pts, "kind": "bass", "value": 0.65}).encode("utf-8")
         sender.sendto(packet, ("127.0.0.1", bridge.port))
         sender.close()
 
@@ -230,11 +281,13 @@ def test_performance_bridge_udp_sender_pinning():
 def test_handle_conductor_wire_events():
     sdk = MockLampSDK()
     simulated_time = [500.0]
-    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
+    config = PerformanceConfig(mode="dance")
+    performer = MusicPerformer(sdk, config=config, clock_fn=lambda: simulated_time[0])
     performer.clock_offset = 0.0
 
     # Conductor Event with integer ns pts and fixed-point amp (0..1000)
-    target_pts_ns = int((500.0 + 0.27) * 1e9)
+    # target_time = pts_s + 0.270 => for target_time == 500.0, pts_s = 500.0 - 0.270
+    target_pts_ns = int((500.0 - 0.27) * 1e9)
     wire_kick = {
         "v": 1,
         "t": "event",
