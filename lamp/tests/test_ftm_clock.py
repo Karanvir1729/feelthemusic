@@ -245,3 +245,75 @@ def test_conversion_rejects_out_of_range_results():
             e.to_local_due_ns(master, trim)
     assert e.to_local_due_ns(5_000_000_000) == 0  # exactly 0 is fine
     assert e.to_local_due_ns(INT63_MAX + 5_000_000_000) == INT63_MAX
+
+
+# ---- expired low-delay samples must not starve the estimator (found by codexfranklin) -----------
+def _probe(est, t0, rtt, offset=1_000_000):
+    """One symmetric probe: conductor_time = local_time + offset, no hold time."""
+    t1 = t0 + rtt // 2 + offset
+    est.add_sample(t0, t1, t1, t0 + rtt)
+
+
+def test_expired_fast_samples_do_not_starve_newer_slower_ones():
+    # max_age (250) covers min_samples-1 probe intervals (2 x 100), so three fresh samples can coexist
+    est = ClockEstimator(keep=3, max_age_ns=250, min_samples=3)
+    for t in (0, 30, 60):
+        _probe(est, t, 20)
+    assert est.estimate(now_ns=80) is not None  # fresh while young
+    # The first slow probe (t=200) can lose the ranking while the old fast ones are still inside the age window;
+    # that is the designed keep-lowest-delay rule. What must hold is that the estimator RECOVERS within a few
+    # probes once the old samples expire, instead of staying None forever.
+    for t in (200, 300, 400, 500):
+        _probe(est, t, 40)
+    got = est.estimate(now_ns=540)
+    assert got is not None and got.samples == 3, "the newer, slower samples must replace the expired fast ones"
+    assert got.best_delay_ns == 40  # the expired 20 ns samples are gone, not merely ignored
+
+
+def test_recovers_after_a_long_gap_with_a_slower_path():
+    est = ClockEstimator(keep=2, max_age_ns=50, min_samples=2)
+    for t in (0, 10):
+        _probe(est, t, 4)
+    for t in (1_000, 1_010):
+        _probe(est, t, 30)
+    got = est.estimate(now_ns=1_020)
+    assert got is not None and got.best_delay_ns == 30
+
+
+def test_samples_inside_the_age_window_are_still_ranked_by_delay():
+    est = ClockEstimator(keep=2, max_age_ns=1_000, min_samples=2)
+    _probe(est, 0, 50)
+    _probe(est, 10, 10)
+    _probe(est, 20, 30)
+    got = est.estimate(now_ns=30)
+    assert got is not None and got.samples == 2 and got.best_delay_ns == 10  # the worst (50) was dropped
+
+
+def test_max_age_shorter_than_the_probe_spacing_never_becomes_ready_and_that_is_correct():
+    """3 probes 100 apart with max_age 100 can never all be fresh: None is right, not a starvation bug."""
+    est = ClockEstimator(keep=3, max_age_ns=100, min_samples=3)
+    for t in (200, 300, 400):
+        _probe(est, t, 40)
+    assert est.estimate(now_ns=440) is None
+
+
+def test_pr8_style_repro_min_samples_1_reacquires_after_a_delay_change():
+    """codexfranklin's PR #8 repro: keep=2, max_age=100, then higher-RTT probes far later."""
+    est = ClockEstimator(keep=2, max_age_ns=100, min_samples=1)
+    _probe(est, 0, 20)
+    _probe(est, 30, 20)
+    assert est.estimate(now_ns=60) is not None
+    for t in (200, 300, 400):
+        _probe(est, t, 40)
+        assert est.estimate(now_ns=t + 40) is not None, "must reacquire with the higher RTT"
+
+
+def test_a_sample_exactly_max_age_old_is_still_kept_and_one_ns_older_is_purged():
+    est = ClockEstimator(keep=2, max_age_ns=100, min_samples=2)
+    _probe(est, 0, 20)      # t3 = 20
+    _probe(est, 100, 20)    # t3 = 120: exactly 100 newer, so still inside the window
+    got = est.estimate(now_ns=120)
+    assert got is not None and got.samples == 2
+    _probe(est, 101, 20)    # t3 = 121: the first sample is now 101 older than the newest and is purged
+    assert est.estimate(now_ns=121).samples == 2  # the 100 and 101 probes remain
+    assert all(121 - s.t3 <= 100 for s in est._samples)

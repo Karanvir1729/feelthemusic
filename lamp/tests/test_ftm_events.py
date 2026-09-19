@@ -11,10 +11,20 @@ from ftm_events import BassSample, Event, Normalizer as _RealNormalizer
 def Normalizer(est, **kw):
     """Existing tests opt in to the bass timestamp policy; the default-off tests use _RealNormalizer."""
     kw.setdefault("bass_time_policy", "presentation")
+    kw.setdefault("clock", lambda: 10**12 + 300 * 1_000_000)  # just after the synced() samples: all fresh
     return _RealNormalizer(est, **kw)
 
 MS = 1_000_000
 OFFSET = 5_000_000_000  # conductor = local + OFFSET; symmetric probes make it exact
+
+
+NOW = 10**12 + 300 * MS  # just after the synced() samples
+
+
+def add_fresh(est, n=3):
+    for i in range(n):
+        t0 = 10**12 + i * 100 * MS
+        est.add_sample(t0, t0 + MS + OFFSET, t0 + MS + OFFSET, t0 + 2 * MS)
 
 
 def synced(n=3):
@@ -192,14 +202,14 @@ def test_fuzz_never_raises_only_event_none_or_list():
 
 # ---- bass timestamp policy is opt-in, default off ------------------------------------------------
 def test_bass_is_off_by_default_and_counted():
-    n = _RealNormalizer(synced())
+    n = _RealNormalizer(synced(), clock=lambda: NOW)
     assert n.bass_time_policy is None
     assert n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1, 2, 3))) == []
     assert (n.bass_policy_unset, n.bass_normalized, n.bad_time, n.not_synced) == (1, 0, 0, 0)
 
 
 def test_bass_policy_presentation_opts_in_and_adds_no_l():
-    n = _RealNormalizer(synced(), bass_time_policy="presentation")
+    n = _RealNormalizer(synced(), bass_time_policy="presentation", clock=lambda: NOW)
     out = n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (255,)))
     assert [s.due_ns for s in out] == [10**10] and n.bass_policy_unset == 0
 
@@ -211,7 +221,7 @@ def test_unknown_bass_policies_are_rejected(bad):
 
 
 def test_events_are_not_affected_by_the_bass_policy():
-    ev = _RealNormalizer(synced()).normalize_event(pkt(master_ts=OFFSET + 10**10))
+    ev = _RealNormalizer(synced(), clock=lambda: NOW).normalize_event(pkt(master_ts=OFFSET + 10**10))
     assert ev is not None and ev.due_ns == 10**10
 
 
@@ -235,8 +245,7 @@ def test_new_epoch_resets_the_clock_and_bumps_the_epoch():
 def test_after_new_epoch_and_resync_events_carry_the_new_epoch():
     n = Normalizer(synced())
     n.new_epoch()
-    for i in range(3):
-        n.estimator.add_sample(1000 + i, 1000 + i + OFFSET + 500, 1000 + i + OFFSET + 500, 1000 + i + 1000)
+    add_fresh(n.estimator)
     ev = n.normalize_event(pkt(master_ts=OFFSET + 10**10))
     assert ev is not None and ev.epoch == 1
     n.new_epoch()
@@ -252,11 +261,47 @@ def test_seq_is_the_raw_native_u32_and_is_not_touched_at_wrap():
 def test_bass_samples_carry_the_current_nonzero_epoch():
     n = Normalizer(synced())
     n.new_epoch()
-    for i in range(3):
-        n.estimator.add_sample(1000 + i, 1000 + i + OFFSET + 500, 1000 + i + OFFSET + 500, 1000 + i + 1000)
+    add_fresh(n.estimator)
     out = n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1, 2, 3)))
     assert len(out) == 3 and all(s.epoch == 1 for s in out)
     n.new_epoch()
-    for i in range(3):
-        n.estimator.add_sample(1000 + i, 1000 + i + OFFSET + 500, 1000 + i + OFFSET + 500, 1000 + i + 1000)
+    add_fresh(n.estimator)
     assert all(s.epoch == 2 for s in n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1,))))
+
+
+# ---- freshness cannot be silently disabled (codexfranklin) ---------------------------------------
+def test_normalize_without_a_clock_or_now_is_a_type_error():
+    n = _RealNormalizer(synced(), bass_time_policy="presentation")
+    with pytest.raises(TypeError):
+        n.normalize_event(pkt(master_ts=OFFSET + 10**10))
+    with pytest.raises(TypeError):
+        n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1,)))
+    assert n.normalized == 0 and n.not_synced == 0  # nothing was counted or converted
+
+
+def test_type_error_even_for_an_unknown_kind_or_unset_bass_policy():
+    n = _RealNormalizer(synced())
+    with pytest.raises(TypeError):
+        n.normalize_event(pkt(kind=200, master_ts=OFFSET))
+    with pytest.raises(TypeError):
+        n.normalize_bass(BassEnvelope(1, OFFSET, 20, (1,)))
+
+
+def test_an_injected_clock_enforces_sample_expiry():
+    est = synced()  # samples are at ~1e12 ns
+    late = _RealNormalizer(est, clock=lambda: 10**12 + 3_600 * 10**9)  # an hour later: every sample expired
+    assert late.normalize_event(pkt(master_ts=OFFSET + 10**10)) is None and late.not_synced == 1
+    fresh = _RealNormalizer(est, clock=lambda: 10**12 + 300 * MS)
+    assert fresh.normalize_event(pkt(master_ts=OFFSET + 10**10)).due_ns == 10**10
+
+
+def test_an_explicit_now_overrides_the_injected_clock():
+    n = _RealNormalizer(synced(), clock=lambda: 10**12 + 300 * MS)
+    assert n.normalize_event(pkt(master_ts=OFFSET + 10**10), now_ns=10**12 + 3_600 * 10**9) is None
+    assert n.not_synced == 1
+
+
+def test_a_clock_that_returns_a_non_int_is_rejected_not_ignored():
+    n = _RealNormalizer(synced(), clock=lambda: 1.5)
+    with pytest.raises(TypeError):
+        n.normalize_event(pkt(master_ts=OFFSET + 10**10))

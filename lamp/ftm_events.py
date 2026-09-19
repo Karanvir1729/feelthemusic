@@ -12,6 +12,10 @@ config can fix it, not this code.
 
 No offset means no output: a consumer must hold or drop such events, it never fires with no offset.
 
+Freshness cannot be switched off by forgetting an argument: every normalize_* call needs the current
+monotonic time, either as ``now_ns=`` or from ``Normalizer(clock=callable)``. With neither it raises
+TypeError. (ClockEstimator.estimate(now_ns=None) remains an explicit, documented diagnostic.)
+
 BassEnvelope timestamps are OFF by default. The reported semantics of BassEnvelope.startTs are not
 verified (masterTs is reported to be pre-budgeted; nothing says startTs is), and a silently active
 assumption would show up as wrong visible timing. ``Normalizer(bass_time_policy="presentation")`` opts in to
@@ -32,6 +36,7 @@ an unknown kind is dropped and counted, NEVER mapped to another kind. Unknown fl
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from ftm_client import BassEnvelope, EventPacket, flag_names, kind_name
 from ftm_clock import ClockEstimator, NotSynced
@@ -63,12 +68,14 @@ class BassSample:
 class Normalizer:
     BASS_POLICIES = (None, "presentation")
 
-    def __init__(self, estimator: ClockEstimator, trim_ns: int = 0, bass_time_policy: str | None = None) -> None:
+    def __init__(self, estimator: ClockEstimator, trim_ns: int = 0, bass_time_policy: str | None = None,
+                 clock: Callable[[], int] | None = None) -> None:
         if bass_time_policy not in self.BASS_POLICIES:
             raise ValueError("unknown bass_time_policy (only None or 'presentation' exist)")
         self.estimator = estimator
         self.trim_ns = trim_ns
         self.bass_time_policy = bass_time_policy
+        self.clock = clock
         self.epoch = 0
         self.bass_policy_unset = 0
         self.unknown_kind = 0
@@ -76,6 +83,16 @@ class Normalizer:
         self.bad_time = 0
         self.normalized = 0  # events
         self.bass_normalized = 0  # non-empty bass envelopes
+
+    def _now(self, now_ns: int | None) -> int:
+        if now_ns is not None:
+            return now_ns
+        if self.clock is None:
+            raise TypeError("normalize needs now_ns=... or Normalizer(clock=...): freshness is never optional")
+        now = self.clock()
+        if type(now) is not int:
+            raise TypeError(f"the injected clock must return an int of nanoseconds, got {type(now).__name__}")
+        return now
 
     def new_epoch(self) -> int:
         """Start a new session: forget the clock samples and bump the epoch. Returns the new epoch."""
@@ -85,6 +102,7 @@ class Normalizer:
 
     def normalize_event(self, pkt: EventPacket, now_ns: int | None = None) -> Event | None:
         """Event, or None (counted) if not synced, kind unknown, or the time cannot be converted."""
+        now_ns = self._now(now_ns)
         name = kind_name(pkt.kind)
         if name is None:
             self.unknown_kind += 1
@@ -110,6 +128,7 @@ class Normalizer:
         n == 0 gives [] with no counter. step_ms == 0 is accepted only when n <= 1 (no semantics
         are invented for several samples at one instant); otherwise it counts as bad_time.
         """
+        now_ns = self._now(now_ns)
         if self.bass_time_policy is None:
             self.bass_policy_unset += 1
             return []

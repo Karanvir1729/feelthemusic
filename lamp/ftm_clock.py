@@ -98,6 +98,9 @@ class ClockEstimator:
         self.min_samples = min_samples
         self._samples: list[_Sample] = []
 
+    # Liveness: a sample only counts while newest_t3 - t3 <= max_age_ns, so max_age_ns must cover at least
+    # (min_samples - 1) probe intervals, or the estimator can legitimately never have min_samples fresh
+    # samples at once and estimate() stays None. That is a configuration error, not a starvation bug.
     def reset(self) -> None:
         """Forget every sample (a new session or a changed conductor): the estimator is unsynced again."""
         self._samples = []
@@ -116,6 +119,12 @@ class ClockEstimator:
         if s.delay_ns < 0:
             raise ValueError("negative round-trip delay after subtracting the conductor hold time")
         kept = self._samples + [s]
+        # Purge expired samples BEFORE choosing which to keep, measured against the newest sample's own
+        # local receive time (t3), so no external clock is needed. Without this, old low-delay samples
+        # squat in the store, newer slower samples are discarded as 'worse', and every stored sample
+        # eventually expires: estimate() then returns None forever.
+        newest_t3 = max(x.t3 for x in kept)
+        kept = [x for x in kept if newest_t3 - x.t3 <= self.max_age_ns]
         if len(kept) > self.keep:
             # drop the worst (highest delay); on ties drop the oldest
             worst = max(range(len(kept)), key=lambda i: (kept[i].delay_ns, -i))
