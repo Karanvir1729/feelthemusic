@@ -43,13 +43,13 @@ No WAN uplink is required or permitted during the demo. All clock synchronizatio
 
 ## 2. Network Topology & IP Allocation
 
-*Note: The subnet `192.168.8.0/24`, channel choices (36/149), and dummy DNS are operational design choices proposed for demo day (unmeasured on hardware).*
+*Note: The subnet `192.168.8.0/24` and channel choices (36/149) are operational design choices proposed for demo day (unmeasured on hardware).*
 
 The demo network uses the private subnet `192.168.8.0/24` to avoid collision with standard venue default subnets (`192.168.0.0/24`, `192.168.1.0/24`, `10.0.0.0/8`).
 
 | Device | Role | IP Assignment | MAC Reservation | Ports & Protocols |
 |---|---|---|---|---|
-| **Dedicated Router** | AP / Gateway / DHCP | `192.168.8.1` | Static Gateway | UDP 53 (DNS dummy), UDP 67 (DHCP) |
+| **Dedicated Router** | AP / Gateway / DHCP | `192.168.8.1` | Static Gateway | UDP 67 (DHCP) |
 | **Conductor Laptop** | Time Master & Event Broadcaster | `192.168.8.10` | Static / DHCP Reserved | UDP 47300 (Sync/Events), HTTP 8080 (Web visuals) |
 | **LeLamp Robot (Pi 5)** | Robot Visual & Motion Performer | `192.168.8.20` | DHCP Reserved | HTTP 8081 (SDK Gateway), UDP 47300 (Sync client) |
 | **TitanCore Controller** | Haptic Transducer Kit | *None (USB Serial)* | *N/A (Tethered)* | USB UART @ 115200 baud (to Conductor) |
@@ -119,11 +119,10 @@ Bring an independent dual-band Wi-Fi 6 / 802.11ac router (e.g., GL.iNet GL-AXT18
 
 ## 5. Transport Protocols & Socket Contracts
 
-### 5.1 Wire Sync Protocol v1 (UDP 47300)
-- All timing and music events use UDP port 47300.
-- Packet payload: Canonical UTF-8 JSON object (maximum 2048 bytes per datagram).
-- Delivery mode: UDP unicast to registered client endpoints (`lamp`, `phone`, `haptic`).
-- Clock sync probes: Clients send `probe` datagrams (`{"v":1,"t":"probe","id":<int>,"t0":<int>}`) to maintain monotonic offset estimates $\theta$ via symmetric round-trip delay filtering.
+### 5.1 Wire Sync Protocol (UDP 47300)
+- All timing and music event traffic routes over UDP port 47300.
+- For complete specification of the native little-endian binary protocol (SyncReq 3B, SyncResp 19B, EventPacket 26B) and presentation timestamp budgeting, see [`docs/integration.md`](../docs/integration.md).
+- Delivery mode: Unicast datagrams to registered client endpoints (`lamp`, `phone`, `haptic`).
 
 ### 5.2 Robot SDK Control (HTTP 8081)
 - The lamp client runs on the LeLamp Pi 5 itself and talks to the vendor runtime over local loopback (`http://127.0.0.1:8081/api/sdk/v1`).
@@ -151,7 +150,7 @@ echo "[2/4] Checking LeLamp Pi 5..."
 ping -c 2 $LAMP > /dev/null && echo "  -> LeLamp reachable." || { echo "CRITICAL: LeLamp not on LAN! Check Golden Boot Sequence."; exit 1; }
 
 echo "[3/4] Verifying LeLamp SDK Gateway on port 8081..."
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 http://$LAMP:8081/api/sdk/v1/system/status)
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 http://$LAMP:8081/api/sdk/v1/system/status 2>/dev/null || echo "000")
 if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "401" ]; then
     echo "  -> LeLamp SDK gateway responding (HTTP $HTTP_STATUS)."
 else

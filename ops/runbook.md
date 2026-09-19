@@ -12,7 +12,7 @@ Every live demonstration must have clearly assigned human responsibilities:
 
 | Role | Responsibility | Position |
 |---|---|---|
-| **Booth Conductor** | Controls the laptop, starts audio tracks, monitors sync stream (UDP 47300), and calibrates room latency budget $L$. | Seated at Conductor Laptop |
+| **Booth Conductor** | Controls the laptop, starts audio tracks, monitors sync stream (UDP 47300), and maintains the fixed room latency budget $L = 300\text{ ms}$ (Rule 5: never tuned or minimized). | Seated at Conductor Laptop |
 | **Robot Safety Monitor** | Has hand on the physical emergency power switch at all times during robot motion; monitors thermal temps and arm clearances. | Standing beside the LeLamp station |
 | **Participant Facilitator** | Welcomes Deaf and hard-of-hearing attendees, explains sensory modalities, provides iPhones / TitanCore actuators, and gathers feedback. | Standing beside the participant chair |
 
@@ -31,7 +31,7 @@ Verify all physical equipment is present before powering any circuit:
 ### 2.2 Robot Station
 - [ ] 1x LeLamp Robot (borrowed unit with Raspberry Pi 5 8GB, Debian 13).
 - [ ] 1x LeLamp 12V 5A DC barrel power adapter.
-- [ ] 1x Vendor runtime token exported into the lamp user runtime environment (`LELAMP_SDK_TOKEN`, never committed to git or stored in world-readable files).
+- [ ] 1x Vendor runtime token exported into the lamp user runtime environment (`LELAMP_SDK_TOKEN`, never committed to git and never stored in world-readable files like `/etc/environment`).
 - [ ] Minimum **50 cm (20 in) radius clearance zone** around the lamp base, completely clear of wires, laptops, water bottles, and obstacles.
 
 ### 2.3 Haptic Stations
@@ -41,7 +41,7 @@ Verify all physical equipment is present before powering any circuit:
   - 1x PAM8403 Class-D stereo amplifier (driving Left and Right continuous bass voice coils).
   - 1x DRV8212 H-bridge driver (driving Middle transient tick actuator).
   - 1x High-speed USB-C to USB-A/C serial data cable (rated $\ge 115200$ baud).
-  - 1x Dedicated 5V 2.5A USB power bank (isolating actuator back-EMF from laptop USB bus).
+  - 1x Verified power source for TitanCore rails (5V rail for PAM8403; DRV8212 Channel M power rail; verify exact board revision and manual before chest wiring).
 
 ---
 
@@ -88,7 +88,7 @@ sequenceDiagram
      curl -s -m 2 http://192.168.8.20:8081/api/sdk/v1/system/status
      ```
 4. **Connect TitanCore Haptic Kit**:
-   - Plug the external 5V 2.5A power bank into the PAM8403 power rail.
+   - Connect the verified power rails to the TitanCore kit (5V for PAM8403, 12V for Channel M; verify against board manual per task #21).
    - Connect the USB data cable to the Conductor laptop.
    - Identify the serial port (`/dev/ttyUSB0` on Linux, `/dev/cu.usbserial-*` on macOS, `COM3`/`COM4` on Windows).
 5. **Connect Demo iPhones**:
