@@ -98,6 +98,10 @@ class ClockEstimator:
         self.min_samples = min_samples
         self._samples: list[_Sample] = []
 
+    def reset(self) -> None:
+        """Forget every sample (a new session or a changed conductor): the estimator is unsynced again."""
+        self._samples = []
+
     def add_sample(self, t0: int, t1: int, t2: int, t3: int) -> None:
         """t0/t3 local ns (client send/receive), t1/t2 conductor ns (receive/send).
 

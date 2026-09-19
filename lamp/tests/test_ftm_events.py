@@ -5,7 +5,13 @@ import pytest
 import ftm_client
 from ftm_client import BassEnvelope, EventPacket
 from ftm_clock import ClockEstimator
-from ftm_events import BassSample, Event, Normalizer
+from ftm_events import BassSample, Event, Normalizer as _RealNormalizer
+
+
+def Normalizer(est, **kw):
+    """Existing tests opt in to the bass timestamp policy; the default-off tests use _RealNormalizer."""
+    kw.setdefault("bass_time_policy", "presentation")
+    return _RealNormalizer(est, **kw)
 
 MS = 1_000_000
 OFFSET = 5_000_000_000  # conductor = local + OFFSET; symmetric probes make it exact
@@ -182,3 +188,75 @@ def test_fuzz_never_raises_only_event_none_or_list():
                 rng.choice([0, 1, 20, 255, rng.getrandbits(8)]), tuple(rng.getrandbits(8) for _ in range(m))))
             assert isinstance(r, list) and all(isinstance(s, BassSample) for s in r)
     assert n.normalized > 0 and n.unknown_kind > 0 and n.bad_time > 0  # the fuzz exercised every path
+
+
+# ---- bass timestamp policy is opt-in, default off ------------------------------------------------
+def test_bass_is_off_by_default_and_counted():
+    n = _RealNormalizer(synced())
+    assert n.bass_time_policy is None
+    assert n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1, 2, 3))) == []
+    assert (n.bass_policy_unset, n.bass_normalized, n.bad_time, n.not_synced) == (1, 0, 0, 0)
+
+
+def test_bass_policy_presentation_opts_in_and_adds_no_l():
+    n = _RealNormalizer(synced(), bass_time_policy="presentation")
+    out = n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (255,)))
+    assert [s.due_ns for s in out] == [10**10] and n.bass_policy_unset == 0
+
+
+@pytest.mark.parametrize("bad", ["content", "", "Presentation", 0, True, "presentation "])
+def test_unknown_bass_policies_are_rejected(bad):
+    with pytest.raises(ValueError):
+        _RealNormalizer(synced(), bass_time_policy=bad)
+
+
+def test_events_are_not_affected_by_the_bass_policy():
+    ev = _RealNormalizer(synced()).normalize_event(pkt(master_ts=OFFSET + 10**10))
+    assert ev is not None and ev.due_ns == 10**10
+
+
+# ---- epochs ------------------------------------------------------------------------------------
+def test_epoch_starts_at_zero_and_is_stamped_on_events_and_bass():
+    n = Normalizer(synced())
+    assert n.epoch == 0
+    assert n.normalize_event(pkt(master_ts=OFFSET + 10**10)).epoch == 0
+    assert all(s.epoch == 0 for s in n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1, 2))))
+
+
+def test_new_epoch_resets_the_clock_and_bumps_the_epoch():
+    n = Normalizer(synced())
+    assert n.estimator.ready
+    assert n.new_epoch() == 1 and n.epoch == 1
+    assert not n.estimator.ready and n.estimator.estimate() is None
+    assert n.normalize_event(pkt(master_ts=OFFSET + 10**10)) is None and n.not_synced == 1
+    assert n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1,))) == [] and n.not_synced == 2
+
+
+def test_after_new_epoch_and_resync_events_carry_the_new_epoch():
+    n = Normalizer(synced())
+    n.new_epoch()
+    for i in range(3):
+        n.estimator.add_sample(1000 + i, 1000 + i + OFFSET + 500, 1000 + i + OFFSET + 500, 1000 + i + 1000)
+    ev = n.normalize_event(pkt(master_ts=OFFSET + 10**10))
+    assert ev is not None and ev.epoch == 1
+    n.new_epoch()
+    assert n.epoch == 2
+
+
+def test_seq_is_the_raw_native_u32_and_is_not_touched_at_wrap():
+    n = Normalizer(synced())
+    for raw in (0, 1, 2**32 - 1, 0):
+        assert n.normalize_event(pkt(seq=raw, master_ts=OFFSET + 10**10)).seq == raw
+
+
+def test_bass_samples_carry_the_current_nonzero_epoch():
+    n = Normalizer(synced())
+    n.new_epoch()
+    for i in range(3):
+        n.estimator.add_sample(1000 + i, 1000 + i + OFFSET + 500, 1000 + i + OFFSET + 500, 1000 + i + 1000)
+    out = n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1, 2, 3)))
+    assert len(out) == 3 and all(s.epoch == 1 for s in out)
+    n.new_epoch()
+    for i in range(3):
+        n.estimator.add_sample(1000 + i, 1000 + i + OFFSET + 500, 1000 + i + OFFSET + 500, 1000 + i + 1000)
+    assert all(s.epoch == 2 for s in n.normalize_bass(BassEnvelope(1, OFFSET + 10**10, 20, (1,))))
