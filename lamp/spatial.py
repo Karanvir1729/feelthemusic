@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -27,10 +28,9 @@ import numpy as np
 JOINTS = ("base_yaw", "base_pitch", "elbow_pitch", "wrist_roll", "wrist_pitch")
 DEFAULT_ROBOT_DIR = Path.home() / "lelamp-hackathon-2026/static/robots/lelamp_v1/pi5_feetech_r1"
 
-# The vendor's self-collision model (safety.yaml: head shade capsule against the base cylinder).
-# Read from the file when present; these are the values it held on 2026-09-19.
-SHADE = {"start": (-0.015, 0.0, 0.01875), "end": (0.11, 0.0, 0.01875), "radius": 0.06}
-BASE = {"radius": 0.10, "z_min": -0.10, "z_max": 0.0114, "clearance": 0.005}
+# The head-shade capsule and base cylinder of the vendor's self-collision model are read from the
+# vendor's safety.yaml at run time, like the URDF. Without that file this model refuses to load:
+# a spatial check with made-up geometry is worse than none.
 
 
 def _transform(xyz, rpy) -> np.ndarray:
@@ -49,13 +49,46 @@ def _rot_z(q: float) -> np.ndarray:
     return m
 
 
+def _calibration_candidates(robot_dir: Path, explicit: Path | None) -> list[Path]:
+    """Where this lamp's servo calibration may live: an explicit path, the runtime's configured
+    path (LELAMP_CALIBRATION_PATH, from the environment or /etc/lelamp/runtime.env), the checkout."""
+    found = [Path(explicit)] if explicit else []
+    configured = os.environ.get("LELAMP_CALIBRATION_PATH", "")
+    try:
+        for line in Path("/etc/lelamp/runtime.env").read_text().splitlines():
+            if line.startswith("LELAMP_CALIBRATION_PATH=") and not configured:
+                configured = line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    if configured:
+        found.append(Path(configured))
+    if len(robot_dir.resolve().parents) > 3:
+        found.append(robot_dir.resolve().parents[3] / "lelamp.json")
+    return found
+
+
 class LampModel:
-    def __init__(self, robot_dir: Path = DEFAULT_ROBOT_DIR, *, hfov_deg: float = 61.0, vfov_deg: float = 44.0,
+    def __init__(self, robot_dir: Path = DEFAULT_ROBOT_DIR, *, calibration: Path | None = None,
+                 hfov_deg: float = 61.0, vfov_deg: float = 44.0,
                  table_margin: float = 0.06, base_margin: float = 0.02, limit_margin: float = 6.0):
         robot_dir = Path(robot_dir)
         mapping = json.loads((robot_dir / "joint_mapping.yaml").read_text())   # the file holds JSON
         self.neutral = {j: float(mapping["neutral"][j]) for j in JOINTS}
-        self._scale = float(mapping["motion_scale"]) * float(mapping["degrees_to_radians"])
+        # Radians per unit. The vendor's joint map uses ONE approximate scale for every joint (it
+        # overstates head tilt by about 1.5x). The lamp's servo calibration gives the true value per
+        # joint: units span range_min..range_max ticks, 4096 ticks per turn.
+        approx = float(mapping["motion_scale"]) * float(mapping["degrees_to_radians"])
+        self._scale = {j: approx for j in JOINTS}
+        self.scale_source = "vendor approximate joint map"
+        for candidate in _calibration_candidates(robot_dir, calibration):
+            try:
+                ticks = json.loads(Path(candidate).read_text())
+                self._scale = {j: (ticks[j]["range_max"] - ticks[j]["range_min"]) / 4096 * 2 * math.pi / 200
+                               for j in JOINTS}
+                self.scale_source = f"servo calibration {candidate}"
+                break
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
         urdf = {j.get("name"): j for j in ET.parse(robot_dir / "robot.urdf").getroot().findall("joint")}
         self._chain = []
         for motor in JOINTS:
@@ -64,40 +97,36 @@ class LampModel:
             self._chain.append((motor, float(mapping["joint_offsets"][servo]),
                                 _transform([float(v) for v in origin.get("xyz").split()],
                                            [float(v) for v in origin.get("rpy").split()])))
-        self.shade, self.base = dict(SHADE), dict(BASE)
-        self._read_safety(robot_dir / "safety.yaml")
+        self.shade, self.base = self._read_safety(robot_dir / "safety.yaml")
         self.limits = {j: (-100.0 + limit_margin, 100.0 - limit_margin) for j in JOINTS}
         self.table_z = self.base["z_min"]                    # the base stands on the table
         self.table_margin, self.base_margin = table_margin, base_margin
         self.fx = 0.5 / math.tan(math.radians(hfov_deg) / 2)  # focal length in picture widths
         self.fy = 0.5 / math.tan(math.radians(vfov_deg) / 2)  # focal length in picture heights
 
-    def _read_safety(self, path: Path) -> None:
-        if not path.exists():
-            return
-        text = path.read_text()
+    @staticmethod
+    def _read_safety(path: Path) -> tuple[dict, dict]:
+        text = path.read_text()                     # a missing file is an error, on purpose
 
-        def numbers(key: str):
-            found = re.search(rf"{key}:\s*\[?([-\d.,\s]+)\]?", text)
-            return [float(v) for v in found.group(1).replace(",", " ").split()] if found else None
+        def numbers(key: str, count: int) -> list[float]:
+            found = re.search(rf"{key}:\s*\[?([-+\d.eE,\s]+)\]?", text)
+            values = [float(v) for v in found.group(1).replace(",", " ").split()] if found else []
+            if len(values) != count:
+                raise ValueError(f"{path}: expected {count} number(s) for {key}, found {values}")
+            return values
 
-        for key, store, name in (("capsule_start_m", self.shade, "start"), ("capsule_end_m", self.shade, "end")):
-            value = numbers(key)
-            if value and len(value) == 3:
-                store[name] = tuple(value)
-        for key, store, name in (("capsule_radius_m", self.shade, "radius"), ("cylinder_radius_m", self.base, "radius"),
-                                 ("cylinder_z_min_m", self.base, "z_min"), ("cylinder_z_max_m", self.base, "z_max"),
-                                 ("clearance_m", self.base, "clearance")):
-            value = numbers(key)
-            if value:
-                store[name] = value[0]
+        shade = {"start": tuple(numbers("capsule_start_m", 3)), "end": tuple(numbers("capsule_end_m", 3)),
+                 "radius": numbers("capsule_radius_m", 1)[0]}
+        base = {"radius": numbers("cylinder_radius_m", 1)[0], "z_min": numbers("cylinder_z_min_m", 1)[0],
+                "z_max": numbers("cylinder_z_max_m", 1)[0], "clearance": numbers("clearance_m", 1)[0]}
+        return shade, base
 
     # ------------------------------------------------------------------ forward kinematics
     def head(self, units: dict) -> dict:
         """Head position and camera axes in the base frame. The camera looks along the shade axis."""
         m = np.eye(4)
         for motor, offset, origin in self._chain:
-            m = m @ origin @ _rot_z((float(units[motor]) - self.neutral[motor]) * self._scale + offset)
+            m = m @ origin @ _rot_z((float(units[motor]) - self.neutral[motor]) * self._scale[motor] + offset)
         forward, down = m[:3, 0], m[:3, 1]
         a = (m @ [*self.shade["start"], 1.0])[:3]
         b = (m @ [*self.shade["end"], 1.0])[:3]
@@ -147,10 +176,16 @@ class LampModel:
 
     def distance_from_size(self, size_in_picture_widths: float, real_size_m: float) -> float:
         """Pinhole: an object of real_size_m that spans this much of the picture is this far away."""
-        return float(np.clip(real_size_m * self.fx / max(size_in_picture_widths, 1e-3), 0.15, 2.0))
+        return float(real_size_m * self.fx / max(size_in_picture_widths, 1e-3))
 
-    def target_point(self, units: dict, where, distance_m: float) -> np.ndarray:
-        return self.head(units)["position"] + self.ray(units, where) * distance_m
+    def target_point(self, units: dict, where, distance_m: float, *, above_table: float = 0.05) -> np.ndarray:
+        """The 3D point seen at `where`, `distance_m` along the sight-line. The sight-line stops at the
+        table: whatever we are looking at is not underneath it, so an over-estimated distance is cut."""
+        origin, ray = self.head(units)["position"], self.ray(units, where)
+        floor = self.table_z + above_table
+        if ray[2] < -1e-6 and origin[2] > floor:
+            distance_m = min(distance_m, (origin[2] - floor) / -ray[2])
+        return origin + ray * distance_m
 
     def aim_error_deg(self, units: dict, point) -> float:
         h = self.head(units)
