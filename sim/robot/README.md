@@ -24,7 +24,7 @@ so the description cannot be committed here by accident.
 
 ```sh
 ./sim/robot/fetch.sh user@host                     # straight off a lamp, over scp
-FTM_ROBOT_MIRROR=<git url> ./sim/robot/fetch.sh    # from a private mirror; ask an operator for the URL
+FTM_ROBOT_MIRROR=<https or ssh url> ./sim/robot/fetch.sh   # from a private mirror; ask an operator for the URL
 FTM_ROBOT_DIR=sim/robot/pi5_feetech_r1 \
 LELAMP_CALIBRATION_PATH=sim/robot/lelamp-calibration.json \
 pytest lamp/tests
@@ -33,7 +33,7 @@ pytest lamp/tests
 `user@host` is the lamp's SSH login (the lamp's address is not written down in this repository).
 The script fetches two files, checks `robot.urdf` against the checksum of the description shipped on
 the lamp, and exits 0 only when both are present; run it again with a lamp host if it reports the
-calibration missing. The mirror is a private copy for people who already have access to the runtime;
+calibration missing. The mirror is, as described by the operator who keeps it, a private copy for people who already have the runtime;
 its URL is handed out by an operator, not published.
 
 Both files matter. `LampModel` reads the lamp's own servo calibration for the true radians-per-unit
