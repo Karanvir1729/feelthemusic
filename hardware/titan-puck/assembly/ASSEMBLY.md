@@ -19,8 +19,9 @@ Base, lid, TITAN Core, the three motors (LF, MF, LFi), a jumper, a USB-C cable, 
 
 ![Step 2](step02.png)
 
-Turn the board over and push the jumper onto the two header pins labelled IO19 and IO22. The pair in the picture is only
-an example, so use the labels on your board. You cannot reach the jumper once the board is in.
+Turn the board over. The jumper bridges IO22 and IO19: the 3rd and 4th header pins from the far end (away from the
+USB-C), on the same side as the R terminal (TITAN QuickStart Guide, page 10). If the board already paired over Bluetooth, the
+jumper is already on, so just check it is pushed fully down. You cannot reach it once the board is in.
 
 ## 3. Wire the motors to the screw terminals
 

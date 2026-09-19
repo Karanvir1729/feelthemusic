@@ -273,7 +273,7 @@ def board_part(jumper=None, hl_pins=()):
     return p
 
 
-JUMPER_PINS = (PIN_ROWS_X[1], 21.40 + 2.54 * 4, 21.40 + 2.54 * 5)  # an example pair only (read the board's labels)
+JUMPER_PINS = (PIN_ROWS_X[1], 21.40 + 2.54 * 5, 21.40 + 2.54 * 6)  # IO19, IO22: R-terminal side, 4th and 3rd pins from the far end (TITAN QuickStart p.10)
 
 
 def jumper_part(px, py_mid, z_top):
@@ -887,15 +887,15 @@ def step02():
     tip = Rf @ np.array([jx, jy, -10.18]) + tf
     ink.arrow(tip + lift + (0, 0, 16), tip + lift + (0, 0, 1.6), RGB["act"], w=12)
     ink.label(Rf @ np.array([jx, jy + 2.5, -7.0]) + tf + lift, "jumper", (230, 180), INK)
-    ink.label(Rf @ np.array([jx, JUMPER_PINS[2], -10.18]) + tf, "IO19 + IO22\n(example pins)", (1130, 330),
+    ink.label(Rf @ np.array([jx, JUMPER_PINS[2], -10.18]) + tf, "IO19 + IO22\n(3rd + 4th pins from the end)", (1130, 330),
               RGB["act"])
     ink.label(Rf @ np.array([PIN_ROWS_X[0], 41.72, -10.18]) + tf, "header pins", (900, 110), INK)
     ink.label(Rf @ np.array([13.25, -1.3, 1.6]) + tf, "USB-C end", (1100, 700), INK)
     ink.label(Rf @ np.array([19.8, 15.0, 6.0]) + tf, "screw terminals\n(face down now)", (250, 690), RGB["board"])
-    notes = ["Turn the board over. Push the jumper fully onto the two pins labelled IO19 and IO22: this sets "
-             "Bluetooth mode.",
-             "Use the pin labels on your board: the pair drawn here is only an example. The jumper cannot be reached "
-             "once the board is in the puck."]
+    notes = ["Turn the board over. The jumper bridges IO22 and IO19: the 3rd and 4th header pins from the far "
+             "end (away from the USB-C), on the same side as the R terminal. This sets Bluetooth mode.",
+             "If the board already paired over Bluetooth, the jumper is already on: just check it is pushed fully "
+             "down. It cannot be reached once the board is in the puck."]
     return save(page(2, "Bluetooth jumper on IO19 + IO22", [img], notes), "step02.png")
 
 
