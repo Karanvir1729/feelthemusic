@@ -27,11 +27,13 @@ class TitanEventMapper:
         latency_budget_s: float = DEFAULT_BUDGET_S,
         trim_s: float = DEFAULT_TRIM_S,
         time_fn: Optional[Callable[[], float]] = None,
+        sleep_fn: Optional[Callable[[float], None]] = None,
     ) -> None:
         self.driver = driver
         self.latency_budget_s = latency_budget_s
         self.trim_s = trim_s
         self.time_fn = time_fn or time.monotonic
+        self.sleep_fn = sleep_fn or time.sleep
         self._phase: float = 0.0
 
         # Metrics
@@ -49,7 +51,14 @@ class TitanEventMapper:
         num_samples: int = 16,
     ) -> List[int]:
         """Synthesize a continuous sub-bass waveform frame centered at 128."""
-        clamped_intensity = max(0.0, min(1.0, float(intensity)))
+        try:
+            intensity_val = float(intensity)
+            if not math.isfinite(intensity_val):
+                return [128] * num_samples
+            clamped_intensity = max(0.0, min(1.0, intensity_val))
+        except (ValueError, TypeError):
+            return [128] * num_samples
+
         samples: List[int] = []
         phase_step = 2.0 * math.pi * freq_hz / sample_rate
 
@@ -74,19 +83,34 @@ class TitanEventMapper:
         # Parse presentation timestamp (pts)
         raw_pts = event.get("pts")
         if raw_pts is not None:
-            # Check if integer nanoseconds (> 1e12) or floating seconds
-            pts_s = (float(raw_pts) / 1e9) if raw_pts > 1e12 else float(raw_pts)
-            target_presentation_s = pts_s + self.latency_budget_s - self.trim_s
+            try:
+                pts_val = float(raw_pts)
+                if not math.isfinite(pts_val):
+                    return False
+                pts_s = (pts_val / 1e9) if pts_val > 1e12 else pts_val
+                target_presentation_s = pts_s + self.latency_budget_s - self.trim_s
 
-            # Late event drop rule: pts + L - trim < now - 80ms
-            if current_time > (target_presentation_s + self.LATE_DROP_THRESHOLD_S):
-                self.dropped_late_events += 1
+                # Late event drop rule: pts + L - trim < now - 80ms
+                if current_time > (target_presentation_s + self.LATE_DROP_THRESHOLD_S):
+                    self.dropped_late_events += 1
+                    return False
+
+                # Early event: hold until target presentation time (Rule 5: fire at pts + L - trim)
+                lead_time = target_presentation_s - current_time
+                if 0.0 < lead_time <= (self.latency_budget_s + 0.050):
+                    self.sleep_fn(lead_time)
+            except (ValueError, TypeError):
                 return False
 
-        event_type = str(event.get("type", "")).lower()
-        intensity = float(event.get("intensity", 1.0))
-        intensity = max(0.0, min(1.0, intensity))
+        try:
+            raw_intensity = float(event.get("intensity", 1.0))
+            if not math.isfinite(raw_intensity):
+                return False
+            intensity = max(0.0, min(1.0, raw_intensity))
+        except (ValueError, TypeError):
+            return False
 
+        event_type = str(event.get("type", "")).lower()
         self.processed_events += 1
 
         if event_type == "kick":

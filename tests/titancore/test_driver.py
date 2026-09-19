@@ -202,3 +202,41 @@ def test_event_mapper_stop_and_unknown():
 
     unknown_event = {"type": "laser_beam"}
     assert mapper.handle_event(unknown_event) is False
+
+
+def test_event_mapper_nan_handling():
+    fake = FakeSerialPort()
+    clock = MockClock(start_time=100.0)
+    driver = TitanDriver(serial_instance=fake, time_fn=clock.time)
+    mapper = TitanEventMapper(driver=driver, time_fn=clock.time)
+
+    # NaN pts
+    assert mapper.handle_event({"type": "kick", "pts": float("nan")}) is False
+    # Inf pts
+    assert mapper.handle_event({"type": "kick", "pts": float("inf")}) is False
+    # NaN intensity
+    assert mapper.handle_event({"type": "kick", "intensity": float("nan")}) is False
+    # Driver transient NaN rejection
+    assert driver.send_transient(amplitude=float("nan"), duration_ms=20) is False
+
+
+def test_event_mapper_early_event_holding():
+    fake = FakeSerialPort()
+    clock = MockClock(start_time=100.0)
+    slept = []
+    driver = TitanDriver(serial_instance=fake, time_fn=clock.time)
+    mapper = TitanEventMapper(
+        driver=driver,
+        latency_budget_s=0.300,
+        trim_s=0.005,
+        time_fn=clock.time,
+        sleep_fn=lambda s: slept.append(s),
+    )
+
+    # Event sent 200 ms in advance: pts = 99.9s -> target = 99.9 + 0.300 - 0.005 = 100.195s
+    # current time is 100.0s -> lead time = 0.195s (195 ms)
+    early_event = {"type": "kick", "pts": 99.9, "intensity": 0.8}
+    assert mapper.handle_event(early_event) is True
+    assert len(slept) == 1
+    assert pytest.approx(slept[0], 0.001) == 0.195
+

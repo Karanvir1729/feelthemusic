@@ -10,6 +10,7 @@ Controls three independent actuator channels:
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any, List, Optional, Sequence, Union
 
@@ -170,7 +171,14 @@ class TitanDriver:
         current = self._last_pcm_sample
 
         for s in samples:
-            val = int(round(s))
+            try:
+                s_float = float(s)
+                if not math.isfinite(s_float):
+                    continue
+                val = int(round(s_float))
+            except (ValueError, TypeError):
+                continue
+
             # Clamp to 0..255
             val = max(self.MIN_SAMPLE, min(self.MAX_SAMPLE, val))
 
@@ -197,6 +205,14 @@ class TitanDriver:
         Grammar: CHNL M <amplitude> <duration_ms>;
         Enforces 50 ms thermal cooldown to prevent H-bridge damage.
         """
+        try:
+            amp_val = float(amplitude)
+            dur_val = float(duration_ms)
+            if not (math.isfinite(amp_val) and math.isfinite(dur_val)):
+                return False
+        except (ValueError, TypeError):
+            return False
+
         now = self._time_fn()
         if (now - self._last_strike_time) < self.MIN_STRIKE_INTERVAL_S:
             logger.warning("Channel M transient strike dropped: cooldown active (<50 ms)")
@@ -204,10 +220,10 @@ class TitanDriver:
             return False
 
         # Clamp parameters
-        amp = max(0, min(self.MAX_SAMPLE, int(amplitude)))
+        amp = max(0, min(self.MAX_SAMPLE, int(round(amp_val))))
         dur = max(
             self.MIN_TRANSIENT_DURATION_MS,
-            min(self.MAX_TRANSIENT_DURATION_MS, int(duration_ms)),
+            min(self.MAX_TRANSIENT_DURATION_MS, int(round(dur_val))),
         )
 
         cmd = f"CHNL M {amp} {dur};"
