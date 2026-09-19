@@ -21,8 +21,8 @@ Decision by Franklin: build on the **existing Mac FTM Conductor**, not the Pytho
 | Piece | Owner in this contract | Status |
 |---|---|---|
 | Clock and audio | Existing Mac FTM Conductor [reported: repo `Karanvir1729/feel-the-music`, private, not readable by the agents] | unread source |
-| Client for the conductor's protocol, on the lamp side | task #19, `lamp/ftm_client.py` | partly unblocked: the three packet layouts are in the hub (section 9, item 1); the meaning of the codes is still missing |
-| Events that drive the lamp (beat, bass, section) | **not decided**, see section 4 | [unknown] |
+| Client for the conductor's protocol, on the lamp side | task #19, `lamp/ftm_client.py` | the packet layouts and event codes are now in the hub (section 4); PR #16 parses them, nothing yet checked against the real conductor |
+| Events that drive the lamp (beat, bass, section) | the existing conductor's `EventPacket` and `BassEnvelope` (section 4) | [reported]; source unread |
 | The single lamp controller (modes, arbitration, safety latch) | `lamp/performance.py` (gemini38's lane) | PR #7, being fixed |
 | Head tracking | `lamp/follow.py`, `lamp/spatial.py` (existing) | needs the supervised gate |
 | Light | `safety/flash.py` between the envelope and `light.glow` | PR #5 |
@@ -42,19 +42,30 @@ Decision by Franklin: build on the **existing Mac FTM Conductor**, not the Pytho
 - **Trims are per device and cannot be derived from telemetry.** A phone's self-reported output latency does not predict its residual [reported, hub seq 165], so trims must be measured with an external reference. Only the phone residual above exists. The lamp's glow trim, the lamp's motion lead time and the TitanCore trim are all **[unknown]** and must be measured (task #9 and a lamp session), not written into a config as if known.
 - **Two easy mistakes** that the PR reviews found in earlier code: a late check that runs before the clock is synced, and a "trim" for gestures that is larger than `L` (a gesture that takes seconds must be scheduled *ahead*, not subtracted as an output latency).
 
-## 4. The gap: where do beat and bass events come from?
+## 4. Where beat and bass events come from [reported: the conductor already emits them]
 
-The existing conductor captures live system audio and sends audio access units [reported]. The lamp needs *events* (kick, snare, bass envelope, section), not audio.
+Earlier drafts of this contract said live audio had no event source, because `analysis/` (PR #1) is whole-track only. **That gap is closed by a report, not by code we have read.** The full text of hub task #6, recovered from the hub UI by codexfranklin (hub seq 593), lists the existing conductor's packets. Besides the sync packets, it carries the events the lamp needs:
 
-`analysis/` (PR #1) turns a whole file into events, but it is **whole-track only**: its thresholds and envelope are normalised by the track's global maximum, so it cannot run on a live stream (`analysis/README.md`). "The Mac plays any audio" therefore needs one of these:
-
-| Option | What it means | Cost |
+| Type | Layout (little-endian, first byte = type) | What it is |
 |---|---|---|
-| A. Analyse a chosen file ahead of time | Only works for a known demo track (task #7). Events are known well ahead, so scheduling is easy. | Not "any audio". |
-| B. A causal (streaming) analyser | A new component fed by the conductor's audio, emitting events stamped with the audio `pts`. Running-window normalisation replaces the global maximum. | New code, tuned on real audio, adds analysis latency to budget inside `L`. Where it runs (Mac or lamp) is **[unknown]**. |
-| C. The Swift conductor or app already derives haptic events | The lamp subscribes to those. | **[unknown]**: the phone client is reported to produce Core Haptics transients and a continuous bass texture, but whether the events are derived on the phone or sent by the conductor is not known. |
+| 3 `EventPacket` | u8 type, u32 seq, u8 kind, u8 flags, u8 intensity (x255), u8 sharpness (x255), u16 durationMs, u16 freqHz, u8 target, u64 masterTs, u32 leadUs = 26 B | one musical event |
+| 12 `BassEnvelope` | u8 type, u32 seq, u64 startTs, u8 stepMs, u8 n, then n bytes = 15 + n B | a run of bass-envelope samples |
+| 5 `Assign` | u8, u8, u32 = 6 B | session assignment sent to a client |
+| 13 `Control` | u8 type, then a UTF-8 JSON document | control message (for example the reported latency budget of 300) |
+| 4 (client to conductor) | JSON with `t` = `"hi"` | the client's hello; the conductor answers with `Assign` and `Control` |
 
-**Recommendation [design]:** ship A for the demo (it is the only one that can be tested honestly now), read the conductor source to see whether C already exists, and file B as a separate task only if C does not. Do not build B on a guess.
+- **Event kinds** (reported names): click 0, kick 1, snare 2, bass 3, build 4, drop 5. **Flags** (bit values): audio 1, haptic 2, measure 4. **Target** 0xFF means all. [reported]
+- Also reported: peers are keyed by ip:port and dropped after 6 s without traffic; sync replies are delayed randomly by 0 to 15 ms; the author says they verified the encode calls, and the source's own comments were wrong in three places (trust the code). None of this has been tested against the native app by anyone reading this file.
+
+**What this means [design]:** the lamp does **not** need a streaming analyser. It consumes `EventPacket` kinds for gestures and the `BassEnvelope` samples for light, through the adapter and the flash limiter. `analysis/` stays useful offline (preparing and checking a known demo track, and as an independent cross-check of the conductor's events), but it is no longer on the live path.
+
+**Still unknown, and not to be guessed:**
+- How the conductor derives these events (its source is unread), and their real latency and accuracy on real music.
+- What `leadUs` means, and whether `BassEnvelope.startTs` is a native presentation timestamp (with `L` already added) like `masterTs`. Until it is confirmed, treat both as native presentation timestamps and **do not add `L`** (section 3).
+- The audio-anchor and audio access-unit packets, any type not listed, what `Assign`'s first u8 is, and the file `base-protocol-for-new-clients.md` that the task text refers to.
+- Whether the conductor's events are good enough on a dense real track. Nobody has measured this.
+
+The structure-only parser for these packets is PR #16 (task #19). It parses raw fields and interprets nothing; it has not been checked against the real conductor.
 
 ## 5. Lamp behaviour
 
@@ -97,13 +108,18 @@ Path [design]: bass envelope (0..1) -> `safety.flash.FlashLimiter` -> `light.glo
 
 ## 7. Haptics
 
-- **Where the TitanCore driver runs is [design], not established.** Nyquist reported a serial command interface at 115200 baud [reported]. That the board is attached by USB to the Mac running the conductor comes only from gemini38's PRs #9 and #10 and has not been confirmed by anyone who has the board. If it is, the driver runs on the Mac, not on the lamp.
-- **Chip figures, not board ratings.** A teammate's summary quotes the amplifier chips' own maximums: two channels (L, R) through a PAM8403 class-D amplifier (5 V, 0.6 A each) and one channel (M) through a DRV8212 H-bridge (12 V, 4 A max, 1.2 A continuous recommended), plus the serial commands `F <frameFreq> <frameSize>;` and `PCM <8-bit values>;`. [reported, hub seq 127] The vendor's public product page for the kit lists USB serial control, 3.3 V / 5 V I/O and up to 11 V output with a note above 5 V; its datasheet, quick start and CAD downloads sit behind a developer login and have not been read by the agents. [reported by codexfranklin, hub seq 538] **Do not apply 12 V, or any supply above what the assembled board's own manual allows, until the board revision and its manual have been confirmed.** The kit's power and wiring rating is [unknown]; the chip figures above are not it.
-- **Serial bandwidth decides the design.** 115200 8N1 is 11,520 bytes per second. Continuous PCM at the vendor guide's own example `F 4000` costs about 14,300 bytes per second of payload (124%), or about 18,700 with per-frame prefixes (162%): **it does not fit**, and overrunning the firmware buffer would read as drifting latency, not a bandwidth bug. `F 1000` is about 31% and fits. A transient tick is 21 to 24 bytes (about 2 ms). [reported: Nyquist, hub seq 165; arithmetic from the guide's example, not measured on the board]
+- **Board ratings, from the vendor datasheet as quoted in hub task #5** (V2.1, part TC-153286-B, dated 2025-04-30; recovered from the hub UI by codexfranklin, hub seq 605; the datasheet itself has not been read by the agents) [reported]:
+  - **Board supply: absolute maximum 6.0 V, recommended 4.75 to 5.25 V.**
+  - GPIO maximum 3.6 V.
+  - Motor peak 2 A, with a lower sustained figure.
+  - A single-cell LiPo can connect through a JST-PH2 connector, with a 500 mA charger.
+- **Never apply 12 V to the board.** The "12 V, 4 A" figures quoted earlier in chat, and copied into some PRs, are the H-bridge chip's own maximums, not the board's supply rating. The vendor's public product page agrees in kind: 3.3 V / 5 V I/O, and up to 11 V output only with a contact-the-vendor note above 5 V. [reported by codexfranklin, hub seq 538] The chest mount is wired from the board's own manual, and the board revision must be confirmed first (the datasheet downloads sit behind a developer login).
+- **Serial command grammar, from the same task text** [reported; not run on a board]: commands end with `;` and can be chained. `CHNL n` selects a channel (0 all, 1 L, 2 R, 3 M). `Tick strength durationMs` and `Pulse strength durationMs` (strength 0 to 1). `pause durationMs`. `vibrate freqHz strength durationMs duty sharpness` (the last three 0 to 1). `F frameFreqHz frameSize`. `PCM v0,v1,...` with comma-separated 8-bit values. Arguments are separated from the command by spaces, for example `CHNL 3; Tick 0.85 20` and `CHNL 1; vibrate 100 0.3 15000 1 1`. **The earlier `CHNL M <amplitude> <duration_ms>` form and space-separated PCM do not match this grammar; any driver written to them needs to be checked against it.**
+- **Still unverified even there:** the meaning of `F` (task #9 lists two readings), the rest value 128, any maximum frame size, and any stop command (none is given). Task #9's bench measurement decides them. Until a person has run the board, keep the driver on its fake port.
+- **Serial bandwidth decides the design.** 115200 8N1 is 11,520 bytes per second. Continuous PCM at the vendor guide's example `F 4000` costs about 14,300 bytes per second of payload (124%), or about 18,700 with per-frame prefixes (162%): **it does not fit**, and overrunning the firmware buffer would read as drifting latency, not a bandwidth bug. `F 1000` is about 31% and fits. A transient tick is 21 to 24 bytes (about 2 ms). [reported: Nyquist, hub seq 165; arithmetic from the guide's example, not measured on the board]
 - **Recommended path [design, from the same report]:** serial, scheduled on the show clock. Bluetooth is not recommended: it has no shared clock and no meaningful trim, its latency is renegotiated on every reconnect, it gives no per-event strength, and it does not drive the M channel (the only one with real thump). If it is ever demoed as a fallback, say aloud that it is not synchronised.
-- **Not verified anywhere:** the `CHNL M` command, the rest value 128, value ranges, cooldowns, and what `F` means (task #9 lists two readings: sample rate, or frames per second). Task #9 (bench measurement) decides them. Until a person has run the board, keep the driver on its fake port.
-- **The phone connection to the TitanCore is [unknown].** Franklin said the phone "plugs into the Titan Haptics". Cable, port, and whether the phone sends audio or is only mounted beside the board are all undecided. The only known inputs are USB serial and a Bluetooth audio mode with uncontrolled latency (no shared clock, so it cannot be scheduled on `pts + L`).
-- The chest mount is a physical design task. Wire it only from the board's own manual once that is confirmed. Until then the only safe statement is that the M channel and the L/R channels have different limits and must not share a supply by assumption. Also unresolved: a phone plugged straight into the TitanCore. The vendor page confirms USB serial control; it is **not** evidence that an iPhone can act as a USB accessory host to the board (tracked as task #21).
+- **Where the driver runs is [design], not established.** If the board is USB-attached to the Mac running the conductor, the driver runs on the Mac, not on the lamp. That attachment comes from gemini38's PRs and has not been confirmed by anyone who has the board.
+- **The phone connection to the TitanCore is [unknown].** Franklin said the phone "plugs into the Titan Haptics". The vendor page confirms USB serial control; nothing read so far shows that an iPhone can act as a USB accessory host to the board. Tracked as task #21. The only known inputs are USB serial and a Bluetooth audio mode with uncontrolled latency.
 
 ## 8. How this gets tested
 
@@ -114,11 +130,11 @@ Path [design]: bass envelope (0..1) -> `safety.flash.FlashLimiter` -> `light.glo
 
 ## 9. Open questions, in the order they block work
 
-1. **The rest of the native wire spec.** Part of it is already in the hub: the text of task #6 gives, little-endian with the first byte as the message type, `SyncReq` (u8 type, u16) = 3 bytes, `SyncResp` (u8, u16, u64, u64) = 19 bytes, and `EventPacket` (u8 type, u32 seq, u8 kind, u8 flags, u8 intensity x255, u8 sharpness x255, u16 durationMs, u16 freqHz, u8 target, u64 masterTs, u32 leadUs) = **26 bytes, not the 27 the source comment says** [reported, Nyquist]. Also per Nyquist: the audio anchor is 2 Hz, not 1 Hz, and Wi-Fi reply jitter is 0 to 15 ms, not 0 to 45 ms (that is the BLE path); **trust the code, not its comments**. That text is cut off by the hub tools before the complete schema: the meaning of `kind`, `flags` and `target` values, the audio-anchor packet and the rest are missing. Blocks task #19 until Nyquist, Karan or Franklin supplies the remainder (the agents' GitHub reads of `Karanvir1729/feel-the-music` return 404).
+1. **Confirmation of the reported wire spec.** The layouts and codes in section 4 are source-reported (task #6 text, recovered from the hub UI), not tested against the native app. Still missing: the audio-anchor and audio packets, `leadUs`, whether `BassEnvelope.startTs` already includes `L`, what `Assign`'s first byte is, and the file `base-protocol-for-new-clients.md` the task text refers to. One capture from the real conductor, or a read of its source, settles all of them.
    - Nyquist also asked for Karan's confirmation that an event-window client we write today, speaking a protocol defined by shipped code, is acceptable under the event rules. Franklin's decision to build on the existing conductor presumably answers it, but it should be confirmed before the client is written.
    - **Operational hazard:** two conductors advertised on one LAN and the shipped phone joins the first result with no filter, so phones split between them. Run exactly one conductor. [reported, Nyquist]
 2. **The Unity file** (Franklin says it is on the lamp's Raspberry Pi). Blocks task #18. Nobody should log into the lamp on their own; a person copies the file out.
-3. Does the conductor already emit haptic-relevant events (section 4, option C)?
+3. How good are the conductor's events on a dense real track, and what is their latency? (Reported to exist; never measured by us.)
 4. How does the phone connect to the TitanCore?
 5. Can `light.glow` run while a `motion.move` is in flight? Measure it.
 6. Where does the controller get the mode from (Mac app, a switch on the lamp, both)?
