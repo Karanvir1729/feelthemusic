@@ -22,6 +22,7 @@ cal="$here/lelamp-calibration.json"
 URDF_SHA256=64af9c8bcd5e86f39ade180394e714bd8f6585646a0c3f080c3877054daad07a   # robot.urdf on the lamp, 2026-09-19
 
 sha256()   { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -c1-64; }
+python3 -c pass 2>/dev/null || { echo "python3 is needed to validate the calibration file" >&2; exit 3; }
 desc_ok()  { [ -f "$1/robot.urdf" ] && [ "$(sha256 "$1/robot.urdf")" = "$URDF_SHA256" ]; }
 cal_ok()   { [ -f "$1" ] && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d, dict) and d else 1)' "$1" 2>/dev/null; }
 
@@ -34,8 +35,8 @@ if [ -d "$dest" ] && ! desc_ok "$dest"; then
   rm -rf "$dest.mismatch"; mv "$dest" "$dest.mismatch"
 fi
 if [ -f "$cal" ] && ! cal_ok "$cal"; then
-  echo "calibration present but not a JSON object: removing it" >&2
-  rm -f "$cal"
+  echo "calibration present but not a JSON object: moving it to $cal.invalid" >&2
+  mv -f "$cal" "$cal.invalid"
 fi
 
 work=$(mktemp -d)
