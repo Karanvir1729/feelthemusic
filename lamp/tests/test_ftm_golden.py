@@ -8,7 +8,8 @@ offset is 0 by construction). The Control datagram's hex was truncated in the re
 verbatim and the leading type byte 0x0d is the documented one.
 
 What this does NOT prove: anything about a lamp on Wi-Fi (offset, jitter), a mode change, a conductor
-restart, or a shipped conductor with a `lamp` Control key (this one has none: see test_control_*).
+restart, or what the conductor sends to a peer that says role=lamp: the probe's hello was the generic phone-shape
+one (m/app/hap), so the absence of a `lamp` Control key here is legacy/generic-peer evidence only.
 Expected values are read off the recorded bytes, not computed by the code under test.
 """
 import json
@@ -92,8 +93,10 @@ def test_bass_envelope_decodes_to_recorded_values():
     assert pkt == BassEnvelope(seq=6265, start_ts=96727176248000, step_ms=10, samples=(255,) * 5)
 
 
-def test_control_from_the_shipped_conductor_has_no_lamp_key_and_no_gen():
-    """docs/ftm-protocol.md describes a `lamp` key with `gen`; the recorded conductor sends neither."""
+def test_control_sent_to_a_generic_peer_has_no_lamp_key_and_no_gen():
+    """docs/ftm-protocol.md describes a `lamp` key with `gen`; a generic (non-lamp) peer was sent neither.
+
+    Not shown: whether a peer that says role=lamp is sent one. Do not read this as 'the conductor cannot.'"""
     doc = json.loads(decode(CONTROL).text)
     assert doc["v"] == 2 and doc["session"] == SESSION and doc["lat"] == 300 and doc["mode"] == "music"
     assert "lamp" not in doc and "gen" not in doc and "role" not in doc
@@ -105,7 +108,7 @@ def test_session_adopts_assign_then_control_and_stays_off_without_a_lamp_key():
     assert s.on_datagram(ASSIGN, now) == [SessionOut(SESSION)]
     assert s.on_datagram(CONTROL, now + 36 * 1000) == []  # same session: not a restart
     assert s.session_id == SESSION
-    assert s.current_mode(now + 1 * MS) == "off"  # no `lamp` key: the safe default holds, nothing dances
+    assert s.current_mode(now + 1 * MS) == "off"  # no `lamp` key: the safe default holds, nothing dances (legacy/generic peer)
     assert s.stats()["bad_control"] == 0 and s.stats()["parse_errors"] == 0
 
 
