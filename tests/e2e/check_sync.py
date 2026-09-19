@@ -210,6 +210,14 @@ def run_sync_verification(
     passed = True
     reasons = []
 
+    # Probe floor check (prevent vacuous pass if zero clients connect)
+    min_required_probes = max(1, int(duration_s * 0.5)) if not simulate else 1
+    if metrics.total_probes < min_required_probes:
+        passed = False
+        reasons.append(
+            f"Probe floor not met: received {metrics.total_probes} probes, required >= {min_required_probes}"
+        )
+
     if metrics.late_events_reported > 0:
         passed = False
         reasons.append(f"Late events reported: {metrics.late_events_reported}")

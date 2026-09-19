@@ -53,7 +53,7 @@ When an operator with a real iPhone is present at the booth:
    uv run --python 3.11 python tests/e2e/check_sync.py --live --duration 60 --budget 300
    ```
 4. **Open the App**: Launch the app on the phone. Observe the phone discovering the conductor via Bonjour (`_feelthemusic._udp.local.`), exchanging probes, and vibrating in sync with the 120 BPM test pulse stream.
-5. **Evaluate Output**: The test harness outputs a summary report confirming whether the connection met the $\le 4.0\text{ ms}$ residual spread bar.
+5. **Evaluate Output**: The test harness outputs a summary report. In `--live` mode, a probe floor assertion (`probes >= duration * 0.5`) strictly prevents vacuous passes if no device was connected. It confirms whether the connection met the $\le 4.0\text{ ms}$ residual spread bar.
 
 ---
 

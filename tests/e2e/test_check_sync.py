@@ -45,3 +45,11 @@ def test_run_sync_verification_simulation():
     assert metrics.total_probes > 0
     assert metrics.late_events_reported == 0
     assert metrics.residual_spread_ms <= 4.0
+
+
+def test_run_sync_verification_live_probe_floor_fails_on_silence():
+    # In live mode without clients, total_probes == 0, probe floor must fail
+    passed, metrics = run_sync_verification(duration_s=0.2, simulate=False, host="127.0.0.1", port=0)
+    assert passed is False
+    assert metrics.total_probes == 0
+
