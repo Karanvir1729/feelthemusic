@@ -23,15 +23,15 @@ Every live demonstration must have clearly assigned human responsibilities:
 Verify all physical equipment is present before powering any circuit:
 
 ### 2.1 Networking & Host Station
-- [ ] 1x Dedicated 5 GHz Wi-Fi Router (GL.iNet / TP-Link) + 12V power supply.
+- [ ] 1x Dedicated 5 GHz Wi-Fi Router (GL.iNet / TP-Link) + 12V power supply (connected to continuous mains power, NEVER plugged into the robot e-stop strip).
 - [ ] 1x Conductor Laptop (macOS / Linux / Windows) with Python 3.11 environment.
-- [ ] 1x Master Power Strip with illuminated ON/OFF rocker switch (acts as Emergency Stop).
+- [ ] 1x Dedicated Robot Emergency Stop Switch / Strip (powers ONLY the LeLamp 12V supply; keeping router power completely isolated).
 - [ ] 1x Cat6 Ethernet cable (for wired laptop-to-router connection, optional but recommended).
 
 ### 2.2 Robot Station
 - [ ] 1x LeLamp Robot (borrowed unit with Raspberry Pi 5 8GB, Debian 13).
 - [ ] 1x LeLamp 12V 5A DC barrel power adapter.
-- [ ] 1x Vendor runtime token loaded into `/etc/environment` or lamp user env (never committed to git).
+- [ ] 1x Vendor runtime token exported into the lamp user runtime environment (`LELAMP_SDK_TOKEN`, never committed to git or stored in world-readable files).
 - [ ] Minimum **50 cm (20 in) radius clearance zone** around the lamp base, completely clear of wires, laptops, water bottles, and obstacles.
 
 ### 2.3 Haptic Stations
@@ -178,10 +178,10 @@ If a packet arrives where $\text{pts} + L - \text{trim} < \text{now} - 80\text{ 
 ```
 
 ### Playbook A: Physical Emergency Stop (Arm Runaway)
-1. **Slap the illuminated master rocker switch** on the power strip immediately.
+1. **Slap the dedicated robot illuminated rocker switch** immediately (cutting 12V power to LeLamp ONLY; the router remains powered).
 2. All 12V power to the LeLamp servos is severed instantly.
    > [!CAUTION]
-   > Cutting 12V power causes all servos to lose holding torque, meaning the arm and head will drop under gravity. [unverified: whether the arm rests safely on internal end-stops or sags into table]. Use this e-stop only for impending collision or participant hazard.
+   > Cutting 12V power causes all servos to lose holding torque, meaning the arm and head will drop under gravity [unverified: whether the arm rests safely on internal end-stops or sags into table]. Use this physical e-stop only for impending collision or participant hazard.
 3. Inspect for mechanical pinching, obstruction, or strained cables.
 4. Do NOT attempt to catch or wrestle the motorized joints while powered.
 

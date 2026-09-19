@@ -78,8 +78,8 @@ Bring an independent dual-band Wi-Fi 6 / 802.11ac router (e.g., GL.iNet GL-AXT18
 ### 3.2 DHCP & Network Services
 - **DHCP Subnet**: `192.168.8.0/24`, Range: `192.168.8.100` to `192.168.8.200`.
 - **Lease Time**: **24 hours** (prevents DHCP re-bind handshakes mid-performance).
-- **DNS Server**: Point to `192.168.8.1` (or conductor `192.168.8.10`). Run a dummy DNS responder resolving all `.local` and wildcard queries to `192.168.8.10`.
-- **mDNS / Multicast**: Enable IGMP snooping and multicast forwarding to support Bonjour discovery (`_feelmusic._udp.local`).
+- **DNS Server**: Default gateway `192.168.8.1`. Note: do not attempt to serve synthetic `.local` unicast DNS responses; `.local` is strictly mDNS / Bonjour.
+- **mDNS / Multicast**: Enable IGMP snooping and multicast forwarding to support Bonjour discovery (`_feelthemusic._udp.local.`).
 
 ---
 
@@ -121,9 +121,9 @@ Bring an independent dual-band Wi-Fi 6 / 802.11ac router (e.g., GL.iNet GL-AXT18
 
 ### 5.1 Wire Sync Protocol v1 (UDP 47300)
 - All timing and music events use UDP port 47300.
-- Packet payload: Canonical single-line UTF-8 JSON object ($\le 512$ bytes).
-- Broadcast mode: Directed subnet broadcast `192.168.8.255:47300` or unicast to registered clients.
-- Unicast sync probes: Clients ping conductor at `192.168.8.10:47300` with `sync_req` to maintain monotonic offset estimates $\theta$.
+- Packet payload: Canonical UTF-8 JSON object (maximum 2048 bytes per datagram).
+- Delivery mode: UDP unicast to registered client endpoints (`lamp`, `phone`, `haptic`).
+- Clock sync probes: Clients send `probe` datagrams (`{"v":1,"t":"probe","id":<int>,"t0":<int>}`) to maintain monotonic offset estimates $\theta$ via symmetric round-trip delay filtering.
 
 ### 5.2 Robot SDK Control (HTTP 8081)
 - The lamp client runs on the LeLamp Pi 5 itself and talks to the vendor runtime over local loopback (`http://127.0.0.1:8081/api/sdk/v1`).
@@ -145,13 +145,13 @@ ROUTER="192.168.8.1"
 LAMP="192.168.8.20"
 
 echo "[1/4] Checking Router Gateway..."
-ping -c 2 -W 1 $ROUTER > /dev/null && echo "  -> Router reachable." || { echo "CRITICAL: Router down!"; exit 1; }
+ping -c 2 $ROUTER > /dev/null && echo "  -> Router reachable." || { echo "CRITICAL: Router down!"; exit 1; }
 
 echo "[2/4] Checking LeLamp Pi 5..."
-ping -c 2 -W 1 $LAMP > /dev/null && echo "  -> LeLamp reachable." || { echo "CRITICAL: LeLamp not on LAN! Check Golden Boot Sequence."; exit 1; }
+ping -c 2 $LAMP > /dev/null && echo "  -> LeLamp reachable." || { echo "CRITICAL: LeLamp not on LAN! Check Golden Boot Sequence."; exit 1; }
 
 echo "[3/4] Verifying LeLamp SDK Gateway on port 8081..."
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 http://$LAMP:8081/api/sdk/v1/system/status || echo "000")
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 http://$LAMP:8081/api/sdk/v1/system/status)
 if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "401" ]; then
     echo "  -> LeLamp SDK gateway responding (HTTP $HTTP_STATUS)."
 else
@@ -159,8 +159,27 @@ else
     exit 1
 fi
 
-echo "[4/4] Verifying UDP 47300 Broadcast..."
-python3 -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1); s.sendto(b'{\"type\":\"ping\"}', ('192.168.8.255', 47300)); print('  -> UDP broadcast packet sent.')"
+echo "[4/4] Verifying UDP 47300 Probe Exchange with LeLamp..."
+python3 -c "
+import socket, json, time, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(2.0)
+t0 = int(time.monotonic() * 1e9)
+req = json.dumps({'v': 1, 't': 'probe', 'id': 1, 't0': t0}).encode('utf-8')
+try:
+    s.sendto(req, ('$LAMP', 47300))
+    resp, _ = s.recvfrom(2048)
+    reply = json.loads(resp.decode('utf-8'))
+    if reply.get('t') == 'probe_reply':
+        print('  -> UDP 47300 verified: received probe_reply.')
+        sys.exit(0)
+    else:
+        print(f'  -> UDP error: unexpected packet {reply}')
+        sys.exit(1)
+except socket.timeout:
+    print('CRITICAL: UDP 47300 probe timed out! LeLamp bridge not responding.')
+    sys.exit(1)
+"
 
 echo "=== DEMO LAN STATUS: GREEN ==="
 ```
