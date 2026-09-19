@@ -22,8 +22,25 @@ else
   git clone --depth 1 -q https://github.com/MeharPro/lelamp-robot-description.git "$tmp" \
     || { echo "no access to the mirror; pass a lamp instead: $0 lelamp@lelamp-xxxx.local" >&2; exit 1; }
   cp -R "$tmp/pi5_feetech_r1" "$here/"
+  tmp_cal="$tmp/lelamp-calibration.json"
+  [ -f "$tmp_cal" ] && cp "$tmp_cal" "$here/lelamp-calibration.json"
   rm -rf "$tmp"
 fi
 
+# The servo calibration matters as much as the description. Without it LampModel falls back to the
+# vendor approximate joint map, which spatial.py notes overstates head tilt by about 1.5x -- and two
+# tests in lamp/tests/test_spatial.py fail on exactly that.
+if [ ! -f "$here/lelamp-calibration.json" ]; then
+  if [ -n "$1" ]; then
+    scp "$1:/var/lib/lelamp/user-data/v1/calibration/lelamp.json" "$here/lelamp-calibration.json" || true
+  elif [ -f "$tmp_cal" ]; then
+    cp "$tmp_cal" "$here/lelamp-calibration.json"
+  fi
+fi
+
 echo "ready: $dest"
-echo "run the spatial tests with:  FTM_ROBOT_DIR=sim/robot/pi5_feetech_r1 pytest lamp/tests"
+echo
+echo "run the spatial tests with:"
+echo "  FTM_ROBOT_DIR=sim/robot/pi5_feetech_r1 \\"
+echo "  LELAMP_CALIBRATION_PATH=sim/robot/lelamp-calibration.json \\"
+echo "  pytest lamp/tests"

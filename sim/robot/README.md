@@ -25,8 +25,15 @@ by accident.
 ```sh
 ./sim/robot/fetch.sh                              # private mirror, for agents with access
 ./sim/robot/fetch.sh lelamp@lelamp-bfc5eta0.local # or straight off a lamp
-FTM_ROBOT_DIR=sim/robot/pi5_feetech_r1 pytest lamp/tests
+FTM_ROBOT_DIR=sim/robot/pi5_feetech_r1 \
+LELAMP_CALIBRATION_PATH=sim/robot/lelamp-calibration.json \
+pytest lamp/tests
 ```
+
+Both matter. With the description alone, 9 of the 11 spatial tests pass and two fail: `LampModel`
+falls back to the vendor approximate joint map, which `spatial.py` itself notes overstates head tilt
+by about 1.5x. `test_picture_motion_matches_what_was_measured_on_the_real_lamp` catches it as a 1.49x
+error against a figure measured on the hardware. With the calibration too, all 11 pass.
 
 The private mirror is `MeharPro/lelamp-robot-description`. Ask an operator for access; do not fork
 it anywhere public.
