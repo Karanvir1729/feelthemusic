@@ -44,7 +44,7 @@ cd ~/feelthemusic-lamp
 
 It does not chase. Every SDK move is planned by the lamp: at least 2 s, eased, self-collision checked, settled. So the lamp looks, thinks and turns, every few seconds. Between moves it holds still, because the follower switches the lamp's looped idle animation off while it runs (the SDK resumes idle after each move, and the head would drift off the person) and restores it on exit. That switch is the lamp dashboard's own idle selector, the single non-SDK call in this directory; it commands no motion.
 
-A move is sent only if our own workspace check passes; the lamp's planner then checks it again. If an accepted move does not complete, the follower relaxes the servos with a planned hold at the measured pose, never fights a cancel from whoever owns the lamp, and stops after three failures in a row.
+A move is sent only if our own workspace check passes; the lamp's planner then checks it again. If an accepted move does not complete, the follower reports it and stops rather than issuing another move on top of an unknown arm state. It never fights a cancel from whoever owns the lamp; restart tracking only after checking the robot.
 
 ## Measured on the lamp (2026-09-19, Raspberry Pi 5, vendor runtime running)
 
@@ -70,5 +70,14 @@ over the LAN. Start the bridge on the Pi (with the vendor runtime running):
 It listens on UDP port 47400 and replies with Pi temperature/action telemetry to the Mac. The
 bridge keeps the SDK token on the Pi, sends only whole-arm `motion.move` actions through the
 vendor SDK gateway, checks the local spatial model, limits each joint step to five units, and
-stops issuing moves at the thermal cutoff. The Mac add-on panel displays the camera feed and
-telemetry; it does not need the lamp token.
+stops issuing moves at the thermal cutoff. The first valid target sender is pinned for the life of
+the bridge; packets from other IPs are ignored. For a fixed deployment, restrict it explicitly:
+
+```sh
+.venv/bin/python bridge.py --allow-ip <mac-lan-ip> --cutoff-c 70 --max-step 5
+```
+
+Malformed packets are discarded, and an uncertain or incomplete SDK move (`lost_track`, timeout,
+cancelled, or not reached) is terminal: the bridge reports the failure and sends no follow-up move
+until an operator restarts it. The Mac add-on panel displays the camera feed and telemetry; it does
+not need the lamp token.

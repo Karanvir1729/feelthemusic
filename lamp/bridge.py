@@ -28,6 +28,8 @@ from sdk import LampSDK, SDKError, read_token
 from spatial import DEFAULT_ROBOT_DIR, JOINTS, LampModel
 
 LISTEN_PORT = 47400
+DEFAULT_REPLY_PORT = 47401
+DEFAULT_TTL_MS = 1500
 THERMAL_PATH = "/sys/class/thermal/thermal_zone0/temp"
 
 
@@ -75,6 +77,75 @@ def telemetry(sock: socket.socket, addr: tuple[str, int] | None, reply_port: int
         pass
 
 
+def _bounded_int(value: object, *, minimum: int, maximum: int) -> int | None:
+    """Parse an integer without accepting booleans or silently truncating floats."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str) and value.strip().lstrip("+-").isdigit():
+        try:
+            parsed = int(value)
+        except ValueError:
+            return None
+    else:
+        return None
+    return parsed if minimum <= parsed <= maximum else None
+
+
+def _bounded_float(value: object, *, minimum: float, maximum: float) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(parsed) or not minimum <= parsed <= maximum:
+        return None
+    return parsed
+
+
+def normalize_packet(packet: object, max_step: float) -> dict | None:
+    """Validate and normalize one untrusted UDP target packet.
+
+    The Mac sender is on the local network, so malformed input must be treated as data and
+    discarded. In particular, never call ``.get`` until JSON has been confirmed to be an object,
+    and never let packet-controlled timing values escape their safe bounds.
+    """
+    if (not isinstance(packet, dict) or packet.get("t") != "lamp_target"
+            or not isinstance(packet.get("v"), int) or isinstance(packet.get("v"), bool)
+            or packet.get("v") != 1):
+        return None
+    session = packet.get("session")
+    if isinstance(session, bool) or not isinstance(session, (int, str)) or not str(session) or len(str(session)) > 128:
+        return None
+    seq = _bounded_int(packet.get("seq"), minimum=0, maximum=2**63 - 1)
+    reply_port = _bounded_int(packet.get("replyPort", DEFAULT_REPLY_PORT), minimum=1024, maximum=65535)
+    ttl_ms = _bounded_int(packet.get("ttlMs", DEFAULT_TTL_MS), minimum=1, maximum=60_000)
+    if seq is None or reply_port is None or ttl_ms is None:
+        return None
+    ttl_ms = min(ttl_ms, DEFAULT_TTL_MS)
+    kind = packet.get("kind", "none")
+    if not isinstance(kind, str) or not kind or len(kind) > 32:
+        return None
+    if kind != "none":
+        for name in ("x", "y", "size", "confidence"):
+            if _bounded_float(packet.get(name), minimum=-1e9, maximum=1e9) is None:
+                return None
+    packet = dict(packet)
+    packet.update(seq=seq, replyPort=reply_port, ttlMs=ttl_ms, kind=kind)
+    requested_step = _bounded_float(packet.get("maxStep", max_step), minimum=0.01, maximum=max_step)
+    if requested_step is None:
+        return None
+    packet["maxStep"] = requested_step
+    return packet
+
+
+def terminal_motion_failure(exc: SDKError) -> bool:
+    """Whether it is unsafe for the bridge to send another move after this error."""
+    return exc.status == 409 or exc.code in {"lost_track", "timeout", "not_reached", "canceled"}
+
+
 def bounded_step(model: LampModel, measured: dict[str, float], target: dict[str, float], max_step: float) -> dict[str, float] | None:
     """Take one safe, bounded step and check geometry between measured and endpoint."""
     biggest = max(abs(target[j] - measured[j]) for j in JOINTS)
@@ -117,6 +188,8 @@ def target_point(model: LampModel, measured: dict[str, float], packet: dict) -> 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--listen", default="0.0.0.0:47400", help="UDP bind address")
+    ap.add_argument("--allow-ip", action="append", default=[], metavar="IP",
+                    help="only accept targets from this source IP (repeatable); without it, pin the first valid sender")
     ap.add_argument("--cutoff-c", type=float, default=70.0, help="stop motion at this Pi temperature")
     ap.add_argument("--max-step", type=float, default=5.0, help="maximum change to any joint per move")
     ap.add_argument("--min-interval", type=float, default=2.5, help="seconds between SDK moves")
@@ -164,7 +237,8 @@ def main() -> None:
 
     latest: dict | None = None
     latest_addr: tuple[str, int] | None = None
-    latest_reply_port = 47401
+    latest_reply_port = DEFAULT_REPLY_PORT
+    pinned_ip: str | None = None
     last_session = None
     last_seq = -1
     last_packet_at = 0.0
@@ -187,18 +261,29 @@ def main() -> None:
                 print(f"THERMAL STOP: Pi {temp:.1f} C >= {args.cutoff_c:.1f} C", flush=True); break
             try:
                 data, addr = sock.recvfrom(8192)
-                packet = json.loads(data.decode("utf-8"))
-                if packet.get("t") != "lamp_target" or int(packet.get("v", 0)) != 1:
+                packet = normalize_packet(json.loads(data.decode("utf-8")), args.max_step)
+                if packet is None:
+                    continue
+                peer_ip = str(addr[0])
+                if args.allow_ip and peer_ip not in set(args.allow_ip):
+                    continue
+                if pinned_ip is None:
+                    pinned_ip = peer_ip
+                    print(f"pinned target sender to {pinned_ip}", flush=True)
+                elif peer_ip != pinned_ip:
+                    continue
+                # Do not let a later packet redirect telemetry to an arbitrary UDP endpoint.
+                if latest_addr is not None and packet["replyPort"] != latest_reply_port:
                     continue
                 session = packet.get("session")
-                seq = int(packet.get("seq", -1))
+                seq = packet["seq"]
                 if session != last_session:
                     last_session, last_seq = session, -1
                 if seq <= last_seq:
                     continue
                 last_seq, last_packet_at = seq, time.monotonic()
                 latest, latest_addr = packet, addr
-                latest_reply_port = int(packet.get("replyPort", 47401))
+                latest_reply_port = packet["replyPort"]
             except socket.timeout:
                 pass
             except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
@@ -206,7 +291,7 @@ def main() -> None:
 
             if now - last_telemetry >= 1.0:
                 telemetry(sock, latest_addr, latest_reply_port, "tracking" if latest else "waiting", temp,
-                          moves=moves, reached=True)
+                          moves=moves, reached=False if latest else True)
                 last_telemetry = now
             if latest is None or latest.get("kind") == "none":
                 continue
@@ -222,7 +307,7 @@ def main() -> None:
                     telemetry(sock, latest_addr, latest_reply_port, "holding", temp, reached=True); continue
                 point, kind = result
                 pose, report = model.look_at(point, seed=measured, prefer_distance=0.45)
-                step = bounded_step(model, measured, pose, min(args.max_step, float(latest.get("maxStep", args.max_step))))
+                step = bounded_step(model, measured, pose, min(args.max_step, latest["maxStep"]))
                 if step is None:
                     telemetry(sock, latest_addr, latest_reply_port, "target_rejected", temp, reached=False)
                     print(f"target rejected by local workspace checks ({kind})", flush=True); latest = None; continue
@@ -236,7 +321,11 @@ def main() -> None:
                 telemetry(sock, latest_addr, latest_reply_port, "move_failed", temp, reached=False, error=exc.code)
                 print(f"SDK move failed; holding: {exc}", flush=True)
                 latest = None
-                time.sleep(0.5)
+                if terminal_motion_failure(exc):
+                    print("stopping after an uncertain or incomplete move; no move will be sent on top of it", flush=True)
+                    stop.set()
+                else:
+                    time.sleep(0.5)
     finally:
         sock.close()
         idle_restore(sdk.base, previous_idle)

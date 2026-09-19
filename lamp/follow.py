@@ -229,17 +229,6 @@ class Thermal:
         return temp is not None and temp >= self.hot_c
 
 
-def settle_here(sdk: LampSDK) -> None:
-    """After a move that did not complete, the runtime leaves the servo goal at the unreached target
-    (so the servos keep pushing) and its idle loop paused. One planned hold at the measured pose
-    completes at once: the goal becomes where the arm is, and the runtime tidies up."""
-    try:
-        here = {j: max(-100.0, min(100.0, float(v))) for j, v in sdk.joints()["positions"].items() if j in JOINTS}
-        sdk.move(here)
-    except SDKError as exc:
-        print(f"     could not settle: {exc}", flush=True)
-
-
 def describe(model: LampModel, units: dict) -> str:
     h = model.head(units)
     bearing = math.degrees(math.atan2(h["forward"][0], h["forward"][1]))
