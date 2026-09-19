@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from . import PROTOCOL_VERSION
 from .hub import DEFAULT_PORT
 
-SERVICE_TYPE = "_feelmusic._udp.local."
+SERVICE_TYPE = "_feelthemusic._udp.local."
 DEFAULT_INSTANCE = "feelthemusic"
 SERVER_LABEL = "feelthemusic-conductor.local."
 
@@ -32,7 +32,7 @@ class DiscoveryUnavailable(RuntimeError):
 @dataclass(frozen=True)
 class ServiceRecord:
     service_type: str
-    name: str                      # full instance name, "<instance>._feelmusic._udp.local."
+    name: str                      # full instance name, "<instance>._feelthemusic._udp.local."
     port: int
     server: str
     txt: Dict[str, str]

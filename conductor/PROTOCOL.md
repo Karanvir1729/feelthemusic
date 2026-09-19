@@ -11,6 +11,13 @@ budget `L` = 300 ms, discovery by Bonjour/mDNS with a manual address fallback, h
 47300. Everything else below was designed here. Task #4 should mirror this file, or change
 both together. The list of choices a human may want to change is at the end.
 
+**Not compared with the live protocol.** After this was written, a teammate reported (hub #general,
+seq 127) that a shipped App Store app and Mac conductor already use UDP 47300, Bonjour
+`_feelthemusic._udp` and binary access units, in a repository this author cannot read. The service
+type below was changed to that name on the strength of that report only. The JSON message set is
+still our own design and has NOT been checked against the live wire format; do not describe this
+file as interoperating with the app until it has been.
+
 ## Transport and encoding
 
 - UDP, one message per datagram, hub port `47300` (`conductor.hub.DEFAULT_PORT`).
@@ -108,7 +115,7 @@ An `event` sent by a client is dropped and counted. The hub never relays.
 
 ## Discovery
 
-- Service type `_feelmusic._udp.local.`, instance `feelthemusic`, TXT `v=1`, `role=conductor`,
+- Service type `_feelthemusic._udp.local.`, instance `feelthemusic`, TXT `v=1`, `role=conductor`,
   port 47300 (`discovery.build_service_record`, pure).
 - Advertising uses the optional `zeroconf` package, imported lazily (`discovery.advertise`).
 - Manual fallback `discovery.parse_manual_address`: `host`, `host:port`, `[v6]:port`, bare
@@ -151,4 +158,4 @@ The claim that the asymmetry bound is *tight enough for haptics* is untested on 
    defence.
 9. Estimator: intersection of hard intervals (vs. median or best-sample-only).
 10. `welcome` has no clock information; clients learn the offset only from probes.
-11. Service type name `_feelmusic._udp.local.` and TXT keys.
+11. Service type name `_feelthemusic._udp.local.` and TXT keys.

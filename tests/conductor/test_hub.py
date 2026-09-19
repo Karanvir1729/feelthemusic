@@ -241,8 +241,8 @@ def test_concurrent_clients_do_not_interfere(hub):
 
 def test_service_record():
     r = discovery.build_service_record()
-    assert r.service_type == "_feelmusic._udp.local."
-    assert r.name == "feelthemusic._feelmusic._udp.local."
+    assert r.service_type == "_feelthemusic._udp.local."
+    assert r.name == "feelthemusic._feelthemusic._udp.local."
     assert r.port == 47300
     assert r.txt == {"v": "1", "role": "conductor"}
     assert discovery.build_service_record(port=5000, instance="room 2").port == 5000
