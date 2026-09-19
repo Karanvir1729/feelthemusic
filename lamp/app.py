@@ -25,7 +25,10 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from dispatch import ClipIntent, Dispatcher, LightIntent, MoveIntent
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from lamp.dispatch import ClipIntent, Dispatcher, LightIntent, MoveIntent
 
 NS = 1_000_000_000
 ADMISSION_LEASE_NS = 20_000_000

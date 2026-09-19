@@ -1,14 +1,11 @@
 """Lamp application contracts, written 2026-09-19; injected I/O only."""
 
 from dataclasses import dataclass
-from pathlib import Path
-import sys
 from types import SimpleNamespace
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app import LampApp, OutputTypes, SDKActions
-from dispatch import ClipIntent, LightIntent, MoveIntent
+from lamp.app import LampApp, OutputTypes, SDKActions
+from lamp.dispatch import ClipIntent, LightIntent, MoveIntent
 
 NS = 1_000_000_000
 MS = 1_000_000

@@ -13,7 +13,8 @@ send raw motor commands, system.stop, or cancellation from these callbacks.
 
 The application applies its shared FlashLimiter before submission. This module
 additionally caps emitted RGB channels at .3, rejects red-dominant output, and
-spaces ALL action starts by at least 500 ms (at most two light transitions/s).
+spaces ALL local admissions by at least 500 ms. HTTP arrival and visible fade
+timing can differ; this is not a measured transition-rate guarantee.
 Vendor fades/other light owners still need physical verification; this is not
 an LED safety certification. Timeouts latch admission, not hardware motion.
 """
