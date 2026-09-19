@@ -88,4 +88,15 @@ Clock estimation uses round-trip network delay filtering:
   - Clients accept command-line or settings inputs formatted as `IP:PORT` (defaulting to port 47300 if omitted).
 
 > [!NOTE]
-> The JSON wire message schema described in Section 3 is our Python conductor proposal (implemented in `conductor/wire.py`). The native reference conductor uses binary access units. Full protocol alignment and end-to-end verification against a physical App Store iPhone is tracked in Task #10.
+> The JSON wire message schema described in Section 3 was the Python conductor proposal (implemented in `conductor/wire.py`).
+> The native reference conductor uses a little-endian binary UDP protocol on port 47300 (recovered from task specifications, implemented in `lamp/ftm_client.py`):
+> - **Type 1 SyncReq** (3 B): `<BH` (u8 type=1, u16 req_id).
+> - **Type 2 SyncResp** (19 B): `<BHQQ` (u8 type=2, u16 req_id, u64 t1_recv, u64 t2_send).
+> - **Type 3 EventPacket** (26 B): `<BIBBBBHHBQI` (u8 type=3, u32 seq, u8 kind, u8 flags, u8 intensity, u8 sharpness, u16 durationMs, u16 freqHz, u8 target, u64 masterTs, u32 leadUs).
+>   - Kinds: `0`=click, `1`=kick, `2`=snare, `3`=bass, `4`=build, `5`=drop.
+>   - Flags: `1`=audio, `2`=haptic, `4`=measure.
+>   - Target: `0xFF` (all).
+> - **Type 5 Assign** (6 B): `<BBI` (u8 type=5, u8 client_id, u32 session_id).
+> - **Type 12 BassEnvelope** (15+N B): `<BIQBB` + N bytes (u8 type=12, u32 seq, u64 startTs, u8 stepMs, u8 n, n*u8 envelope values).
+> - **Type 13 Control**: u8 type=13 + UTF-8 JSON.
+> - **Presentation Timestamp Note**: The native conductor already adds the 300 ms room latency budget $L$ into `masterTs` (`Show.swift:301, 309`). Consumers convert `masterTs` once to local due monotonic time and do NOT add $L$ a second time.

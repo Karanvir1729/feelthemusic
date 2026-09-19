@@ -10,9 +10,17 @@ The TITAN Core haptic driver board features an ESP32 microcontroller driving thr
 
 | Channel | Driver / Amplifier | Electrical Limits | Actuator Type | Intended Musical Mapping |
 |---|---|---|---|---|
-| **L (Left)** | PAM8403 Class-D Stereo Audio Amp | 5 V, 0.6 A / channel | Voice-coil haptic transducer | Continuous bassline & low envelope (50–100 Hz) |
-| **R (Right)** | PAM8403 Class-D Stereo Audio Amp | 5 V, 0.6 A / channel | Voice-coil haptic transducer | Continuous bassline & low envelope (50–100 Hz) |
-| **M (Middle)** | DRV8212 H-Bridge Motor Driver | 12 V, 1.2 A continuous (4 A peak) | TacHammer / Linear resonant actuator | High-impact percussive transients (kicks & snares) |
+| **0 (All)** | Broadcast / All Channels | Board Vin 4.75–5.25 V | All transducers | Broadcast commands (e.g. emergency silence) |
+| **1 (Left)** | PAM8403 Class-D Stereo Audio Amp | 5 V, 0.6 A / channel | Voice-coil haptic transducer | Continuous bassline & low envelope (50–100 Hz) |
+| **2 (Right)** | PAM8403 Class-D Stereo Audio Amp | 5 V, 0.6 A / channel | Voice-coil haptic transducer | Continuous bassline & low envelope (50–100 Hz) |
+| **3 (Middle)** | DRV8212 H-Bridge Motor Driver | Board Vin 4.75–5.25 V (2 A pk) | TacHammer / Linear resonant actuator | High-impact percussive transients (kicks & snares) |
+
+> [!WARNING]
+> **Electrical Power Limits (Vendor Datasheet V2.1 TC-153286-B)**:
+> - **Board Vin Absolute Maximum**: **6.0 V**. Recommended operating range: **4.75–5.25 V** (standard 5V USB / power bank).
+> - **CAUTION**: **NEVER apply 12 V to the board or its power rails.** The 12 V rating in the DRV8212 IC datasheet is an internal chip maximum, NOT board Vin. Applying 12 V will destroy the ESP32 and logic stages.
+> - **GPIO Logic**: Maximum 3.6 V (3.3 V logic).
+> - **Motor Current**: Peak 2.0 A, sustained lower. 1S LiPo JST-PH2 charger: 500 mA.
 
 ### Key Architectural Implication
 Because Channels L and R are driven by a real audio-rate Class-D amplifier straight off the ESP32 DACs, the TITAN Core kit can render continuous analog waveforms (such as the 50–100 Hz bass envelope). In contrast, mobile phone actuators (like Apple's Taptic Engine) only accept discrete parameter transients and predefined patterns. This allows FeelTheMusic to achieve a two-tier haptic experience: rich, continuous tactile bass on TITAN Core, complemented by sharp percussive transient ticks on both TITAN Core and iPhones.
@@ -35,25 +43,28 @@ The board selects its operating mode at boot via hardware jumpers on specific GP
 
 - **Interface**: USB UART (via CP2102 or CH340 bridge).
 - **Baud Rate**: `115200` baud, 8 data bits, no parity, 1 stop bit (8N1).
-- **Command Syntax**: Text-based ASCII commands terminated with a semicolon `;` or newline `\n`.
+- **Command Syntax**: Text-based ASCII commands terminated with a semicolon `;` or newline `\n`. Semicolon-chaining is supported (e.g. `CHNL 3; Tick 0.85 20.5;`).
 
-### 3.1 Verified Datasheet Grammar
-1. **Frame Configuration (`F`)**:
-   ```
-   F <frameFreq> <frameSize>;
-   ```
-   - Confirmed in vendor quick start: sets frame frequency and buffer size. Exact operating ranges and clock source are pending bench measurement (Task #9).
-2. **Streaming PCM Data (`PCM`)**:
-   ```
-   PCM <v0> <v1> <v2> ... <vN>;
-   ```
-   - Confirmed in vendor quick start: 8-bit unsigned integer values.
+### 3.1 Recovered Vendor Datasheet Grammar (V2.1 TC-153286-B)
+1. **Channel Selection (`CHNL`)**:
+   `CHNL <0..3>;` (0=all, 1=L, 2=R, 3=M).
+2. **Transient Tick (`Tick`)**:
+   `Tick <strength> <durationMs>;` (strength 0.0–1.0, duration in ms). E.g. `CHNL 3; Tick 0.85 20.5;`.
+3. **Transient Pulse (`Pulse`)**:
+   `Pulse <strength> <durationMs>;` (strength 0.0–1.0, duration in ms).
+4. **Vibration & Continuous Tone (`vibrate`)**:
+   `vibrate <freqHz> <strength> <durationMs> <duty> <sharpness>;`. E.g. `CHNL 1; vibrate 100 0.3 15000 1 1;`.
+5. **Timed Pause & Silence (`pause`)**:
+   `pause <durationMs>;`. Emergency stop: `CHNL 0; pause 0;`.
+6. **Frame Configuration (`F`)**:
+   `F <frameFreq> <frameSize>;` (sets continuous streaming frame rate and buffer size).
+7. **Streaming PCM Data (`PCM`)**:
+   `PCM <v0>,<v1>,...,<vN>;` (comma-separated 8-bit unsigned values 0..255 centered at rest value 128).
 
-### 3.2 Driver Implementation Assumptions (Unverified on Hardware)
-The following parameters are implemented in `titancore/driver.py` as design proposals and must be verified on physical hardware (Task #9) before driving real voice coils:
-- **Zero-Current Rest Value**: Assumed to be `128` for unsigned 8-bit DAC centering (Task #9 will bench-measure true quiescent DC offset).
-- **Transient Pulse Command (`CHNL`)**: `CHNL M <amplitude> <duration_ms>;` is our driver proposal for triggering Channel M DRV8212 pulses.
+### 3.2 Driver Implementation Guardrails
+The following safety parameters are implemented in `titancore/driver.py`:
+- **Zero-Current Rest Value**: `128` for unsigned 8-bit centering (0 V / zero coil current).
 - **Guardrails**:
   - `MAX_SLEW_STEP = 40` per sample to mitigate acoustic clicking and inductive spikes.
-  - `MIN_STRIKE_INTERVAL_S = 0.050` (50 ms) thermal cooldown on Channel M.
-- Driver currently verified against `FakeSerialPort` in unit tests; physical bench testing blocked pending Task #9.
+  - `MIN_STRIKE_INTERVAL_S = 0.050` (50 ms) thermal cooldown on Channel M DRV8212 H-bridge.
+- Driver verified against `FakeSerialPort` in unit tests (18/18 passing); physical bench testing tracked under Task #9.
