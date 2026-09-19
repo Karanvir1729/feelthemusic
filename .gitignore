@@ -18,6 +18,8 @@ __pycache__/
 lamp/calibration.json
 *.log
 runs/
+# Twin evidence (videos render the vendor meshes, trajectories replay the vendor idle): never publish it
+out/
 
 # macOS / editors
 .DS_Store
