@@ -225,3 +225,66 @@ def test_performance_bridge_udp_sender_pinning():
     finally:
         bridge.stop()
         bridge.join(timeout=1.0)
+
+
+def test_handle_conductor_wire_events():
+    sdk = MockLampSDK()
+    simulated_time = [500.0]
+    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
+    performer.clock_offset = 0.0
+
+    # Conductor Event with integer ns pts and fixed-point amp (0..1000)
+    target_pts_ns = int((500.0 + 0.27) * 1e9)
+    wire_kick = {
+        "v": 1,
+        "t": "event",
+        "seq": 10,
+        "kind": "kick",
+        "pts": target_pts_ns,
+        "payload": {"amp": 850},
+    }
+    assert performer.handle_event(wire_kick) is True
+    assert sdk.animations == ["nod"]
+    assert len(sdk.glows) == 1
+
+    # Conductor Bass event with fixed-point level
+    wire_bass = {
+        "v": 1,
+        "t": "event",
+        "seq": 11,
+        "kind": "bass",
+        "pts": target_pts_ns,
+        "payload": {"level": 600},
+    }
+    assert performer.handle_event(wire_bass) is True
+
+
+def test_bridge_answers_conductor_probe():
+    sdk = MockLampSDK()
+    performer = MusicPerformer(sdk)
+    bridge = PerformanceBridge(performer, host="127.0.0.1", port=0)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    bridge.port = sock.getsockname()[1]
+    sock.close()
+
+    bridge.start()
+    time.sleep(0.05)
+
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.settimeout(1.0)
+    try:
+        probe = json.dumps({"v": 1, "t": "probe", "id": 42, "t0": 1000000}).encode("utf-8")
+        client.sendto(probe, ("127.0.0.1", bridge.port))
+        data, _ = client.recvfrom(2048)
+        reply = json.loads(data.decode("utf-8"))
+        assert reply["t"] == "probe_reply"
+        assert reply["id"] == 42
+        assert reply["t0"] == 1000000
+        assert "t1" in reply and "t2" in reply
+    finally:
+        client.close()
+        bridge.stop()
+        bridge.join(timeout=1.0)
+

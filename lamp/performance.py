@@ -103,14 +103,13 @@ class MusicPerformer:
         # Minimum delay offset filter (keeps lowest delay samples)
         self._offset_samples: list[tuple[float, float]] = []  # (delay, offset)
 
-    def update_clock_offset(
-        self, conductor_pts: float, local_receive_time: Optional[float] = None
-    ) -> None:
-        """Update clock offset estimate with conductor monotonic timestamp."""
+    def update_clock_offset(self, conductor_pts: float, local_receive_time: Optional[float] = None) -> None:
+        """Update monotonic clock offset (conductor - local)."""
         if not math.isfinite(conductor_pts):
             return
+        pts_s = (conductor_pts / 1e9) if conductor_pts > 1e11 else conductor_pts
         rec = self.clock() if local_receive_time is None else local_receive_time
-        offset = conductor_pts - rec
+        offset = pts_s - rec
         with self._lock:
             self.clock_offset = offset
             self._offset_samples.append((0.005, offset))
@@ -119,11 +118,12 @@ class MusicPerformer:
 
     def conductor_to_local_time(self, pts: float) -> float:
         """Map conductor pts to local monotonic target fire time with room budget and trim."""
+        pts_s = (pts / 1e9) if pts > 1e11 else pts
         with self._lock:
             offset = self.clock_offset
-        # pts_local = pts - offset
+        # pts_local = pts_s - offset
         # target_fire_time = pts_local + L - trim
-        return (pts - offset) + self.config.room_latency_s - self.config.lamp_trim_s
+        return (pts_s - offset) + self.config.room_latency_s - self.config.lamp_trim_s
 
     def render_light(self, t: float, bass_level: float) -> Optional[Tuple[RGB_255, float]]:
         """Compute safe RGB and luminance for a given level (0..1) at local time t.
@@ -214,7 +214,9 @@ class MusicPerformer:
         self.stats.events_received += 1
         now = self.clock()
 
+        # Support both flat JSON and conductor wire codec Event(t="event", kind=...)
         kind = str(event.get("kind", "")).lower()
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
 
         # 1. Handle clock sync first before any late check!
         if kind == "clock_sync":
@@ -254,17 +256,22 @@ class MusicPerformer:
 
         self.stats.events_fired += 1
 
-        if kind in ("bass", "bass_envelope") or "bass_envelope" in event:
-            val = event.get("value", event.get("bass_envelope", 0.0))
+        if kind in ("bass", "bass_envelope") or "bass_envelope" in event or "level" in payload:
+            val = payload.get("level", payload.get("amp", event.get("value", event.get("bass_envelope", 0.0))))
             try:
                 fval = float(val)
+                if fval > 1.0:
+                    fval = fval / 1000.0 if fval <= 1000.0 else fval / 255.0
                 return self.handle_bass_envelope(now, fval)
             except (ValueError, TypeError):
                 return False
 
         elif kind in ("kick", "snare", "beat", "onset"):
+            raw_strength = payload.get("amp", payload.get("strength", event.get("strength", 1.0)))
             try:
-                strength = float(event.get("strength", 1.0))
+                strength = float(raw_strength)
+                if strength > 1.0:
+                    strength = strength / 1000.0 if strength <= 1000.0 else strength / 255.0
             except (ValueError, TypeError):
                 strength = 1.0
 
@@ -332,6 +339,21 @@ class PerformanceBridge(threading.Thread):
 
                 packet = json.loads(data.decode("utf-8"))
                 if isinstance(packet, dict):
+                    # Answer wire probes for clock synchronization
+                    if packet.get("t") == "probe":
+                        t1_ns = int(time.monotonic() * 1e9)
+                        t0_ns = int(packet.get("t0", 0))
+                        t2_ns = int(time.monotonic() * 1e9)
+                        reply = {
+                            "v": 1,
+                            "t": "probe_reply",
+                            "id": packet.get("id", 0),
+                            "t0": t0_ns,
+                            "t1": t1_ns,
+                            "t2": t2_ns,
+                        }
+                        self.sock.sendto(json.dumps(reply).encode("utf-8"), addr)
+                        continue
                     self.performer.handle_event(packet)
             except (socket.timeout, json.JSONDecodeError, UnicodeDecodeError):
                 continue
