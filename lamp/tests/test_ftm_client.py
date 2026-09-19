@@ -151,7 +151,7 @@ def test_fields_are_raw_no_interpretation():
 
 def test_frozen():
     with pytest.raises(Exception):
-        decode(GOLD_REQ).req_id = 1
+        decode(GOLD_REQ).seq = 1
 
 
 def _only_valid_or_parse_error(data):
@@ -220,7 +220,7 @@ def test_assign_golden_and_wrong_lengths():
 
 def test_assign_raw_fields():
     a = decode(b"\x05\xff\xff\xff\xff\xff")
-    assert a == Assign(255, U32) and type(a.unknown_u8) is int and type(a.session) is int
+    assert a == Assign(255, U32) and type(a.index) is int and type(a.session) is int
     assert decode(bytes([5, 0, 1, 0, 0, 0])).session == 1  # not big-endian
 
 
@@ -340,3 +340,23 @@ def test_fuzz_all_seven_types():
         else:
             d += bytes(rng.getrandbits(8) for _ in range(rng.randint(1, 10)))
         _only_valid_or_parse_error(bytes(d))
+
+
+# ---- fields renamed to the names in docs/ftm-protocol.md (Tempo, PR #19); still no real-conductor check ----
+
+def test_syncreq_and_syncresp_use_the_spec_name_seq():
+    assert decode(GOLD_REQ).seq == 0x1234 and decode(GOLD_RESP).seq == 0xBEEF
+    assert SyncReq(seq=5).encode() == struct.pack("<BH", 1, 5)
+    assert SyncResp(seq=5, t1=6, t2=7).encode() == struct.pack("<BHQQ", 2, 5, 6, 7)
+    assert not hasattr(decode(GOLD_REQ), "req_id") and not hasattr(decode(GOLD_RESP), "req_id")
+
+
+def test_assign_first_byte_is_named_index():
+    a = decode(GOLD_ASSIGN)
+    assert (a.index, a.session) == (0x7E, 0xA1B2C3D4)
+    assert Assign(index=3, session=9).encode() == struct.pack("<BBI", 5, 3, 9)
+    assert not hasattr(a, "unknown_u8")
+
+
+def test_audio_type_set_is_6_to_10():
+    assert ftm_client.AUDIO_TYPES == frozenset({6, 7, 8, 9, 10})

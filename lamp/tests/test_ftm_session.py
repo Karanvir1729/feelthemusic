@@ -1,6 +1,6 @@
-"""Tests for ftm_session.Session against a FakeConductor built from the REPORTED join spec.
+"""Tests for ftm_session.Session against a FakeConductor built from docs/ftm-protocol.md (Tempo, PR #19).
 
-Nothing here is checked against the real conductor. The FakeConductor encodes Tempo's report (see the
+Nothing here is checked against the real conductor. The FakeConductor encodes that document (see the
 ftm_session docstring) with its own struct.pack calls, its own known clock offset and asymmetric delays;
 expected values are computed from the fake's constants, never from the code under test.
 """
@@ -28,8 +28,8 @@ def ev_bytes(seq=1, kind=1, flags=0, inten=255, sharp=0, dur=10, freq=100, targe
     return struct.pack("<BIBBBBHHBQI", 3, seq, kind, flags, inten, sharp, dur, freq, target, master_ts, lead_us)
 
 
-def assign_bytes(session, u8=0):
-    return struct.pack("<BBI", 5, u8, session)
+def assign_bytes(session, index=2):
+    return struct.pack("<BBI", 5, index, session)
 
 
 def control_bytes(obj):
@@ -111,8 +111,11 @@ class Rig:
         return [o for o in self.outputs if isinstance(o, cls)]
 
 
+JITTER = 10 * MS  # the deterministic injected jitter used by make()
+
+
 def make(**kw):
-    kw.setdefault("sync_interval_fast_ns", 100 * MS)
+    kw.setdefault("jitter_source", lambda: JITTER)
     return Session("lamp-1", **kw)
 
 
@@ -137,7 +140,24 @@ def test_first_poll_is_the_hello_telemetry():
     s = make()
     out = s.poll(T0)
     assert len(out) == 1 and out[0][0] == 4
-    assert json.loads(out[0][1:].decode("utf-8")) == {"t": "hi", "role": "lamp", "name": "lamp-1", "v": 1}
+    assert json.loads(out[0][1:].decode("utf-8")) == {"t": "hi", "role": "lamp", "name": "lamp-1", "v": 1,
+                                                       "audio": False}
+
+
+def test_hello_bytes_are_exactly_the_spec_shape():
+    assert make().poll(T0) == [b'\x04{"t":"hi","role":"lamp","name":"lamp-1","v":1,"audio":false}']
+
+
+@pytest.mark.parametrize("name", ["", None, 5, b"x", "x" * 65, "a\nb", "\x00", "a\x7fb", "tab\there", "\ud800"])
+def test_bad_names_are_rejected(name):
+    with pytest.raises(ValueError):
+        Session(name)
+
+
+@pytest.mark.parametrize("name", ["x", "x" * 64, "\u00e9" * 64, "Le Lamp \U0001f3b5"])
+def test_good_names_are_accepted_and_sent_verbatim_as_utf8(name):
+    d = Session(name).poll(T0)[0]
+    assert json.loads(d[1:].decode("utf-8"))["name"] == name
 
 
 def test_hello_repeats_until_assign_or_control_then_stops():
@@ -146,7 +166,7 @@ def test_hello_repeats_until_assign_or_control_then_stops():
     assert [d for d in s.poll(T0 + 500 * MS) if d[0] == 4 and b'"hi"' in d] == []
     assert any(b'"hi"' in d for d in s.poll(T0 + 1 * S))  # default hello interval is 1 s
     feed(s, assign_bytes(9), T0 + 1 * S + MS)
-    later = [d for k in range(1, 25) for d in s.poll(T0 + S + k * 100 * MS)]  # < 3 s: no sync timeout yet
+    later = [d for k in range(1, 19) for d in s.poll(T0 + S + k * 100 * MS)]  # < 2 s of silence
     assert not any(d[0] == 4 and b'"hi"' in d for d in later)
 
 
@@ -169,7 +189,7 @@ def test_a_bad_control_does_not_end_the_hello_phase():
 def test_end_to_end_join_offset_and_intervals():
     cond = FakeConductor()
     rig = Rig(make(), cond)
-    rig.run(3 * S)
+    rig.run(5 * S)
     s = rig.s
     assert cond.hellos == 1 and s.joined and s.session_id == 777
     assert [o.session_id for o in rig.kinds(SessionOut)] == [777]
@@ -177,28 +197,111 @@ def test_end_to_end_join_offset_and_intervals():
     assert est is not None and abs(est.offset_ns - OFFSET) <= est.bound_ns
     assert abs(est.offset_ns - OFFSET) <= TOL
     times = [t for _, t in cond.syncreqs]
-    fast = [b - a for a, b in zip(times, times[1:]) if b - T0 < 800 * MS]
-    assert fast and all(g == 100 * MS for g in fast)  # fast interval while not ready
-    slow = [b - a for a, b in zip(times, times[1:]) if a - T0 > 1500 * MS]
-    assert not slow or all(g >= 5 * S for g in slow)  # slow (default 5 s) once ready
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert gaps[:40] == [50 * MS] * 40 and gaps[40:] and all(g == 250 * MS + JITTER for g in gaps[40:])
 
 
-def test_slow_interval_is_used_once_ready_and_fast_before():
-    s = make(sync_interval_slow_ns=2 * S)  # fast = 100 ms
+# ---------------------------------------------------------------------------------------- cadence
+def request_times(s, start, end, tick=MS):
+    out, now = [], start
+    while now < end:
+        for d in s.poll(now):
+            if d[0] == 1:
+                out.append(now)
+        now += tick
+    return out
+
+
+def cadence_session(**kw):
+    s = make(sync_timeout_ns=10**15, max_outstanding=1000, **kw)
     s.poll(T0)
     feed(s, assign_bytes(1), T0 + MS)
-    now = T0 + 10 * MS
-    for _ in range(3):
-        d = s.poll(now)
-        assert [x[0] for x in d] == [1]  # one SyncReq per fast interval while not ready
-        rid = struct.unpack("<H", d[0][1:3])[0]
-        t1 = now + OFFSET + 2 * MS
-        feed(s, resp_bytes(rid, t1, t1), now + 4 * MS)
-        now += 100 * MS
-    assert s.estimator.estimate(now) is not None
-    last = now - 100 * MS
-    assert all(x[0] != 1 for x in s.poll(last + 1 * S))  # ready: the slow 2 s interval is not reached
-    assert [x[0] for x in s.poll(last + 2 * S)] == [1]
+    return s
+
+
+def test_sync_cadence_is_50ms_for_40_requests_then_250ms_plus_injected_jitter():
+    jit = [0, 20 * MS, 7 * MS, 13 * MS, 20 * MS, 1 * MS]
+    calls = []
+
+    def src():
+        calls.append(1)
+        return jit[len(calls) - 1] if len(calls) <= len(jit) else 0
+
+    s = cadence_session(jitter_source=src)
+    times = request_times(s, T0 + 2 * MS, T0 + 2 * MS + 5 * S)
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert times[0] == T0 + 2 * MS  # the first request goes out on the first poll after joining
+    assert gaps[:40] == [50 * MS] * 40  # 40 gaps of 50 ms: one after each of the first 40 requests
+    assert gaps[40:46] == [250 * MS + j for j in jit]
+
+
+def test_jitter_is_not_drawn_during_the_fast_phase():
+    calls = []
+    s = cadence_session(jitter_source=lambda: calls.append(1) or 0)
+    request_times(s, T0 + 2 * MS, T0 + 2 * MS + 40 * 50 * MS)
+    assert calls == []
+
+
+def test_default_jitter_source_stays_within_0_to_20ms_and_varies():
+    s = Session("lamp-1", max_outstanding=1000, sync_timeout_ns=10**15)
+    s.poll(T0)
+    feed(s, assign_bytes(1), T0 + MS)
+    times = request_times(s, T0 + 2 * MS, T0 + 2 * MS + 60 * S)
+    slow = [b - a for a, b in zip(times, times[1:])][40:]
+    assert len(slow) > 100 and all(250 * MS <= g <= 270 * MS for g in slow) and len(set(slow)) > 5
+
+
+@pytest.mark.parametrize("bad", [-1, 20 * MS + 1, 1.5, True, None, "1"])
+def test_out_of_range_jitter_is_a_config_error(bad):
+    s = cadence_session(jitter_source=lambda: bad)
+    with pytest.raises(ValueError):
+        request_times(s, T0 + 2 * MS, T0 + 4 * S)
+
+
+def test_jitter_of_exactly_0_and_20ms_is_accepted():
+    for j in (0, 20 * MS):
+        s = cadence_session(jitter_source=lambda j=j: j)
+        assert len(request_times(s, T0 + 2 * MS, T0 + 4 * S)) > 41
+
+
+def test_a_new_session_restarts_the_fast_burst():
+    s = cadence_session()
+    times = request_times(s, T0 + 2 * MS, T0 + 4 * S)
+    assert times[45] - times[44] == 250 * MS + JITTER
+    feed(s, assign_bytes(2), T0 + 4 * S)
+    again = request_times(s, T0 + 4 * S + MS, T0 + 4 * S + 3 * S)
+    assert [b - a for a, b in zip(again, again[1:])][:40] == [50 * MS] * 40
+
+
+@pytest.mark.parametrize("kw", [{"jitter_source": 5}, {"jitter_source": "x"}])
+def test_jitter_source_must_be_callable(kw):
+    with pytest.raises(ValueError):
+        Session("x", **kw)
+
+
+# ---------------------------------------------------------------------------------------- hello resend
+def test_hello_is_resent_once_a_second_after_2s_of_conductor_silence():
+    s = joined()
+    last_rx = T0 + MS
+    hellos = [t for t in range(0, 6 * S, 10 * MS) if any(b'"hi"' in d for d in s.poll(last_rx + t))]
+    assert hellos == [2 * S, 3 * S, 4 * S, 5 * S]
+
+
+def test_any_datagram_from_the_conductor_defers_the_hello_resend():
+    s = joined()
+    now = T0 + MS
+    for _ in range(10):  # a datagram every 1.5 s keeps the silence under 2 s
+        now += 1500 * MS
+        feed(s, resp_bytes(1, 0, 0), now)
+        assert not any(b'"hi"' in d for d in s.poll(now + MS))
+    assert not any(b'"hi"' in d for d in s.poll(now + 1999 * MS))
+    assert any(b'"hi"' in d for d in s.poll(now + 2 * S + MS))
+
+
+def test_hello_resend_needs_a_full_second_since_the_last_hello_even_when_silent_long():
+    s = joined()
+    assert any(b'"hi"' in d for d in s.poll(T0 + 10 * S))
+    assert not any(b'"hi"' in d for d in s.poll(T0 + 10 * S + 999 * MS))
 
 
 # ---------------------------------------------------------------------------------------- events
@@ -259,6 +362,196 @@ def test_event_with_a_time_before_zero_is_counted_not_raised():
     rig = synced_rig()
     assert feed(rig.s, ev_bytes(master_ts=1), rig.now) == []
     assert rig.s.stats()["bad_time"] == 1
+
+
+# ---------------------------------------------------------------------------------------- target filter
+def test_event_for_my_index_and_for_everyone_is_accepted_others_are_not_for_me():
+    rig = synced_rig()  # the fake conductor assigns index 2
+    s, now = rig.s, rig.now
+    assert len(feed(s, rig.c.event_at(now + LEAD, seq=1, target=255), now)) == 1
+    assert len(feed(s, rig.c.event_at(now + LEAD, seq=2, target=2), now)) == 1
+    for seq, target in ((3, 0), (4, 1), (5, 3), (6, 254)):
+        assert feed(s, rig.c.event_at(now + LEAD, seq=seq, target=target), now) == []
+    st = s.stats()
+    assert st["not_for_me"] == 4 and st["events_out"] == 2 and st["normalized"] == 2
+
+
+def test_before_an_assign_only_target_255_is_accepted():
+    rig = synced_rig()
+    s, now = rig.s, rig.now
+    feed(s, control_bytes({"session": 900}), now)  # a session change by Control only: no Assign yet
+    rig.c.session = 900
+    rig.c.answer_hello = False  # keep the fake from sending the Assign on a re-hello
+    rig.run(2 * S)
+    now = rig.now
+    assert len(feed(s, rig.c.event_at(now + LEAD, seq=1, target=255), now)) == 1
+    assert feed(s, rig.c.event_at(now + LEAD, seq=2, target=2), now) == []  # the OLD index is forgotten
+    assert feed(s, rig.c.event_at(now + LEAD, seq=3, target=0), now) == []
+    assert s.stats()["not_for_me"] == 2
+    feed(s, assign_bytes(900, index=7), now)
+    assert len(feed(s, rig.c.event_at(now + LEAD, seq=4, target=7), now)) == 1
+
+
+def test_a_first_assign_is_needed_and_index_0_is_a_real_index():
+    s = make()
+    s.poll(T0)
+    feed(s, control_bytes({"lat": 300}), T0 + MS)  # joined without an Assign
+    assert s._index is None
+    feed(s, assign_bytes(4, index=0), T0 + 2 * MS)
+    assert s._index == 0
+
+
+def test_a_new_assign_in_the_same_session_updates_the_index():
+    rig = synced_rig()
+    s, now = rig.s, rig.now
+    feed(s, assign_bytes(777, index=9), now)  # same session id as the fake's
+    assert len(feed(s, rig.c.event_at(now + LEAD, seq=1, target=9), now)) == 1
+    assert feed(s, rig.c.event_at(now + LEAD, seq=2, target=2), now) == []
+
+
+def test_bass_envelopes_have_no_target_and_are_never_filtered():
+    rig = synced_rig()
+    assert len(feed(rig.s, bass_bytes(1, rig.now + OFFSET + LEAD, 20, [1, 2]), rig.now)) == 1
+    assert rig.s.stats()["not_for_me"] == 0
+
+
+# ---------------------------------------------------------------------------------------- de-duplication
+def ev(rig, seq, **kw):
+    return feed(rig.s, rig.c.event_at(rig.now + LEAD, seq=seq, **kw), rig.now)
+
+
+def test_a_critical_event_sent_3_times_12ms_apart_produces_one_output():
+    rig = synced_rig()
+    outs = []
+    for i in range(3):
+        outs += feed(rig.s, rig.c.event_at(rig.now + LEAD - i * 12 * MS, seq=77), rig.now + i * 12 * MS)
+    assert len(outs) == 1 and isinstance(outs[0], EventOut) and outs[0].event.seq == 77
+    st = rig.s.stats()
+    assert st["dup_event"] == 2 and st["events_out"] == 1 and st["normalized"] == 1
+
+
+def test_a_bass_envelope_sent_twice_8ms_apart_produces_one_output():
+    rig = synced_rig()
+    outs = []
+    for i in range(2):
+        outs += feed(rig.s, bass_bytes(5, rig.now + OFFSET + LEAD, 10, [1, 2, 3, 4, 5]), rig.now + i * 8 * MS)
+    assert len(outs) == 1 and isinstance(outs[0], BassOut)
+    st = rig.s.stats()
+    assert st["dup_bass"] == 1 and st["bass_out"] == 1 and st["dup_event"] == 0
+
+
+def test_distinct_seqs_are_all_accepted_and_event_and_bass_windows_are_separate():
+    rig = synced_rig()
+    for seq in range(1, 6):
+        assert len(ev(rig, seq)) == 1
+    assert rig.s.stats()["dup_event"] == 0
+    assert len(feed(rig.s, bass_bytes(3, rig.now + OFFSET + LEAD, 10, [1]), rig.now)) == 1  # same seq value 3
+    assert len(feed(rig.s, bass_bytes(4, rig.now + OFFSET + LEAD, 10, [1]), rig.now)) == 1
+    assert ev(rig, 3) == [] and rig.s.stats()["dup_event"] == 1 and rig.s.stats()["dup_bass"] == 0
+    assert feed(rig.s, bass_bytes(4, rig.now + OFFSET + LEAD, 10, [1]), rig.now) == []
+    assert rig.s.stats()["dup_bass"] == 1
+
+
+def test_seq_window_is_wrap_aware_across_u32():
+    rig = synced_rig()
+    assert len(ev(rig, 2**32 - 1)) == 1
+    assert len(ev(rig, 0)) == 1  # 0 follows 2**32-1: a NEW packet, not a repeat
+    assert len(ev(rig, 1)) == 1
+    assert ev(rig, 2**32 - 1) == [] and ev(rig, 0) == [] and rig.s.stats()["dup_event"] == 2
+    b = rig.now + OFFSET + LEAD
+    assert len(feed(rig.s, bass_bytes(2**32 - 1, b, 10, [1]), rig.now)) == 1
+    assert len(feed(rig.s, bass_bytes(0, b, 10, [1]), rig.now)) == 1
+    assert feed(rig.s, bass_bytes(0, b, 10, [1]), rig.now) == [] and rig.s.stats()["dup_bass"] == 1
+
+
+@pytest.mark.parametrize("seq", [0, 2**32 - 1, 2**31, 1])
+def test_a_lone_repeat_of_an_edge_seq_is_a_duplicate_and_does_not_shadow_its_wrap_neighbour(seq):
+    rig = synced_rig()
+    assert len(ev(rig, seq)) == 1 and ev(rig, seq) == [] and rig.s.stats()["dup_event"] == 1
+    other = 0 if seq == 2**32 - 1 else (2**32 - 1 if seq == 0 else seq + 1)
+    assert len(ev(rig, other)) == 1  # a different value is never a repeat of it
+
+
+def test_seq_window_stays_bounded():
+    rig = synced_rig()
+    for seq in range(5000):
+        ev(rig, seq)
+        feed(rig.s, bass_bytes(seq, rig.now + OFFSET + LEAD, 10, [1]), rig.now)
+    assert len(rig.s._event_seen) <= 256 and len(rig.s._bass_seen) <= 256
+    assert len(rig.s._event_seen) > 0 and len(rig.s._bass_seen) > 0
+
+
+def test_a_recycled_seq_far_outside_the_window_is_a_new_packet():
+    rig = synced_rig()
+    assert len(ev(rig, 10)) == 1
+    for seq in range(1000, 1300):  # 300 newer packets push seq 10 out of the count-bounded window
+        ev(rig, seq)
+    assert len(ev(rig, 10)) == 1
+    assert rig.s.stats()["dup_event"] == 0
+
+
+def test_a_recycled_seq_after_the_age_limit_is_a_new_packet():
+    rig = synced_rig()
+    assert len(ev(rig, 10)) == 1
+    rig.now += 500 * MS
+    assert ev(rig, 10) == []  # still a repeat well inside the age window
+    rig.now += 2 * S
+    assert len(ev(rig, 10)) == 1  # the same seq 2.5 s later is not a copy
+
+
+def test_the_age_limit_is_inclusive_of_exactly_one_second():
+    rig = synced_rig()
+    assert len(ev(rig, 10)) == 1
+    rig.now += S  # exactly SEQ_WINDOW_AGE_NS later: still inside the window
+    assert ev(rig, 10) == []
+    rig.now += 1  # one ns past the limit (a repeat never refreshes the entry's age)
+    assert len(ev(rig, 10)) == 1
+
+
+def test_a_copy_that_arrived_before_sync_does_not_block_a_later_copy():
+    rig = synced_rig()
+    s = rig.s
+    feed(s, assign_bytes(999, index=2), rig.now)  # new session: estimator reset, not synced
+    assert ev(rig, 5) == [] and s.stats()["not_synced"] == 1 and s.stats()["dup_event"] == 0
+    rig.c.session = 999
+    rig.run(2 * S)
+    assert len(ev(rig, 5)) == 1  # the first copy produced no output, so it did not enter the window
+
+
+def test_both_windows_are_emptied_the_moment_a_new_session_starts():
+    rig = synced_rig()
+    assert len(ev(rig, 9)) == 1
+    feed(rig.s, bass_bytes(9, rig.now + OFFSET + LEAD, 10, [1]), rig.now)
+    assert len(rig.s._event_seen) == 1 and len(rig.s._bass_seen) == 1
+    feed(rig.s, assign_bytes(31337, index=2), rig.now + MS)
+    assert len(rig.s._event_seen) == 0 and len(rig.s._bass_seen) == 0
+
+
+def test_the_window_is_cleared_on_a_new_session_epoch():
+    rig = synced_rig()
+    assert len(ev(rig, 9)) == 1
+    feed(rig.s, assign_bytes(4242, index=2), rig.now + MS)
+    rig.c.session = 4242
+    rig.run(2 * S)
+    assert len(ev(rig, 9)) == 1  # the new conductor session may reuse seq 9
+    assert rig.s.stats()["dup_event"] == 0
+
+
+def test_an_event_dropped_for_an_unknown_kind_does_not_poison_the_window():
+    rig = synced_rig()
+    assert ev(rig, 6, kind=77) == [] and rig.s.stats()["unknown_kind"] == 1
+    assert len(ev(rig, 6, kind=1)) == 1
+
+
+# ---------------------------------------------------------------------------------------- audio types
+def test_audio_types_6_to_10_are_ignored_and_counted_never_an_error_or_parsed():
+    s = make()
+    for t in (6, 7, 8, 9, 10):
+        for body in (b"", b"\x00" * 4, b"\xff" * 300):
+            assert feed(s, bytes([t]) + body, T0) == []
+    st = s.stats()
+    assert st["audio_ignored"] == 15 and st["unknown_type"] == 0 and st["parse_errors"] == 0
+    assert st["datagrams"] == 15 and not s.joined
 
 
 # ---------------------------------------------------------------------------------------- sync ids
@@ -329,14 +622,13 @@ def test_non_physical_resp_is_counted_bad_sample():
 
 def test_outstanding_ids_are_capped_and_the_oldest_is_evicted():
     ids = iter(range(100, 1000))
-    s = joined(max_outstanding=4, id_source=lambda: next(ids), sync_interval_fast_ns=MS,
-               sync_timeout_ns=10**15)
+    s = joined(max_outstanding=4, id_source=lambda: next(ids), sync_timeout_ns=10**15)
     sent = []
     for i in range(10):
-        sent.append(one_request(s, T0 + 10 * MS + i * 2 * MS))
+        sent.append(one_request(s, T0 + 10 * MS + i * 50 * MS))
         assert s.outstanding <= 4
     assert s.outstanding == 4 and s.stats()["sync_evicted"] == 6
-    now = T0 + 100 * MS
+    now = T0 + 600 * MS
     feed(s, resp_bytes(sent[0], now + OFFSET, now + OFFSET), now)  # evicted, so unknown
     assert s.stats()["sync_resp_unknown"] == 1 and s.stats()["sync_samples"] == 0
     feed(s, resp_bytes(sent[-1], now + OFFSET, now + OFFSET), now + MS)
@@ -344,9 +636,9 @@ def test_outstanding_ids_are_capped_and_the_oldest_is_evicted():
 
 
 def test_id_collision_with_an_outstanding_id_is_never_reused():
-    s = joined(id_source=lambda: 7, sync_interval_fast_ns=MS)
+    s = joined(id_source=lambda: 7)
     assert one_request(s, T0 + 10 * MS) == 7
-    assert [d for d in s.poll(T0 + 20 * MS) if d[0] == 1] == []
+    assert [d for d in s.poll(T0 + 60 * MS) if d[0] == 1] == []
     assert s.stats()["sync_id_collision"] == 1 and s.outstanding == 1
 
 
@@ -414,7 +706,7 @@ def test_sync_timeout_then_assign_starts_a_new_session_and_hello_is_resent():
 
 
 def test_one_lost_request_followed_by_an_answered_one_is_not_a_timeout():
-    s = joined(sync_interval_fast_ns=100 * MS)
+    s = joined()
     r1 = one_request(s, T0 + 10 * MS)  # lost
     now = T0 + 110 * MS
     r2 = one_request(s, now)
@@ -443,13 +735,103 @@ def test_every_reported_mode_is_accepted(mode):
     assert s.current_mode(T0 + MS) == mode and s.current_lights(T0 + MS) is True
 
 
-def test_mode_returns_to_off_after_the_max_age_and_only_then():
-    s = make(mode_max_age_ns=10 * S)
+def test_a_steady_mode_never_expires_by_age_while_the_conductor_is_heard():
+    s = make()
     feed(s, control_bytes({"session": 1, "lamp": valid_lamp("dance", True, 3)}), T0)
-    assert s.current_mode(T0 + 10 * S) == "dance"
-    assert s.current_mode(T0 + 10 * S + 1) == "off" and s.current_lights(T0 + 10 * S + 1) is False
-    feed(s, control_bytes({"lamp": valid_lamp("light", False, 4)}), T0 + 20 * S)
-    assert s.current_mode(T0 + 21 * S) == "light"  # a fresh gen revives it
+    now = T0
+    for _ in range(3600):  # an hour of ordinary traffic, one datagram per second, no new Control
+        now += S
+        feed(s, resp_bytes(1, 0, 0), now)
+        assert s.current_mode(now) == "dance" and s.current_lights(now) is True
+    assert not hasattr(s, "mode_max_age_ns")
+
+
+def test_conductor_silence_over_conductor_lost_ns_forces_off_with_the_4s_default():
+    s = make()
+    assert s.conductor_lost_ns == 4 * S
+    feed(s, control_bytes({"session": 1, "lamp": valid_lamp("dance", True, 3)}), T0)
+    assert s.current_mode(T0 + 4 * S) == "dance" and s.current_lights(T0 + 4 * S) is True
+    assert s.current_mode(T0 + 4 * S + 1) == "off" and s.current_lights(T0 + 4 * S + 1) is False
+
+
+def test_conductor_lost_ns_is_configurable():
+    s = make(conductor_lost_ns=500 * MS)
+    feed(s, control_bytes({"session": 1, "lamp": valid_lamp("light", False, 1)}), T0)
+    assert s.current_mode(T0 + 500 * MS) == "light" and s.current_mode(T0 + 500 * MS + 1) == "off"
+
+
+def test_any_datagram_from_the_conductor_counts_as_life():
+    s = make(conductor_lost_ns=S)
+    feed(s, control_bytes({"session": 1, "lamp": valid_lamp("follow", True, 1)}), T0)
+    feed(s, resp_bytes(1, 0, 0), T0 + 900 * MS)  # an unknown-id SyncResp is still a datagram
+    assert s.current_mode(T0 + 1800 * MS) == "follow"
+    feed(s, bytes([200]), T0 + 1800 * MS)  # so is an unknown type
+    assert s.current_mode(T0 + 2700 * MS) == "follow"
+
+
+def test_after_a_loss_the_mode_stays_off_until_a_fresh_control_or_assign():
+    s = make()
+    feed(s, control_bytes({"session": 1, "lamp": valid_lamp("dance", True, 5)}), T0)
+    late = T0 + 10 * S  # silent for 10 s
+    feed(s, resp_bytes(1, 0, 0), late)  # the conductor is back on the wire, but no Control yet
+    assert s.current_mode(late + MS) == "off" and s.current_lights(late + MS) is False
+    feed(s, bytes([3]) + bytes(25), late + 2 * MS)  # events do not revive the mode either
+    assert s.current_mode(late + 3 * MS) == "off"
+    # a stale (lower gen) Control does not revive it
+    feed(s, control_bytes({"lamp": valid_lamp("follow", False, 4)}), late + 4 * MS)
+    assert s.current_mode(late + 5 * MS) == "off"
+    # an equal-gen Control is a refresh: it brings the LAST valid mode back, unchanged
+    assert feed(s, control_bytes({"lamp": valid_lamp("dance", True, 5)}), late + 6 * MS) == []
+    assert s.current_mode(late + 7 * MS) == "dance" and s.current_lights(late + 7 * MS) is True
+    # and it stays alive afterwards
+    feed(s, resp_bytes(1, 0, 0), late + 3 * S)
+    assert s.current_mode(late + 3 * S + MS) == "dance"
+
+
+def test_after_a_loss_an_assign_for_the_same_session_revives_the_last_mode():
+    s = make()
+    feed(s, control_bytes({"session": 1, "lamp": valid_lamp("follow", True, 5)}), T0)
+    feed(s, assign_bytes(1), T0 + 10 * S)
+    assert s.current_mode(T0 + 10 * S + MS) == "follow"
+
+
+def test_after_a_loss_a_control_with_a_new_gen_or_session_applies_that_mode():
+    s = make()
+    feed(s, control_bytes({"session": 1, "lamp": valid_lamp("dance", True, 5)}), T0)
+    out = feed(s, control_bytes({"lamp": valid_lamp("light", False, 6)}), T0 + 10 * S)
+    assert out == [ModeOut("light", False, 6)] and s.current_mode(T0 + 10 * S + MS) == "light"
+    s2 = make()
+    feed(s2, control_bytes({"session": 1, "lamp": valid_lamp("dance", True, 5)}), T0)
+    out = feed(s2, control_bytes({"session": 2, "lamp": valid_lamp("follow", True, 1)}), T0 + 10 * S)
+    assert out == [SessionOut(2), ModeOut("follow", True, 1)]
+    assert s2.current_mode(T0 + 10 * S + MS) == "follow"
+
+
+def test_a_second_loss_after_a_revival_is_a_new_loss():
+    s = make()
+    feed(s, control_bytes({"session": 1, "lamp": valid_lamp("dance", True, 5)}), T0)
+    feed(s, control_bytes({"lamp": valid_lamp("dance", True, 5)}), T0 + 10 * S)
+    assert s.current_mode(T0 + 11 * S) == "dance"
+    assert s.current_mode(T0 + 15 * S) == "off"
+    feed(s, resp_bytes(1, 0, 0), T0 + 20 * S)
+    assert s.current_mode(T0 + 20 * S + MS) == "off"
+
+
+def test_mode_is_off_before_any_datagram_and_after_a_fresh_valid_key_only():
+    s = make()
+    assert s.current_mode(0) == "off" and s.current_lights(0) is False
+    feed(s, resp_bytes(1, 0, 0), T0)  # traffic alone never makes a mode
+    assert s.current_mode(T0 + MS) == "off"
+
+
+def test_unknown_control_keys_are_ignored_and_lamp_must_be_top_level():
+    s = make()
+    doc = {"v": 2, "session": 1, "lat": 300, "mode": "music", "hapticGain": 1.0, "future": {"a": [1]},
+           "lamp": {**valid_lamp("dance", True, 1), "extra": "ignored"}}
+    assert feed(s, control_bytes(doc), T0) == [SessionOut(1), ModeOut("dance", True, 1)]
+    s2 = make()  # the conductor's own top-level ``mode`` key is NOT the lamp mode, and nesting does not count
+    assert feed(s2, control_bytes({"mode": "dance", "x": {"lamp": valid_lamp("dance", True, 1)}}), T0) == []
+    assert s2.current_mode(T0 + MS) == "off" and s2.stats()["bad_mode"] == 0 and s2.stats()["parse_errors"] == 0
 
 
 @pytest.mark.parametrize("bad", ["FOLLOW", "Dance", "", "on", "auto", "follow ", None, 1, True, ["follow"], {}])
@@ -495,15 +877,66 @@ def test_lamp_key_that_is_not_an_object_is_bad_mode(lamp):
     assert feed(s, control_bytes({"lamp": lamp}), T0) == [] and s.stats()["bad_mode"] == 1
 
 
-def test_gen_may_not_go_backwards_or_repeat():
+def test_gen_may_not_go_backwards_but_an_equal_gen_is_a_harmless_refresh():
     s = make()
     feed(s, control_bytes({"session": 1, "lamp": valid_lamp("follow", True, 10)}), T0)
-    for gen in (9, 10, 0):
-        out = feed(s, control_bytes({"lamp": valid_lamp("dance", False, gen)}), T0 + MS)
-        assert out == []
-    assert s.stats()["stale_mode"] == 3
-    assert s.current_mode(T0 + 2 * MS) == "follow" and s.current_lights(T0 + 2 * MS) is True
-    assert feed(s, control_bytes({"lamp": valid_lamp("dance", False, 11)}), T0 + 3 * MS) == [ModeOut("dance", False, 11)]
+    for gen in (9, 0):
+        assert feed(s, control_bytes({"lamp": valid_lamp("dance", False, gen)}), T0 + MS) == []
+    st = s.stats()
+    assert st["stale_mode"] == 2 and st["mode_refresh"] == 0
+    # equal gen: not stale, no output, and the mode does NOT change even if the content differs
+    assert feed(s, control_bytes({"lamp": valid_lamp("dance", False, 10)}), T0 + 2 * MS) == []
+    assert feed(s, control_bytes({"lamp": valid_lamp("follow", True, 10)}), T0 + 3 * MS) == []
+    st = s.stats()
+    assert st["stale_mode"] == 2 and st["mode_refresh"] == 2 and st["mode_accepted"] == 1
+    assert s.current_mode(T0 + 4 * MS) == "follow" and s.current_lights(T0 + 4 * MS) is True
+    assert feed(s, control_bytes({"lamp": valid_lamp("dance", False, 11)}), T0 + 5 * MS) == [ModeOut("dance", False, 11)]
+
+
+def test_gen_tracking_is_per_session():
+    s = make()
+    feed(s, control_bytes({"session": 1, "lamp": valid_lamp("follow", True, 500)}), T0)
+    assert feed(s, control_bytes({"session": 2, "lamp": valid_lamp("light", True, 1)}), T0 + MS) == [
+        SessionOut(2), ModeOut("light", True, 1)]
+    assert feed(s, control_bytes({"lamp": valid_lamp("dance", True, 1)}), T0 + 2 * MS) == []  # equal: refresh
+    assert s.stats()["stale_mode"] == 0
+    assert feed(s, control_bytes({"lamp": valid_lamp("dance", True, 0)}), T0 + 3 * MS) == []  # lower: stale
+    assert s.stats()["stale_mode"] == 1
+
+
+# ---------------------------------------------------------------------------------------- session ids
+def test_assign_and_control_session_ids_may_disagree_the_newest_wins_and_it_is_counted_not_raised():
+    s = make()
+    assert feed(s, assign_bytes(5), T0) == [SessionOut(5)] and s.stats()["session_mismatch"] == 0
+    assert feed(s, control_bytes({"session": 6, "lamp": valid_lamp("light", True, 1)}), T0 + 2 * MS) == [
+        SessionOut(6), ModeOut("light", True, 1)]
+    assert s.session_id == 6 and s.stats()["session_mismatch"] == 1
+    assert feed(s, assign_bytes(7), T0 + 3 * MS) == [SessionOut(7)]
+    assert s.session_id == 7 and s.stats()["session_mismatch"] == 2
+
+
+def test_agreeing_assign_and_control_are_not_a_mismatch():
+    s = make()
+    feed(s, assign_bytes(5), T0)
+    assert feed(s, control_bytes({"session": 5, "lat": 300}), T0 + MS) == []
+    assert feed(s, assign_bytes(5), T0 + 2 * MS) == [] and s.stats()["session_mismatch"] == 0
+
+
+def test_two_assigns_with_different_sessions_is_a_change_not_a_mismatch():
+    s = make()
+    feed(s, assign_bytes(5), T0)
+    assert feed(s, assign_bytes(6), T0 + MS) == [SessionOut(6)]
+    assert s.stats()["session_mismatch"] == 0 and s.session_id == 6
+    feed(s, control_bytes({"session": 6}), T0 + 2 * MS)
+    assert feed(s, control_bytes({"session": 9}), T0 + 3 * MS) == [SessionOut(9)]
+    assert s.stats()["session_mismatch"] == 0
+
+
+def test_the_session_from_either_source_alone_is_accepted():
+    a = make()
+    assert feed(a, assign_bytes(11), T0) == [SessionOut(11)] and a.session_id == 11
+    c = make()
+    assert feed(c, control_bytes({"session": 12}), T0) == [SessionOut(12)] and c.session_id == 12
 
 
 def test_gen_may_restart_after_a_session_change_and_the_old_mode_is_dropped():
@@ -602,61 +1035,130 @@ def test_a_hello_received_from_the_peer_is_counted_and_ignored():
     assert feed(s, bytes([4]) + b'{"t":"hi"}', T0) == [] and s.stats()["unexpected_packet"] == 1
 
 
-def test_peer_drop_keepalive_default_interval_never_leaves_6s_of_silence():
+def test_the_sync_loop_is_the_keepalive_and_no_other_telemetry_is_invented():
     for scenario in ("silent_conductor", "joined_and_synced"):
         cond = FakeConductor(answer_hello=(scenario == "joined_and_synced"),
                              answer_sync=(scenario == "joined_and_synced"))
         rig = Rig(Session("lamp-1"), cond)  # every default
-        rig.run(60 * S, tick=50 * MS)
+        rig.run(60 * S, tick=10 * MS)
         times = [t for t, _ in rig.sent]
         gaps = [b - a for a, b in zip(times, times[1:])]
-        assert times and max(gaps) < 3 * S, (scenario, max(gaps))
+        assert times and times[0] == T0
         if scenario == "joined_and_synced":
-            assert rig.s.stats()["sent_keepalive"] > 0  # the 5 s slow sync alone would leave gaps
-    assert times[0] == T0
+            assert max(gaps) <= 270 * MS  # the SyncReq loop alone keeps the peer alive (6 s drop)
+        else:
+            assert max(gaps) <= 1 * S + 10 * MS  # hello once a second while unanswered
+        for _, d in rig.sent:
+            assert d[0] in (1, 4)
+            if d[0] == 4:
+                assert json.loads(d[1:])["t"] == "hi"  # never a "ka" or any other invented type
+        assert "sent_keepalive" not in rig.s.stats()
 
 
-def test_keepalive_is_sent_only_when_nothing_else_went_out():
-    s = joined(sync_interval_slow_ns=100 * S, sync_interval_fast_ns=100 * S)
-    now = T0 + 10 * MS
-    one_request(s, now)  # the only sync for a long time
-    assert s.poll(now + 1 * S) == []
-    ka = s.poll(now + 2 * S)
-    assert len(ka) == 1 and ka[0][0] == 4 and json.loads(ka[0][1:])["t"] == "ka"
-    assert s.poll(now + 2 * S + MS) == []
-    assert len(s.poll(now + 4 * S)) == 1
+def test_no_ka_telemetry_exists_anywhere_in_a_long_run():
+    s = joined()
+    seen = set()
+    for i in range(2000):
+        for d in s.poll(T0 + 10 * MS + i * 50 * MS):
+            seen.add(d[0] if d[0] != 4 else json.loads(d[1:])["t"])
+    assert seen <= {1, "hi"}
 
 
-def test_keepalive_interval_is_configurable():
-    s = joined(keepalive_ns=300 * MS, sync_interval_slow_ns=100 * S, sync_interval_fast_ns=100 * S)
-    now = T0 + 10 * MS
-    one_request(s, now)
-    assert s.poll(now + 200 * MS) == [] and len(s.poll(now + 300 * MS)) == 1
+GOOD_STATUS = {"state": "idle", "mode": "follow", "locked": True, "piC": 12.5, "sdk": "ok", "moves": 3,
+               "refused": 1}
 
 
-def test_status_datagram_is_lamp_telemetry_and_is_capped():
+def status_docs(s, start, end, tick=10 * MS):
+    out, now = [], start
+    while now < end:
+        for d in s.poll(now):
+            if d[0] == 4:
+                doc = json.loads(d[1:])
+                if doc["t"] == "lamp":
+                    out.append((now, doc))
+        now += tick
+    return out
+
+
+def test_no_status_is_sent_until_the_caller_provides_one():
+    s = joined()
+    assert status_docs(s, T0 + 10 * MS, T0 + 5 * S) == []
+    assert s.stats()["sent_status"] == 0
+
+
+def test_status_is_emitted_from_poll_about_once_a_second_with_exactly_the_spec_shape():
+    s = joined()
+    s.set_status(GOOD_STATUS)
+    got = status_docs(s, T0 + 10 * MS, T0 + 10 * MS + 5 * S + 5 * MS, tick=MS)
+    assert [t - (T0 + 10 * MS) for t, _ in got] == [0, S, 2 * S, 3 * S, 4 * S, 5 * S]
+    assert all(doc == {"t": "lamp", **GOOD_STATUS} for _, doc in got)
+    assert list(got[0][1]) == ["t", "state", "mode", "locked", "piC", "sdk", "moves", "refused"]
+    assert s.stats()["sent_status"] == 6
+
+
+def test_status_is_never_sent_faster_than_1s_and_uses_the_latest_status():
+    s = joined()
+    s.set_status(GOOD_STATUS)
+    assert len(status_docs(s, T0 + 10 * MS, T0 + 11 * MS)) == 1
+    s.set_status({**GOOD_STATUS, "state": "dancing", "moves": 4})
+    assert status_docs(s, T0 + 11 * MS, T0 + 10 * MS + 999 * MS) == []
+    got = status_docs(s, T0 + 10 * MS + 999 * MS, T0 + 10 * MS + S + 20 * MS)
+    assert len(got) == 1 and got[0][1]["state"] == "dancing" and got[0][1]["moves"] == 4
+
+
+@pytest.mark.parametrize("state", ["searching", "locked", "dancing", "light", "idle", "error"])
+def test_every_spec_state_is_accepted(state):
     s = make()
-    st = {"state": "idle", "mode": "follow", "locked": True, "piC": 12.5, "sdk": "ok", "moves": 3, "refused": 1}
-    d = s.status_datagram(st, T0)
-    assert d[0] == 4
-    assert json.loads(d[1:].decode()) == {"t": "lamp", **st}
-    assert json.loads(s.status_datagram({"t": "evil", "sdk": "x"}, T0)[1:])["t"] == "lamp"
+    s.set_status({**GOOD_STATUS, "state": state})
+    assert json.loads(s.poll(T0)[-1][1:])["state"] == state
+
+
+@pytest.mark.parametrize("patch", [
+    {"state": "bogus"}, {"state": "Idle"}, {"state": ""}, {"state": None}, {"state": 1},
+    {"mode": 5}, {"mode": ""}, {"mode": "x" * 33}, {"mode": "a\nb"},
+    {"locked": 1}, {"locked": "true"}, {"locked": None},
+    {"piC": "61"}, {"piC": None}, {"piC": True}, {"piC": float("nan")}, {"piC": float("inf")},
+    {"sdk": 5}, {"sdk": ""}, {"sdk": "e" * 65}, {"sdk": "a\x00b"},
+    {"moves": True}, {"moves": -1}, {"moves": 1.5}, {"moves": "1"}, {"moves": 2**40},
+    {"refused": True}, {"refused": -1}, {"refused": 0.5}, {"refused": None},
+])
+def test_bad_status_values_are_rejected_at_set_status_and_the_old_status_stays(patch):
+    s = make()
+    s.set_status(GOOD_STATUS)
     with pytest.raises(ValueError):
-        s.status_datagram({"sdk": "e" * 5000}, T0)
+        s.set_status({**GOOD_STATUS, **patch})
+    assert json.loads(s.poll(T0)[-1][1:]) == {"t": "lamp", **GOOD_STATUS}
+
+
+@pytest.mark.parametrize("bad", [[], None, "x", {}, {"state": "idle"}, {**GOOD_STATUS, "extra": 1},
+                                 {**GOOD_STATUS, "t": "evil"}])
+def test_status_must_be_a_dict_with_exactly_the_spec_keys(bad):
     with pytest.raises(ValueError):
-        s.status_datagram({"piC": float("nan")}, T0)
+        make().set_status(bad)
+
+
+def test_status_accepts_int_pic_and_the_limits():
+    s = make()
+    s.set_status({**GOOD_STATUS, "piC": 61, "sdk": "e" * 64, "mode": "m" * 32, "moves": 0, "refused": 0})
+    doc = json.loads(s.poll(T0)[-1][1:])
+    assert doc["piC"] == 61 and doc["sdk"] == "e" * 64
+
+
+def test_status_datagram_is_lamp_telemetry_type_4():
+    d = make().status_datagram(GOOD_STATUS)
+    assert d[0] == 4 and json.loads(d[1:].decode()) == {"t": "lamp", **GOOD_STATUS}
     with pytest.raises(ValueError):
-        s.status_datagram([], T0)
+        make().status_datagram({**GOOD_STATUS, "state": "nope"})
 
 
 def test_config_validation():
-    for kw in ({"keepalive_ns": 0}, {"hello_interval_ns": -1}, {"sync_timeout_ns": True},
-               {"mode_max_age_ns": 1.5}, {"max_outstanding": 0}):
+    for kw in ({"hello_interval_ns": -1}, {"sync_timeout_ns": True}, {"conductor_lost_ns": 0},
+               {"conductor_lost_ns": 1.5}, {"hello_silence_ns": 0}, {"max_outstanding": 0}):
         with pytest.raises(ValueError):
             Session("x", **kw)
-    for name in ("", None, "x" * 65):
-        with pytest.raises(ValueError):
-            Session(name)
+    for gone in ("keepalive_ns", "mode_max_age_ns", "sync_interval_fast_ns", "sync_interval_slow_ns"):
+        with pytest.raises(TypeError):
+            Session("x", **{gone: 1})
     s = make()
     for bad in (-1, True, 1.0, None, 2**63):
         with pytest.raises(ValueError):
@@ -682,13 +1184,15 @@ def test_stats_is_a_plain_dict_of_ints():
 def test_unknown_type_bytes_are_counted_and_ignored():
     s = make()
     known = {1, 2, 3, 4, 5, 12, 13}
+    audio = {6, 7, 8, 9, 10}
     n = 0
     for t in range(256):
-        if t in known:
+        if t in known or t in audio:
             continue
         assert feed(s, bytes([t]) + b"\x00" * 40, T0) == []
         n += 1
-    assert s.stats()["unknown_type"] == n == 249 and s.stats()["parse_errors"] == 0
+    assert s.stats()["unknown_type"] == n == 244 and s.stats()["parse_errors"] == 0
+    assert s.stats()["audio_ignored"] == 0
 
 
 def test_empty_and_non_bytes_never_raise():

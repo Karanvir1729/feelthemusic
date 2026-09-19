@@ -5,10 +5,12 @@ sockets, no wall clock. Nothing here was checked against the real conductor.
 
 Time contract (docs/integration.md section 3): ``due_ns`` is local monotonic and is what the consumer
 fires at. This layer subtracts the estimated offset and ``trim_ns`` and adds NO room budget L.
-UNCONFIRMED: whether masterTs (and BassEnvelope.startTs) already include L. A teammate reports that the
-native conductor adds L into masterTs (source-reported, not verified); nothing here relies on it beyond
-declining to add L. If that report is wrong, every due_ns is 300 ms early and only the consumer/adapter
-config can fix it, not this code.
+docs/ftm-protocol.md (Tempo, PR #19) states that masterTs and BassEnvelope.startTs are presentation times
+that ALREADY include L (``Show.hit()``: at = pts + L; ``Show.bass()``: startTs = startPts + L). That is a
+document-reported fact, NOT checked against a real conductor or capture; nothing here relies on it beyond
+declining to add L. If the document is wrong, every due_ns is 300 ms early and only the consumer/adapter
+config can fix it, not this code. De-duplication by seq and target filtering are done one layer up, in
+ftm_session, not here.
 
 No offset means no output: a consumer must hold or drop such events, it never fires with no offset.
 
@@ -18,9 +20,10 @@ TypeError. (ClockEstimator.estimate(now_ns=None) remains an explicit, documented
 
 BassEnvelope timestamps are OFF by default. The reported semantics of BassEnvelope.startTs are not
 verified (masterTs is reported to be pre-budgeted; nothing says startTs is), and a silently active
-assumption would show up as wrong visible timing. ``Normalizer(bass_time_policy="presentation")`` opts in to
-treating startTs like masterTs (a native presentation timestamp, no L added). Until someone verifies
-that against the real conductor, normalize_bass returns [] and counts ``bass_policy_unset``.
+assumption would show up as wrong visible timing (the document does say startTs includes L, but it is unverified).
+``Normalizer(bass_time_policy="presentation")`` opts in to treating startTs like masterTs (a native
+presentation timestamp, no L added). Until someone verifies that against the real conductor, a Normalizer
+built without the opt-in returns [] from normalize_bass and counts ``bass_policy_unset``.
 
 Sessions: ``seq`` is the raw native u32 sequence. It wraps and it is NOT an ordering key; a consumer
 keeps its own session-local sequence. ``Normalizer.new_epoch()`` (call it when a new session/Assign
@@ -28,10 +31,10 @@ arrives or the conductor changes) resets the clock estimator and bumps ``epoch``
 BassSample carries the epoch it was made in, so a consumer can drop queued work from an old epoch.
 There is no native stop kind (kinds are 0..5), so safety stops are a separate consumer API.
 
-Other reported-not-verified items: intensity, sharpness and bass samples are u8 values reported as
-"x255" scaled, so we divide by 255 (0 -> 0.0, 255 -> 1.0). Kind names come from ftm_client.KIND_NAMES;
+Other document-reported, not verified items: intensity, sharpness and bass samples are u8 values described as
+"x255" scaled / 0..255 levels, so we divide by 255 (0 -> 0.0, 255 -> 1.0). Kind names come from ftm_client.KIND_NAMES;
 an unknown kind is dropped and counted, NEVER mapped to another kind. Unknown flag bits are ignored.
-``target`` is kept raw (0xFF reported as "all"). ``lead_us`` is not used: it is not in the contract.
+``target`` is kept raw (0xFF = everyone per the document). ``lead_us`` is not used: it is not in the contract.
 """
 from __future__ import annotations
 

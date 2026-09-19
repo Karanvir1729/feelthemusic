@@ -45,7 +45,7 @@ class FakeSock:
 
 
 def client(sock, **kw):
-    return UdpClient(Session("lamp-1", sync_interval_fast_ns=100 * MS), sock, PEER, **kw)
+    return UdpClient(Session("lamp-1"), sock, PEER, **kw)
 
 
 def assign(sid):
@@ -162,12 +162,21 @@ def test_end_to_end_events_through_the_wrapper():
     assert abs(out[0].event.due_ns - (now + 250 * MS)) <= 5 * MS
 
 
-def test_send_status_goes_to_the_peer():
+def test_set_status_is_sent_by_the_session_to_the_peer_about_once_a_second():
     sock = FakeSock()
     c = client(sock)
-    c.send_status({"state": "idle", "sdk": "ok"}, T0)
-    data, addr = sock.sent[-1]
-    assert addr == PEER and data[0] == 4 and json.loads(data[1:])["t"] == "lamp"
+    c.set_status({"state": "idle", "mode": "follow", "locked": False, "piC": 1.5, "sdk": "ok", "moves": 0,
+                  "refused": 0})
+    c.step(T0)
+    lamp = [(d, a) for d, a in sock.sent if d[0] == 4 and json.loads(d[1:])["t"] == "lamp"]
+    assert len(lamp) == 1 and lamp[0][1] == PEER
+    c.step(T0 + 500 * MS)
+    assert len([1 for d, _ in sock.sent if d[0] == 4 and json.loads(d[1:])["t"] == "lamp"]) == 1
+    c.step(T0 + 1 * 10**9)
+    assert len([1 for d, _ in sock.sent if d[0] == 4 and json.loads(d[1:])["t"] == "lamp"]) == 2
+    with pytest.raises(ValueError):
+        c.set_status({"state": "bogus"})
+    assert not hasattr(c, "send_status")
 
 
 @pytest.mark.parametrize("addr", [None, "1.2.3.4", ("1.2.3.4",), (1, 2), ("1.2.3.4", 0), ("1.2.3.4", 70000),

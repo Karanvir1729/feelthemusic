@@ -60,9 +60,10 @@ class UdpClient:
         else:
             self._c["sent"] += 1
 
-    def send_status(self, status: dict, now_ns: int) -> None:
-        """Send lamp telemetry to the pinned conductor."""
-        self._send(self.session.status_datagram(status, now_ns))
+    def set_status(self, status: dict) -> None:
+        """Give the session the current lamp status (spec shape; ValueError otherwise). The session sends it
+        about once a second from ``step``; there is no other telemetry."""
+        self.session.set_status(status)
 
     def step(self, now_ns: int) -> list[Output]:
         """Drain up to max_recv_per_step datagrams into the session, then send what the session wants."""
