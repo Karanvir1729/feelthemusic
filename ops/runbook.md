@@ -129,10 +129,11 @@ If a packet arrives where $\text{pts} + L - \text{trim} < \text{now} - 80\text{ 
 
 ### 5.2 Starting the Performance
 1. **Safety Check**: Ensure the Robot Safety Monitor is standing in position with line of sight to the lamp.
-2. **Start Conductor**: Launch the performance playback script on the Conductor Laptop:
-   ```bash
-   uv run --python 3.11 conductor/hub.py --track demo_track.wav --budget 300
-   ```
+2. **Start Conductor**: Launch the native Mac FTM Conductor app (or integration playback harness):
+   - Open *Feel the Music Conductor* on the macOS laptop.
+   - Load the cleared demo track (plain 16-bit PCM WAV per task #7 checklist, with 2-second silent lead-in).
+   - Set room latency budget $L = 300\text{ ms}$.
+   - Verify UDP 47300 broadcast and Bonjour service advertisement (`_feelthemusic._udp.local.`).
 3. **Verify Feedback**:
    - Observe listener smiling or reacting as the haptic kick fires.
    - Confirm LeLamp smooth yaw/tilt tracks the listener's head/hand.
@@ -158,8 +159,8 @@ If a packet arrives where $\text{pts} + L - \text{trim} < \text{now} - 80\text{ 
 | Lamp arm runaway or   | Planner desync, mechanical       | SLAP MASTER POWER SWITCH.    |
 | physical collision    | obstruction, or raw joint bug    | Never try to catch arm.      |
 |                       |                                  |                              |
-| HTTP 409 Conflict /   | Overlapping motion commands or   | Wait 2.5s for settle; check  |
-| "Motion in progress"  | cooldown timer violation (<3.0s) | lamp/performance.py log.     |
+| HTTP 409 Conflict /   | Overlapping motion commands or   | Terminal refusal: software   |
+| "Motion in progress"  | uncompleted trajectory           | LATCHES OFF. Human check.    |
 |                       |                                  |                              |
 | Silent Killer: Lamp   | Router rebooted or lamp started  | 1. Power OFF lamp.           |
 | offline, setup AP up  | before router broadcast          | 2. Verify router 5 GHz SSID. |
@@ -178,7 +179,9 @@ If a packet arrives where $\text{pts} + L - \text{trim} < \text{now} - 80\text{ 
 
 ### Playbook A: Physical Emergency Stop (Arm Runaway)
 1. **Slap the illuminated master rocker switch** on the power strip immediately.
-2. All 12V power to the LeLamp servos is severed instantly. The arm will rest on its compliant stops.
+2. All 12V power to the LeLamp servos is severed instantly.
+   > [!CAUTION]
+   > Cutting 12V power causes all servos to lose holding torque, meaning the arm and head will drop under gravity. [unverified: whether the arm rests safely on internal end-stops or sags into table]. Use this e-stop only for impending collision or participant hazard.
 3. Inspect for mechanical pinching, obstruction, or strained cables.
 4. Do NOT attempt to catch or wrestle the motorized joints while powered.
 
@@ -189,11 +192,14 @@ If a packet arrives where $\text{pts} + L - \text{trim} < \text{now} - 80\text{ 
 4. **Turn ON the LeLamp power switch.** Wait 60 seconds.
 5. Re-run ping and curl verification script.
 
-### Playbook C: HTTP 409 Conflict / Motion Lock
-1. The vendor SDK planner rejects new moves with HTTP 409 if a previous move is executing, settling, or was cancelled.
+### Playbook C: HTTP 409 Conflict / Motion Lock (Terminal Latch-Off)
+1. The vendor SDK planner rejects new moves with HTTP 409 if a previous move is executing, settling, or was cancelled before reaching its target.
 2. **Do NOT call `/api/sdk/v1/system/stop`**: calling `system/stop` releases motor torque completely, causing the head to sag and crash into the table.
-3. If a specific action has hung, request cancellation of that specific action (`POST /api/sdk/v1/actions/{action_id}/cancel`).
-4. Allow the arm 3 seconds to complete and settle before issuing subsequent motion commands. The follower (`lamp/follow.py`) and performer (`lamp/performance.py`) automatically enforce cooldowns and refusal backoffs.
+3. **HTTP 409 is terminal [agreed policy]**:
+   - `lamp/performance.py` and `lamp/sdk.py` latch off on any HTTP 409 (`latched_off = True`, exit 2 / terminal stop).
+   - **Do NOT automatically retry or resume motion after 3 seconds.** Resuming while motion state is unknown is unverified and unsafe.
+   - The human operator must visually inspect the arm position and check the runtime log (`journalctl -u vendor-runtime`) to diagnose the fault.
+   - Only a conscious human action may clear the latch and restart the follower process.
 
 ---
 
