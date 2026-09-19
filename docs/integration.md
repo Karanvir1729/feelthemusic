@@ -42,9 +42,9 @@ Decision by Franklin: build on the **existing Mac FTM Conductor**, not the Pytho
 - **Trims are per device and cannot be derived from telemetry.** A phone's self-reported output latency does not predict its residual [reported, hub seq 165], so trims must be measured with an external reference. Only the phone residual above exists. The lamp's glow trim, the lamp's motion lead time and the TitanCore trim are all **[unknown]** and must be measured (task #9 and a lamp session), not written into a config as if known.
 - **Two easy mistakes** that the PR reviews found in earlier code: a late check that runs before the clock is synced, and a "trim" for gestures that is larger than `L` (a gesture that takes seconds must be scheduled *ahead*, not subtracted as an output latency).
 
-## 4. Where beat and bass events come from [reported: the conductor already emits them]
+## 4. Where beat and bass events come from [reported: the protocol can carry them; live emission is UNCONFIRMED]
 
-Earlier drafts of this contract said live audio had no event source, because `analysis/` (PR #1) is whole-track only. **That gap is closed by a report, not by code we have read.** The full text of hub task #6, recovered from the hub UI by codexfranklin (hub seq 593), lists the existing conductor's packets. Besides the sync packets, it carries the events the lamp needs:
+Earlier drafts of this contract said live audio had no event source, because `analysis/` (PR #1) is whole-track only. **That gap is only partly answered, and only by a report, not by code we have read.** The full text of hub task #6, recovered from the hub UI by codexfranklin (hub seq 593), lists the packets the existing conductor can carry. Besides the sync packets, it defines the events the lamp needs:
 
 | Type | Layout (little-endian, first byte = type) | What it is |
 |---|---|---|
@@ -57,10 +57,15 @@ Earlier drafts of this contract said live audio had no event source, because `an
 - **Event kinds** (reported names): click 0, kick 1, snare 2, bass 3, build 4, drop 5. **Flags** (bit values): audio 1, haptic 2, measure 4. **Target** 0xFF means all. [reported]
 - Also reported: peers are keyed by ip:port and dropped after 6 s without traffic; sync replies are delayed randomly by 0 to 15 ms; the author says they verified the encode calls, and the source's own comments were wrong in three places (trust the code). None of this has been tested against the native app by anyone reading this file.
 
-**What this means [design]:** the lamp does **not** need a streaming analyser. It consumes `EventPacket` kinds for gestures and the `BassEnvelope` samples for light, through the adapter and the flash limiter. `analysis/` stays useful offline (preparing and checking a known demo track, and as an independent cross-check of the conductor's events), but it is no longer on the live path.
+**What this establishes, and what it does not.** The packet definitions show what the protocol *can carry*. They do not show that the existing process-tap path generates `EventPacket` or `BassEnvelope` continuously from arbitrary live audio: the task text's own acceptance step mentions an injected kick [reported by codexfranklin, hub seq 737]. So **live event generation is an unverified dependency, not a closed gap.**
+
+**Consequences [design]:**
+- Do not build a second, streaming analyser yet: it may duplicate what the conductor already does.
+- Do not promise "any audio" dancing on the strength of packet definitions alone. Until source or a capture confirms live emission, the safe demo path is a known track whose events are known ahead of time (task #7), with `analysis/` (PR #1) available offline to prepare and cross-check it.
+- If the conductor does emit them live, the lamp consumes `EventPacket` kinds for gestures and `BassEnvelope` samples for light, through the adapter and the flash limiter.
 
 **Still unknown, and not to be guessed:**
-- How the conductor derives these events (its source is unread), and their real latency and accuracy on real music.
+- **Whether the conductor emits these events from live audio at all**, how it derives them (its source is unread), and their real latency and accuracy on real music.
 - What `leadUs` means, and whether `BassEnvelope.startTs` is a native presentation timestamp (with `L` already added) like `masterTs`. Until it is confirmed, treat both as native presentation timestamps and **do not add `L`** (section 3).
 - The audio-anchor and audio access-unit packets, any type not listed, what `Assign`'s first u8 is, and the file `base-protocol-for-new-clients.md` that the task text refers to.
 - Whether the conductor's events are good enough on a dense real track. Nobody has measured this.
