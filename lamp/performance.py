@@ -211,18 +211,23 @@ class MusicPerformer:
             return False
         rgb_255, lum = rendered
 
-        # Explicit output capability gate: dry-run suppresses physical calls unless opted into fake sink
-        if not self.config.live_mode and not self._fake_sink:
-            logger.debug("[DRY RUN] Would glow: %s (live_mode=False)", rgb_255)
-            return True
+        # Atomic dispatch under lock: prevents mode switch to off while render_light was running
+        with self._lock:
+            if self.config.mode == "off":
+                return False
 
-        try:
-            # rgb_255 already has luminance scaled and limited; pass without extra luminance parameter
-            self.sdk.glow(rgb_255)
-            return True
-        except SDKError as exc:
-            self.stats.last_error = f"glow failed: {exc}"
-            return False
+            # Explicit output capability gate: dry-run suppresses physical calls unless opted into fake sink
+            if not self.config.live_mode and not self._fake_sink:
+                logger.debug("[DRY RUN] Would glow: %s (live_mode=False)", rgb_255)
+                return True
+
+            try:
+                # rgb_255 already has luminance scaled and limited; pass without extra luminance parameter
+                self.sdk.glow(rgb_255)
+                return True
+            except SDKError as exc:
+                self.stats.last_error = f"glow failed: {exc}"
+                return False
 
     def set_mode(self, mode: str) -> None:
         """Set operation mode: 'follow', 'dance', 'light_only', 'off'."""
@@ -232,40 +237,38 @@ class MusicPerformer:
             logger.info("Performer mode set to: %s (generation %d)", mode, self.generation)
 
     def play_musical_gesture(self, gesture_name: str, duration_s: Optional[float] = None) -> bool:
-        """Play a built-in vendor gesture if not in cooldown and not latched off."""
+        """Play a built-in vendor gesture if in dance mode, not in cooldown, and not latched off."""
         if self.latched_off:
             logger.warning("Gesture rejected: performer is latched off due to refusals")
             return False
 
+        now = self.clock()
         with self._lock:
-            if self.config.mode in ("off", "light_only"):
+            # Whole-arm musical gestures are ONLY permitted in "dance" mode
+            if self.config.mode != "dance":
                 self.stats.gestures_skipped += 1
                 return False
 
-        now = self.clock()
-        with self._lock:
             if now < self._gesture_busy_until:
                 self.stats.gestures_skipped += 1
                 return False
+
             dur = duration_s or self.config.default_gesture_duration_s
             self._gesture_busy_until = now + dur + self.config.gesture_cooldown_s
 
-        # Explicit output capability gate: dry-run suppresses physical calls unless opted into fake sink
-        if not self.config.live_mode and not self._fake_sink:
-            logger.info("[DRY RUN] Would play gesture '%s' (live_mode=False)", gesture_name)
-            with self._lock:
+            # Explicit output capability gate: dry-run suppresses physical calls unless opted into fake sink
+            if not self.config.live_mode and not self._fake_sink:
+                logger.info("[DRY RUN] Would play gesture '%s' (live_mode=False)", gesture_name)
                 self.stats.gestures_played += 1
                 self._refusal_count = 0
-            return True
+                return True
 
-        try:
-            self.sdk.play_animation(gesture_name)
-            with self._lock:
+            try:
+                self.sdk.play_animation(gesture_name)
                 self.stats.gestures_played += 1
                 self._refusal_count = 0  # Reset on successful execution
-            return True
-        except SDKError as exc:
-            with self._lock:
+                return True
+            except SDKError as exc:
                 self.stats.last_error = f"gesture failed: {exc}"
                 self._refusal_count += 1
                 stop, backoff_s, reason = refusal_policy(exc, self._refusal_count)
@@ -276,7 +279,7 @@ class MusicPerformer:
                         "Performer latched off: %s (exc: %s)", reason, exc
                     )
                 self._gesture_busy_until = now + backoff_s
-            return False
+                return False
 
     def handle_event(self, event: dict[str, Any]) -> bool:
         """Process an incoming event dictionary with presentation time scheduling."""

@@ -100,7 +100,7 @@ def test_flash_limiter_caps_rapid_strobing():
 def test_gesture_cooldown_prevents_spamming():
     sdk = MockLampSDK()
     simulated_time = [100.0]
-    config = PerformanceConfig(gesture_cooldown_s=3.0, default_gesture_duration_s=2.0)
+    config = PerformanceConfig(mode="dance", gesture_cooldown_s=3.0, default_gesture_duration_s=2.0)
     performer = MusicPerformer(sdk, config=config, clock_fn=lambda: simulated_time[0])
 
     # First gesture succeeds
@@ -172,7 +172,8 @@ def test_refusal_limit_latches_off():
     sdk.play_animation = lambda *args, **kwargs: (_ for _ in ()).throw(
         SDKError(409, "lost_track", "action outcome unknown")
     )
-    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0])
+    config = PerformanceConfig(mode="dance")
+    performer = MusicPerformer(sdk, config=config, clock_fn=lambda: simulated_time[0])
 
     for i in range(3):
         simulated_time[0] += 5.0
@@ -499,5 +500,29 @@ def test_native_binary_packet_bridge():
     finally:
         bridge.stop()
         bridge.join(timeout=1.0)
+
+
+def test_play_musical_gesture_rejected_in_follow_mode():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+    config = PerformanceConfig(mode="follow")  # Follow mode: arm must stay locked on listener
+    performer = MusicPerformer(sdk, config=config, clock_fn=lambda: simulated_time[0])
+
+    ok = performer.play_musical_gesture("nod")
+    assert ok is False
+    assert performer.stats.gestures_skipped == 1
+    assert len(sdk.animations) == 0
+
+
+def test_atomic_mode_off_suppresses_glow():
+    sdk = MockLampSDK()
+    simulated_time = [100.0]
+    performer = MusicPerformer(sdk, clock_fn=lambda: simulated_time[0], fake_sink=True)
+    performer.set_mode("off")
+
+    ok = performer.handle_bass_envelope(simulated_time[0], 0.8)
+    assert ok is False
+    assert len(sdk.glows) == 0
+
 
 
