@@ -199,7 +199,7 @@ class LampSDK:
     def move(self, positions: dict[str, float]) -> dict:
         """A safe, planned move. Always pass ALL joints: a joint left out is held at its *measured*
         position, and on a gravity-loaded joint that is a little lower every time."""
-        action = self.action("motion.move", {"positions": {k: round(float(v), 1) for k, v in positions.items()}})
+        action = self.action("motion.move", {"positions": {k: round(float(v), 2) for k, v in positions.items()}})
         result = action.get("result") or {}
         if result.get("reached") is not True:
             raise SDKError(409, "not_reached", "the move ended without reaching its target", result)

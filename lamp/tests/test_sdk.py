@@ -34,6 +34,30 @@ def test_lost_post_response_retries_with_the_same_idempotency_key(monkeypatch):
     assert sdk.posts[0]["idempotency_key"] == sdk.posts[1]["idempotency_key"]
 
 
+def test_second_uncertain_post_failure_escalates_to_lost_track(monkeypatch):
+    monkeypatch.setattr("sdk.time.sleep", lambda _: None)
+    sdk = FakeSDK([
+        SDKError(0, "network", "connection dropped"),
+        SDKError(500, "gateway", "response lost again"),
+    ])
+
+    with pytest.raises(SDKError, match="lost_track") as raised:
+        sdk.action("motion.move", {"positions": {"base_yaw": 0}})
+
+    assert raised.value.status == 409
+    assert len(sdk.posts) == 2
+    assert sdk.posts[0]["idempotency_key"] == sdk.posts[1]["idempotency_key"]
+
+
+def test_client_error_is_not_retried():
+    sdk = FakeSDK([SDKError(400, "bad_request", "invalid payload")])
+
+    with pytest.raises(SDKError, match="bad_request"):
+        sdk.action("motion.move", {"positions": {"base_yaw": 0}})
+
+    assert len(sdk.posts) == 1
+
+
 @pytest.mark.parametrize("result", [{}, {"reached": False}])
 def test_move_requires_an_explicit_reached_confirmation(result):
     sdk = object.__new__(LampSDK)
