@@ -105,11 +105,11 @@ All sensory output fires on the conductor's shared clock via presentation timest
 $$\text{Schedule Time} = \text{pts} + L - \text{trim}$$
 
 - **Room Latency Budget ($L$)**: **300 ms** (0.300 seconds). Never attempt to reduce $L$; the budget allows all wireless nodes to buffer and schedule simultaneously.
-- **Client Latency Trims**:
-  - **iPhone Taptic Engine**: $\text{trim}_{\text{phone}} = \mathbf{25\text{ ms}}$. (Core Haptics AHAP schedule pre-roll).
-  - **TitanCore Actuators**: $\text{trim}_{\text{titan}} = \mathbf{5\text{ ms}}$. (Direct serial baud transit + DRV8212 gate switch).
-  - **Lamp Glow (WCAG Limiter)**: $\text{trim}_{\text{glow}} = \mathbf{30\text{ ms}}$. (HTTP loopback call + LED driver ramp; note that full color fade is $\approx 600\text{ ms}$).
-  - **Lamp Choreographed Gestures**: $\text{trim}_{\text{gesture}} = \mathbf{2000\text{ ms}}$. (Vendor minimum-jerk trajectory planner lead time).
+- **Client Latency Trims (Estimates & Proposed Values)**:
+  - **iPhone Taptic Engine**: $\text{trim}_{\text{phone}} \approx \mathbf{25\text{ ms}}$ (Core Haptics AHAP schedule pre-roll estimate).
+  - **TitanCore Actuators**: $\text{trim}_{\text{titan}} \approx \mathbf{5\text{ ms}}$ (UART transmission + gate switch estimate).
+  - **Lamp Glow (WCAG Limiter)**: $\text{trim}_{\text{glow}} \approx \mathbf{30\text{ ms}}$ (HTTP loopback call + LED driver ramp estimate; note that full color fade is $\approx 600\text{ ms}$).
+  - **Lamp Choreographed Gestures**: $\text{trim}_{\text{gesture}} \approx \mathbf{2000\text{ ms}}$ (Vendor minimum-jerk trajectory planner minimum duration; measured: moves take $\ge 2.0\text{ s}$).
 
 ### Late Event Policy:
 If a packet arrives where $\text{pts} + L - \text{trim} < \text{now} - 80\text{ ms}$, the client **must drop** the event immediately and increment the `dropped_late_events` telemetry counter. **Never fire an event late.** A late beat destroys musical immersion.
@@ -190,12 +190,10 @@ If a packet arrives where $\text{pts} + L - \text{trim} < \text{now} - 80\text{ 
 5. Re-run ping and curl verification script.
 
 ### Playbook C: HTTP 409 Conflict / Motion Lock
-1. The vendor SDK planner rejects new moves with HTTP 409 if a previous move is executing or settling.
-2. Send an explicit halt command via curl:
-   ```bash
-   curl -X POST http://192.168.8.20:8081/api/sdk/v1/system/stop
-   ```
-3. Allow the vendor runtime 3 seconds to clear its trajectory queue before issuing the next gesture.
+1. The vendor SDK planner rejects new moves with HTTP 409 if a previous move is executing, settling, or was cancelled.
+2. **Do NOT call `/api/sdk/v1/system/stop`**: calling `system/stop` releases motor torque completely, causing the head to sag and crash into the table.
+3. If a specific action has hung, request cancellation of that specific action (`POST /api/sdk/v1/actions/{action_id}/cancel`).
+4. Allow the arm 3 seconds to complete and settle before issuing subsequent motion commands. The follower (`lamp/follow.py`) and performer (`lamp/performance.py`) automatically enforce cooldowns and refusal backoffs.
 
 ---
 
