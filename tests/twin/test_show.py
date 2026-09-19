@@ -15,6 +15,10 @@ from twin import show as S
 from twin.contract import LightFrame, MusicEvent
 
 FRAME = 1.0 / S.FPS
+# The light fails closed: without the team's flash limiter (safety.flash, branch claude/flash-limiter, loaded by
+# import or `git show`) no light is rendered at all. A checkout without that branch (CI) runs the fail-closed test.
+needs_flash = pytest.mark.skipif(S.load_flash()[0] is None,
+                                 reason="safety.flash not importable and origin/claude/flash-limiter not fetched")
 FIXED = dict(admission_s=(0.02, 0.02), admission_tail_p=0.0)     # a lamp with a fixed 20 ms admission
 
 
@@ -141,6 +145,16 @@ def test_from_analysis_uses_the_team_module_or_says_why(tmp_path):
 
 
 # ------------------------------------------------------------------ the ideal design
+def test_light_fails_closed_without_the_flash_limiter(song, monkeypatch):
+    """No limiter, no light: every frame dark, and the info says why (a photosensitivity safeguard)."""
+    monkeypatch.setattr(S, "_FLASH_CACHE", [(None, "unavailable")])
+    design = S.LightDesign()
+    frames, info = S.apply_flash_limit(design.render(song, plan=design.plan(song)))
+    assert info["suppressed"] and "limiter unavailable" in info["limiter"]
+    assert frames and all(not np.any(f.rgb) for f in frames)
+
+
+@needs_flash
 def test_ideal_design_pulses_on_every_kick_within_one_frame(song, ideal):
     plan, frames, info = ideal
     hits = [e for e in song.events if e.kind in ("KICK", "DROP")]
@@ -158,6 +172,7 @@ def test_ideal_design_pulses_on_every_kick_within_one_frame(song, ideal):
     assert lane["share_within_window"] == 1.0
 
 
+@needs_flash
 def test_ideal_design_colour_switches_on_bar_lines_and_drop(song, ideal):
     plan, frames, _ = ideal
     measured = S.colour_switches(frames)
@@ -177,6 +192,7 @@ def test_ideal_design_colour_switches_on_bar_lines_and_drop(song, ideal):
     assert jump(drop) > max(others), "the DROP is the biggest colour change"
 
 
+@needs_flash
 def test_snare_flashes_the_outer_ring_at_constant_total_light(song, ideal):
     plan, frames, _ = ideal
     g = P.load_geometry()

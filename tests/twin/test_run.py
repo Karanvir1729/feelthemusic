@@ -149,6 +149,7 @@ def test_replay_segments_cover_every_step_once(n, k_acq, k_lock):
 def test_run_modules_are_what_a_run_imports():
     """replay/manifest.json hashes RUN_MODULES: every twin module the simulation imports, and not the HTTP
     simulator (the review found sim_sdk.py's hash in the evidence although a run never executes it)."""
+    pytest.importorskip("mujoco")
     import subprocess
     import sys
     code = ("import sys; import twin.run, twin.model; "

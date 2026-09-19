@@ -849,6 +849,7 @@ def test_idle_route_effects_follow_the_vendor_runtime(make_sim):
 
 # ------------------------------------------------------------------ camera
 def test_camera_snapshot_decodes(make_sim, team_sdk, tmp_path):
+    pytest.importorskip("PIL", reason="the simulated camera encodes JPEG with Pillow (503 without it)")
     sim = make_sim(scenario=OnePerson())
     r = requests.get(sim.url("/api/sdk/v1/camera/snapshot"), headers=sim.auth, timeout=10)
     assert r.status_code == 200 and r.headers["Content-Type"] == "image/jpeg"
@@ -930,6 +931,7 @@ def test_face_detector_finds_the_seated_person(make_sim, tmp_path):
 
 
 def test_multipart_stream(make_sim, team_sdk):
+    pytest.importorskip("PIL", reason="the simulated camera encodes JPEG with Pillow (503 without it)")
     sim = make_sim(clock="real", scenario=OnePerson())
     url = sim.url("/api/sdk/v1/streams/camera")
     assert requests.get(url, params={"fps": 0}, headers=sim.auth, timeout=5).json()["error"]["message"] == \
