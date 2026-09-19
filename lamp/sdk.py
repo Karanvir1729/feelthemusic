@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -144,7 +145,9 @@ class LampSDK:
     def action(self, command_type: str, payload: dict, wait_s: float = 30.0) -> dict:
         """Run one SDK action to completion. Raises SDKError unless it succeeded."""
         self._ensure_session()
-        request = {"type": command_type, "payload": payload}
+        # The key makes a re-sent POST (our 401 retry, a flaky connection) return the first action
+        # instead of running it twice, and lets a failed POST be matched to its record.
+        request = {"type": command_type, "payload": payload, "idempotency_key": uuid.uuid4().hex}
         try:
             action = self._call("POST", "/api/sdk/v1/actions", json=request)["action"]
         except SDKError as exc:
@@ -155,10 +158,22 @@ class LampSDK:
             self.http.headers.pop("X-LeLamp-SDK-Session", None)
             self._ensure_session()
             action = self._call("POST", "/api/sdk/v1/actions", json=request)["action"]
+        estimate = (action.get("result") or {}).get("estimated_duration_seconds")
+        if isinstance(estimate, (int, float)):
+            wait_s = min(wait_s, float(estimate) + 1.5 + 4.0)      # planned duration + settle + margin
         deadline = time.monotonic() + wait_s
+        hiccups = 0
         while action.get("state") not in DONE and time.monotonic() < deadline:
-            time.sleep(0.1)
-            action = self._call("GET", f"/api/sdk/v1/actions/{action['action_id']}")["action"]
+            time.sleep(0.2)
+            try:
+                action = self._call("GET", f"/api/sdk/v1/actions/{action['action_id']}")["action"]
+                hiccups = 0
+            except SDKError as exc:
+                # A status poll can fail while the move is still running (the gateway's bookkeeping is
+                # not thread-safe, the network can blip). That is NOT a failed move: keep polling.
+                hiccups += 1
+                if exc.status in (401, 404) or hiccups > 10:
+                    raise SDKError(409, "lost_track", f"could not follow the action: {exc}") from None
         if action.get("state") not in DONE:             # still running after wait_s: do not abandon it
             try:
                 self._call("POST", f"/api/sdk/v1/actions/{action['action_id']}/cancel", timeout=8)

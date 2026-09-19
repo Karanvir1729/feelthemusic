@@ -196,6 +196,9 @@ def main() -> None:
     ap.add_argument("--prefer-distance", type=float, default=0.45, help="viewing distance to aim for, metres")
     ap.add_argument("--fps", type=float, default=10)
     ap.add_argument("--min-interval", type=float, default=1.5, help="seconds to watch between moves")
+    ap.add_argument("--max-step", type=float, default=20.0,
+                    help="largest joint change per move, in units. Every SDK move takes about 2 s whatever its size, "
+                         "so an unlimited move can peak near 70 deg/s. A big turn becomes several calm steps.")
     ap.add_argument("--warm-c", type=float, default=70.0, help="SoC temperature at which we halve our frame rate")
     ap.add_argument("--hot-c", type=float, default=77.0, help="SoC temperature at which we stop looking until it cools")
     ap.add_argument("--keep-idle", action="store_true",
@@ -302,6 +305,17 @@ def main() -> None:
             print(where + f"  -> not moving: {blocked[0]}", flush=True)
             sightings.clear()
             continue
+        biggest = max(abs(pose[j] - measured[j]) for j in JOINTS)
+        if biggest > args.max_step:                              # take one calm step along the way
+            part = args.max_step / biggest
+            step = {j: measured[j] + (pose[j] - measured[j]) * part for j in JOINTS}
+            step = {j: float(np.clip(v, *model.limits[j])) for j, v in step.items()}
+            if model.problems(step):
+                print(where + f"  -> not moving: the step on the way is not allowed ({model.problems(step)[0]})", flush=True)
+                sightings.clear()
+                fresh_after = time.monotonic() + 2.0
+                continue
+            pose = step
         plan = ", ".join(f"{j} {measured[j]:+.0f}->{pose[j]:+.0f}" for j in JOINTS if abs(pose[j] - measured[j]) >= 2)
         note = f" (whole-arm pose refused: {report['rejected'][0]}; turning from neutral instead)" if report["rejected"] else ""
         print(where, flush=True)
@@ -319,22 +333,31 @@ def main() -> None:
             failures = 0
         except SDKError as exc:
             refused += 1
-            if exc.status == 409:            # accepted, then failed / rejected / canceled / timed out: the arm may have moved
+            text = exc.message.lower()
+            if exc.status == 409:            # accepted, then it did not succeed: the arm may have moved
                 print(f"     the move did not complete: {exc}", flush=True)
+                errors = exc.details.get("position_errors") if isinstance(exc.details, dict) else None
+                if errors:
+                    print(f"     position errors: {errors}", flush=True)
                 settle_here(sdk)
                 if exc.code == "canceled":
                     print("     something else stopped the lamp. Not fighting it: stopping.", flush=True)
-                    break
-                failures += 1
-                if failures >= 3:
-                    print("     three moves in a row did not complete. Stopping.", flush=True)
-                    break
-            else:                            # the gateway said no before anything moved
-                print(f"     the lamp's planner refused: {exc}", flush=True)
-                if "torque" in exc.message.lower() or "Too many active SDK sessions" in exc.message:
-                    print("     cannot continue (torque is off, or too many SDK sessions this hour). Stopping.", flush=True)
-                    break
-            time.sleep(5.0 if exc.code == "rate_limited" else 2.0)
+                elif exc.code in ("timeout", "lost_track"):
+                    print("     lost track of a move. Stopping rather than sending another on top of it.", flush=True)
+                else:
+                    print("     the arm did not reach its target, which usually means something is in the way. "
+                          "Stopping: check the lamp before running again.", flush=True)
+                break
+            print(f"     the lamp's planner refused: {exc}", flush=True)     # nothing moved
+            if "torque" in text or "too many active sdk sessions" in text:
+                print("     cannot continue (torque is off, or too many SDK sessions this hour). Stopping.", flush=True)
+                break
+            failures += 1
+            if failures >= 3:
+                print("     three refusals in a row. Stopping: this needs a person to look at it.", flush=True)
+                break
+            # never hammer: a collision refusal will be refused again, a rate limit needs a full window
+            stop.wait(60.0 if exc.status == 429 or exc.code == "rate_limited" else 10.0)
         sightings.clear()
         fresh_after = time.monotonic() + max(0.3, args.min_interval)   # settle, then watch before deciding again
 
