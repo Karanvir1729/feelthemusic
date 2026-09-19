@@ -5,6 +5,11 @@ task #18. No Unity project, editor, rig or calibration was available when this
 component was written. It has not been compiled or run in Unity. No vendor
 assets are included.
 
+The C# source was compiled against temporary Unity API shims for 18 standalone
+lifecycle, serialization and file-preservation checks. Its synthetic JSON also
+passed the Python validator. Those checks do not verify Unity's compiler,
+`JsonUtility`, scene probes, physics or actual spatial performance.
+
 Attach `FtmReplayRecorder.cs` to an enabled GameObject in the supplied scene.
 The scene's replay driver must:
 
@@ -58,8 +63,9 @@ Run `python -m simulation.replay` with all required options:
 - `--model-sha256` and `--trajectory-sha256`: expected hashes of the exact
   manifest and trajectory bytes selected for the replay.
 - `--min-clearance` and `--max-head-error`: operator-selected limits in metres
-  and degrees.
-- `--expected-mode`: planned `head-follow` or `dance` mode.
+  and degrees. The aiming threshold applies only to head-follow.
+- `--expected-mode`: planned `head-follow` or `dance` mode; controller `follow`
+  is accepted as an expected-mode alias. Recorded JSON always uses `head-follow`.
 - `--expected-duration-ns`: planned final-minus-start duration, calculated from
   the trajectory independently of the report.
 - `--max-sample-gap-ns`: maximum allowed sample interval, selected for the

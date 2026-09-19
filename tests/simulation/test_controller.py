@@ -52,6 +52,7 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.c.submit(self.command(due_ns=self.now + 31_000_000_000)))
 
     def test_late_admission_and_dispatch_dropped(self):
+        self.c.late_tolerance_ns = 0
         self.assertFalse(self.c.submit(self.command(due_ns=self.now - 1)))
         self.assertTrue(self.c.submit(self.command(due_ns=self.now + 10)))
         self.now += 11
@@ -66,10 +67,10 @@ class ControllerTests(unittest.TestCase):
 
     def test_sequence_session_and_capacity(self):
         self.c.capacity = 1
-        self.assertTrue(self.c.submit(self.command(seq=2)))
+        self.assertTrue(self.c.submit(self.command(seq=2, kind="light", rgb=[0, .1, .1])))
         for seq in (1, 2):
             self.assertFalse(self.c.submit(self.command(seq=seq)))
-        self.assertFalse(self.c.submit(self.command(seq=3)))
+        self.assertFalse(self.c.submit(self.command(seq=3, kind="light", rgb=[0, .1, .1])))
         self.assertEqual(self.c.stats["capacity"], 1)
         self.assertFalse(self.c.submit(self.command(seq=3, session_id="other")))
 
@@ -103,7 +104,8 @@ class ControllerTests(unittest.TestCase):
         self.c.submit(self.command(seq=3, kind="light", rgb=[0, .4, .7]))
         self.assertEqual(self.c.tick(), 1)
         self.assertEqual([c["kind"] for c in self.sent], ["head_target", "light"])
-        self.assertEqual(self.c.stats["motion_blocked"], 1)
+        self.assertGreater(self.c.stats["motion_waits"], 0)
+        self.assertEqual(self.c.queued, 1)
 
     def test_unknown_or_failed_action_latches(self):
         for outcome in ("unknown", "failed"):
@@ -117,7 +119,7 @@ class ControllerTests(unittest.TestCase):
                 self.assertFalse(self.c.submit(self.command(seq=2)))
                 with self.assertRaises(ValueError):
                     self.c.set_mode("dance", armed=True)
-                self.assertTrue(self.c.submit(self.command(seq=3, kind="light", rgb=[0, .4, .7])))
+                self.assertFalse(self.c.submit(self.command(seq=3, kind="light", rgb=[0, .4, .7])))
 
     def test_callback_exception_latches_motion(self):
         def fail(_):
@@ -229,6 +231,183 @@ class ControllerTests(unittest.TestCase):
         self.c.max_target_age_ns = 100
         self.assertTrue(self.c.submit(self.command(capture_ns=self.now - 100, valid_until_ns=self.now)))
         self.assertEqual(self.c.tick(), 1)
+
+    def test_default_80ms_tick_tolerance_and_exact_limit(self):
+        self.assertEqual(self.c.late_tolerance_ns, 80_000_000)
+        self.c.submit(self.command())
+        self.now += 80_000_000
+        self.assertEqual(self.c.tick(), 1)
+        self.c.complete(self.c.inflight, "succeeded")
+        self.c.submit(self.command(seq=2))
+        self.now += 80_000_001
+        self.assertEqual(self.c.tick(), 0)
+        self.assertEqual(self.c.stats["late"], 1)
+
+    def test_30second_horizon_is_inclusive_and_never_fires_early(self):
+        cmd = self.command(kind="light", rgb=[0, .1, .1], due_ns=self.now + 30_000_000_000)
+        self.assertFalse(self.c.submit(dict(cmd, due_ns=cmd["due_ns"] + 1)))
+        self.assertTrue(self.c.submit(cmd))
+        self.now += 29_999_999_999
+        self.assertEqual(self.c.tick(), 0)
+        self.now += 1
+        self.assertEqual(self.c.tick(), 1)
+
+    def test_external_idle_latch_blocks_all_output_and_cannot_rearm(self):
+        for reason in ("thermal", "torque_off", "409", "operator"):
+            with self.subTest(reason=reason):
+                self.setUp()
+                self.c.submit(self.command(kind="light", rgb=[0, .1, .1]))
+                self.c.safety_latch(reason)
+                self.assertEqual(self.c.queued, 0)
+                self.assertEqual(self.c.tick(), 0)
+                self.assertTrue(self.c.safety_latched)
+                self.assertEqual(self.c.latch_reason, reason)
+                self.assertFalse(self.c.submit(self.command(seq=2)))
+                self.assertFalse(self.c.submit(self.command(seq=3, kind="light", rgb=[0, .1, .1])))
+                with self.assertRaises(ValueError):
+                    self.c.set_mode("follow", armed=True)
+                self.c.set_synced(False)
+                self.c.set_synced(True)
+                self.assertTrue(self.c.safety_latched)
+
+    def test_light_output_failure_latches_and_preserves_active_motion(self):
+        self.c.submit(self.command())
+        self.c.tick()
+        action = self.c.inflight
+        def fail(_):
+            raise RuntimeError("renderer unavailable")
+        self.c.output = fail
+        self.c.submit(self.command(seq=2, kind="light", rgb=[0, .1, .1]))
+        self.c.submit(self.command(seq=3))
+        self.assertEqual(self.c.tick(), 0)
+        self.assertTrue(self.c.safety_latched)
+        self.assertEqual(self.c.inflight, action)
+        self.assertEqual(self.c.queued, 0)
+        self.assertTrue(self.c.complete(action, "succeeded"))
+        self.assertTrue(self.c.safety_latched)
+
+    def test_process_interrupt_latches_then_propagates(self):
+        for error in (KeyboardInterrupt, SystemExit):
+            with self.subTest(error=error):
+                self.setUp()
+                def fail(_):
+                    raise error()
+                self.c.output = fail
+                self.c.submit(self.command())
+                with self.assertRaises(error):
+                    self.c.tick()
+                self.assertTrue(self.c.safety_latched)
+                self.assertIsNotNone(self.c.inflight)
+
+    def test_watchdog_survives_sync_and_mode_changes_without_clearing_ownership(self):
+        self.c.submit(self.command())
+        self.c.tick()
+        action = self.c.inflight
+        self.c.set_mode("hold")
+        self.c.set_synced(False)
+        self.now += 3_000_000_000
+        self.c.tick()
+        self.assertFalse(self.c.safety_latched)
+        self.now += 1
+        self.c.tick()
+        self.assertTrue(self.c.safety_latched)
+        self.assertEqual(self.c.inflight, action)
+        self.assertEqual(self.c.stats["motion_timeout"], 1)
+        self.c.tick()
+        self.assertEqual(self.c.stats["motion_timeout"], 1)
+        self.assertTrue(self.c.complete(action, "succeeded"))
+        self.assertTrue(self.c.safety_latched)
+
+    def test_late_completion_itself_checks_watchdog(self):
+        self.c.submit(self.command())
+        self.c.tick()
+        action = self.c.inflight
+        self.now += 3_000_000_001
+        self.assertTrue(self.c.complete(action, "succeeded"))
+        self.assertTrue(self.c.safety_latched)
+
+    def test_dance_watchdog_uses_command_duration_plus_margin(self):
+        self.c.set_mode("dance", armed=True)
+        self.c.submit(self.command(kind="dance", positions=dict.fromkeys(JOINTS, 0), duration_ns=5_000_000_000))
+        self.c.tick()
+        self.now += 6_000_000_000
+        self.c.tick()
+        self.assertFalse(self.c.safety_latched)
+        self.now += 1
+        self.c.tick()
+        self.assertTrue(self.c.safety_latched)
+
+    def test_mode_switch_waits_and_dispatches_only_if_original_deadline_is_fresh(self):
+        self.c.submit(self.command())
+        self.c.tick()
+        first = self.c.inflight
+        self.c.set_mode("dance", armed=True)
+        self.c.submit(self.command(seq=2, kind="dance", positions=dict.fromkeys(JOINTS, 0), duration_ns=2_000_000_000))
+        self.assertEqual(self.c.tick(), 0)
+        self.assertEqual(self.c.queued, 1)
+        self.now += 20_000_000
+        self.c.complete(first, "succeeded")
+        self.assertEqual(self.c.tick(), 1)
+        self.assertEqual(self.sent[-1]["kind"], "dance")
+
+    def test_waiting_motion_drops_instead_of_retiming_after_completion(self):
+        self.c.submit(self.command())
+        self.c.tick()
+        first = self.c.inflight
+        self.c.submit(self.command(seq=2))
+        self.c.tick()
+        self.now += 80_000_001
+        self.c.complete(first, "succeeded")
+        self.assertEqual(self.c.tick(), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.c.stats["late"], 1)
+
+    def test_follow_coalesces_latest_capture_and_rejects_capture_regression(self):
+        self.c.submit(self.command())
+        self.now += 10
+        self.c.submit(self.command(seq=2, position_m=[.2, .8, .4]))
+        self.assertEqual(self.c.queued, 1)
+        self.assertFalse(self.c.submit(self.command(seq=3, capture_ns=self.now - 1,
+                                                  valid_until_ns=self.now + 100)))
+        self.assertEqual(self.c.stats["capture_reordered"], 1)
+        self.assertEqual(self.c.tick(), 1)
+        self.assertEqual(self.sent[0]["seq"], 2)
+        self.assertEqual(self.sent[0]["position_m"], [.2, .8, .4])
+
+    def test_current_target_evicts_farthest_future_light_at_capacity(self):
+        self.c.capacity = 2
+        self.c.submit(self.command(seq=1, kind="light", rgb=[0, .1, .1], due_ns=self.now + 1_000_000_000))
+        self.c.submit(self.command(seq=2, kind="light", rgb=[0, .2, .2], due_ns=self.now + 30_000_000_000))
+        self.assertTrue(self.c.submit(self.command(seq=3)))
+        self.assertEqual(self.c.queued, 2)
+        self.assertEqual(self.c.stats["future_light_evicted"], 1)
+        self.assertEqual(self.c.tick(), 1)
+        self.c.complete(self.c.inflight, "succeeded")
+        self.now += 1_000_000_000
+        self.assertEqual(self.c.tick(), 1)
+        self.assertEqual(self.sent[-1]["seq"], 1)
+
+    def test_future_capture_rejected_even_with_valid_future_deadline(self):
+        self.assertFalse(self.c.submit(self.command(capture_ns=self.now + 1, due_ns=self.now + 2,
+                                                   valid_until_ns=self.now + 100)))
+        self.assertEqual(self.c.queued, 0)
+
+    def test_hold_rejects_lights_and_invalidates_previously_queued_light(self):
+        self.c.submit(self.command(kind="light", rgb=[0, .1, .1]))
+        self.c.set_mode("hold")
+        self.assertEqual(self.c.tick(), 0)
+        self.assertFalse(self.c.submit(self.command(seq=2, kind="light", rgb=[0, .1, .1])))
+
+    def test_bounded_configuration_and_sequence_jump(self):
+        for values in ({"capacity": 4097}, {"capacity": True}, {"max_future_ns": 30_000_000_001},
+                       {"late_tolerance_ns": 1_000_000_001}, {"max_target_age_ns": 5_000_000_001},
+                       {"watchdog_margin_ns": 5_000_000_001}, {"head_motion_duration_ns": 1},
+                       {"max_motion_duration_ns": 30_000_000_001}, {"max_sequence_jump": 65537}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                Controller("s", self.sent.append, **values)
+        self.assertFalse(self.c.submit(self.command(seq=2**63 - 1)))
+        self.assertEqual(self.c.last_seq, -1)
+        self.assertTrue(self.c.submit(self.command(seq=1)))
 
 
 if __name__ == "__main__":

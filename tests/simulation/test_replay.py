@@ -185,6 +185,36 @@ class ReplayTests(unittest.TestCase):
         for invalid in (True, None, "", "any", 0):
             self.assert_failure(report_fixture(), "expected_mode must", expected_mode=invalid)
 
+    def test_controller_follow_maps_to_canonical_head_follow_evidence(self):
+        self.assertEqual(validate(report_fixture(), expected_mode="follow")["status"],
+                         "PASS_SIMULATION_ONLY")
+        report = report_fixture()
+        report["mode"] = "follow"
+        self.assert_failure(report, "mode must be head-follow or dance", expected_mode="follow")
+        report["mode"] = "dance"
+        self.assert_failure(report, "mode does not match", expected_mode="follow")
+
+    def test_dance_ignores_aiming_gate_but_preserves_truthful_metrics_and_safety(self):
+        report = report_fixture()
+        report["mode"] = "dance"
+        report["samples"][1]["head_error_deg"] = 170.0
+        report["max_head_error_deg"] = 170.0
+        self.assertEqual(validate(report, expected_mode="dance")["status"],
+                         "PASS_SIMULATION_ONLY")
+        self.assert_failure(report, "clearance", expected_mode="dance", min_clearance=0.21)
+        report["max_head_error_deg"] = 0.0
+        self.assert_failure(report, "does not match", expected_mode="dance")
+        report["max_head_error_deg"] = 170.0
+        report["samples"][1]["head_error_deg"] = float("nan")
+        self.assert_failure(report, "finite", expected_mode="dance")
+
+    def test_controller_follow_alias_retains_aiming_and_tracking_gates(self):
+        report = report_fixture()
+        self.assert_failure(report, "head error", expected_mode="follow", max_head_error=1.0)
+        report["tracking_lost_count"] = 1
+        report["samples"][1]["tracking_valid"] = False
+        self.assert_failure(report, "valid tracking", expected_mode="follow")
+
     def test_expected_duration_rejects_self_consistent_shortened_or_longer_runs(self):
         for duration in (500_000_000, 1_500_000_000):
             report = report_fixture()
@@ -252,6 +282,7 @@ class ReplayFileAndCliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(result["status"], "PASS_SIMULATION_ONLY")
             self.assertFalse(result["hardware_approved"])
+            self.assertEqual(self.run_cli(path, "--expected-mode", "follow")[0], 0)
             code, result = self.run_cli(path, "--model-sha256", "c" * 64)
             self.assertEqual(code, 1)
             self.assertEqual(result["status"], "FAIL")

@@ -5,6 +5,13 @@ The operator must supply expected asset hashes, mode, duration, maximum sample
 gap, and acceptance thresholds. Discrete samples do not guarantee collision-free
 motion between samples. The 16 MiB / 100,000 sample limits bound input resources;
 they are not physical robot limits or evidence of simulation accuracy.
+
+Evidence mode names remain ``head-follow`` and ``dance``. The controller's
+``follow`` mode maps to evidence ``head-follow`` when supplied as expected_mode;
+reports themselves must retain the canonical evidence names. Head aiming and
+valid tracking are acceptance gates only for head-follow. Dance reports still
+need truthful, finite head metrics, but are evaluated for clearance, collisions,
+joint limits and replay coverage rather than head aiming.
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ HASH_PATTERN = re.compile(r"[0-9a-fA-F]{64}\Z")
 NUMERIC_TOLERANCE = 1e-9  # Representation tolerance, not a safety margin.
 MAX_REPORT_BYTES = 16 * 1024 * 1024
 MAX_SAMPLES = 100_000
+EXPECTED_MODE_TO_EVIDENCE = {"follow": "head-follow", "head-follow": "head-follow", "dance": "dance"}
 
 
 def _finite_number(value: Any) -> bool:
@@ -78,8 +86,11 @@ def validate_report(
     It cannot prove a simulator actually loaded those bytes, or validate hardware.
     """
     reasons: list[str] = []
-    if type(expected_mode) is not str or expected_mode not in ("head-follow", "dance"):
-        reasons.append("expected_mode must be head-follow or dance")
+    if type(expected_mode) is not str or expected_mode not in EXPECTED_MODE_TO_EVIDENCE:
+        reasons.append("expected_mode must be head-follow, follow (controller alias), or dance")
+        evidence_mode = None
+    else:
+        evidence_mode = EXPECTED_MODE_TO_EVIDENCE[expected_mode]
     for label, value in (("expected_duration_ns", expected_duration_ns),
                          ("max_sample_gap_ns", max_sample_gap_ns)):
         if not _integer(value, 1):
@@ -117,7 +128,7 @@ def validate_report(
             reasons.append(f"{label} does not match the expected asset")
     if report["mode"] not in ("head-follow", "dance"):
         reasons.append("mode must be head-follow or dance")
-    elif report["mode"] != expected_mode:
+    elif report["mode"] != evidence_mode:
         reasons.append("mode does not match expected_mode")
     if report["completed"] is not True:
         reasons.append("completed must be true")
@@ -194,7 +205,8 @@ def validate_report(
             reasons.append(f"{label} does not match the supplied samples")
     if _finite_number(min_clearance) and derived["min_clearance_m"] < min_clearance:
         reasons.append("minimum clearance is below the operator threshold")
-    if _finite_number(max_head_error) and derived["max_head_error_deg"] > max_head_error:
+    if (report["mode"] == "head-follow" and _finite_number(max_head_error)
+            and derived["max_head_error_deg"] > max_head_error):
         reasons.append("maximum head error exceeds the operator threshold")
     if derived["collision_count"]:
         reasons.append("collision observed in the replay")
@@ -237,9 +249,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-clearance", type=float, required=True,
                         help="operator-required minimum clearance in metres")
     parser.add_argument("--max-head-error", type=float, required=True,
-                        help="operator-allowed maximum head aiming error in degrees")
-    parser.add_argument("--expected-mode", choices=("head-follow", "dance"), required=True,
-                        help="mode required for this planned replay")
+                        help="maximum head aiming error in degrees; enforced only for head-follow")
+    parser.add_argument("--expected-mode", choices=tuple(EXPECTED_MODE_TO_EVIDENCE), required=True,
+                        help="planned evidence mode; controller 'follow' maps to 'head-follow'")
     parser.add_argument("--expected-duration-ns", type=int, required=True,
                         help="required last-minus-first sample duration in nanoseconds")
     parser.add_argument("--max-sample-gap-ns", type=int, required=True,
