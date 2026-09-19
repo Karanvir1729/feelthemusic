@@ -32,10 +32,11 @@ python -m pytest tests/analysis
 Measured, on synthetic kick/snare tracks only (Windows dev machine, Python 3.11, `numpy<2`):
 
 - Across 12 tracks (90, 120, 128 and 140 BPM, 3 seeds each, with a lead-in): every kick and snare found, no kick fired on a snare, no snare on a kick, no extra events. Event times within about 3 ms of the truth on average (they were 13 ms early before `ONSET_LATENCY_S`).
-- Kick versus snare uses the per-bin rise in linear magnitude, 40-120 Hz against 2-8 kHz. Snare alone reached at most 3.1, kick with snare at least 16, kick alone at least 5000. `KICK_DOMINANCE = 8`.
+- Kick versus snare uses the per-bin rise in linear magnitude in 40-120 Hz against the larger of the snare body (180-450 Hz) and 2-8 kHz. Kick alone reached at least 12, kick landing with a snare at least 2.85, snare alone at most 1.94. `KICK_DOMINANCE = 2.4` sits in that gap, **a thin margin** (about 14% to 20% each side). The first version compared only against 2-8 kHz and fired a kick on 52 of 144 hits of a dark, shell-heavy synthetic snare (Nyquist measured 49 of 144); this rule fires on 0 of 144 for shell modes at 180 and 240 Hz.
+- **Known limitation, measured:** a snare whose fundamental is inside the kick band (about 120 Hz) fires a kick on 94 to 133 of 144 hits. Frequency alone cannot tell it from a kick; it needs the real track or a duration/decay feature. It is pinned as an expected failure in the tests.
 - Peak Python-heap memory for a 240 s track: about 26 MB (it was about 1 GB before chunking). Analysis time on this machine: about 1.6 s.
 
 Guessed, not measured:
 
-- **Nothing has run on real music.** A real snare is not white noise, so its kick-versus-snare ratio will be higher than 3.1 and `KICK_DOMINANCE` will need tuning on the demo track. The tempo prior (centred near 110 BPM) and the peak-picking thresholds are also untuned.
+- **Nothing has run on real music.** The snares here are synthetic: white-noise bursts and a family of dark, shell-heavy ones that I built after review. A real snare is different again, so `KICK_DOMINANCE` will need tuning on the demo track (task #7). The tempo prior (centred near 110 BPM) and the peak-picking thresholds are also untuned.
 - Runtime and memory on the Pi 5.

@@ -34,14 +34,17 @@ CHUNK_FRAMES = 512
 ONSET_LATENCY_S = 0.013
 
 # A low-band hit is a kick only if the per-bin rise in 40-120 Hz magnitude beats
-# the per-bin rise in 2-8 kHz magnitude by this factor. White noise (a snare)
-# raises every bin equally; a kick raises only the low bins. Linear magnitude,
-# not log: log flux saturates on a loud kick and cannot tell a kick that lands
-# with a snare from a snare alone.
-# Measured on synthetic tracks: snare alone <= 3.1, kick + snare >= 16,
-# kick alone >= 5000. NOT measured on real music, where snares are not white
-# noise and the ratio for a snare alone will be higher; tune on the demo track.
-KICK_DOMINANCE = 8.0
+# the per-bin rise in BOTH the snare body (180-450 Hz, where a snare's shell
+# lives) and 2-8 kHz by this factor. A snare raises the body band about as much
+# as the low band (its shell), a kick raises almost only the low bins. Linear
+# magnitude, not log: log flux saturates on a loud kick. Comparing against 2-8
+# kHz alone fails on dark, shell-heavy snares, which have little energy up there.
+# Measured on synthetic tracks (see tests/analysis): kick alone >= 12, kick and
+# snare together >= 2.85, snare alone <= 1.94, so 2.4 sits in the gap, but the
+# margin is thin. A snare whose fundamental is inside the kick band (120 Hz)
+# reaches 5.3 and WILL fire a kick: that is ambiguous by frequency alone. NOT
+# measured on real music; tune on the demo track.
+KICK_DOMINANCE = 2.4
 # A snare that lands with a kick must still carry this share of the loudest
 # broadband noise flux, or it is the kick's own click.
 SNARE_MIN_NOISE_WHEN_WITH_KICK = 0.3
@@ -249,9 +252,9 @@ def analyze(samples: np.ndarray, sample_rate: int) -> Analysis:
     snare_flux = body_flux + noise_flux
 
     low_rise = _rise(kick / widths[1])
-    high_rise = _rise(snare_noise / widths[3])
+    reference_rise = np.maximum(_rise(snare_body / widths[2]), _rise(snare_noise / widths[3]))
     kick_frames = [f for f in _pick_peaks(kick_flux, hop_s, min_gap_s=0.12)
-                   if _peak_max(low_rise, f) >= KICK_DOMINANCE * _peak_max(high_rise, f)]
+                   if _peak_max(low_rise, f) >= KICK_DOMINANCE * _peak_max(reference_rise, f)]
     noise_top = float(noise_flux.max()) if len(noise_flux) else 0.0
     snare_frames = []
     for f in _pick_peaks(snare_flux, hop_s, min_gap_s=0.12):

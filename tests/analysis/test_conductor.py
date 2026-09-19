@@ -42,6 +42,23 @@ def _snare_noise(rng):
             + 0.5 * np.sin(2 * np.pi * 220 * tt) * np.exp(-tt * 25))
 
 
+def _snare_dark(shell_hz=180.0, cutoff_hz=1200.0):
+    """A dark, shell-heavy snare: low-passed noise plus strong shell modes. Little
+    energy above a few kHz, so a kick/snare rule that only compares against
+    2-8 kHz cannot tell it from a kick."""
+    def make(rng):
+        n = int(0.22 * SR)
+        tt = np.arange(n) / SR
+        a = 1 - np.exp(-2 * np.pi * cutoff_hz / SR)
+        kernel = a * (1 - a) ** np.arange(int(8 / a))            # one-pole low-pass
+        noise = np.convolve(rng.standard_normal(n), kernel)[:n]
+        noise = noise / (np.std(noise) + 1e-9) * np.exp(-tt * 22) * 0.6
+        shell = (np.sin(2 * np.pi * shell_hz * tt)
+                 + 0.5 * np.sin(2 * np.pi * shell_hz * 1.83 * tt)) * np.exp(-tt * 16)
+        return noise + shell
+    return make
+
+
 def synth(bpm=BPM, bars=BARS, seed=0, kick=_kick_sine, snare=_snare_tonal,
           kick_beats=None, snare_beats=None, tail=0.0):
     """Kick and snare hits over a noise floor. Returns (audio, kick_t, snare_t).
@@ -131,6 +148,60 @@ def test_snares_do_not_fire_kicks(bpm):
     assert match(snares, snare_t, 0.05) == len(snare_t)
     assert match(snares, kick_t, 0.05) == 0, "snare events fired on kick hits"
     assert len(snares) <= len(snare_t) + 1
+
+
+@pytest.mark.parametrize("shell_hz,cutoff_hz", [(180, 600), (180, 1200), (180, 2500), (240, 1200)])
+def test_dark_snares_do_not_fire_kicks(shell_hz, cutoff_hz):
+    """Regression: with the kick rule comparing only against 2-8 kHz, a dark
+    shell-heavy snare fired a kick on 9-114 of 144 hits (52/144 at 180 Hz shell,
+    1.2 kHz low-pass)."""
+    fired = hits = 0
+    for bpm in (90.0, 120.0, 140.0):
+        for seed in (0, 1, 2):
+            x, kick_t, snare_t = synth(bpm=bpm, seed=seed, kick=_kick_sweep,
+                                       snare=_snare_dark(shell_hz, cutoff_hz),
+                                       kick_beats=lambda b: b % 2 == 0,
+                                       snare_beats=lambda b: b % 2 == 1)
+            a = analyze(x, SR)
+            fired += match(times(a, "kick"), snare_t, 0.05)
+            hits += len(snare_t)
+            assert match(times(a, "kick"), kick_t, 0.05) == len(kick_t)
+            assert match(times(a, "snare"), snare_t, 0.05) == len(snare_t)
+    assert fired <= 0.02 * hits, f"kick fired on {fired}/{hits} dark snare hits"
+
+
+@pytest.mark.parametrize("shell_hz,cutoff_hz", [(180, 600), (180, 1200), (240, 1200)])
+def test_kick_landing_with_a_dark_snare_is_still_found(shell_hz, cutoff_hz):
+    """The stricter kick rule must not lose the kick when a shell-heavy snare
+    hits at the same instant. The margin here is thin (see KICK_DOMINANCE), so
+    allow a couple of misses out of 96 but not a systematic loss."""
+    found = total = 0
+    for bpm in (90.0, 120.0, 140.0):
+        for seed in (0, 1, 2):
+            x, kick_t, snare_t = synth(bpm=bpm, seed=seed, kick=_kick_sweep,
+                                       snare=_snare_dark(shell_hz, cutoff_hz),
+                                       kick_beats=lambda b: True,
+                                       snare_beats=lambda b: b % 2 == 1)
+            a = analyze(x, SR)
+            found += match(times(a, "kick"), kick_t, 0.05)
+            total += len(kick_t)
+            assert match(times(a, "snare"), snare_t, 0.05) == len(snare_t)
+    assert found >= total - 3, f"lost {total - found} of {total} kicks under a dark snare"
+
+
+@pytest.mark.xfail(reason="Known limitation: a snare whose fundamental sits inside the kick band "
+                          "(~120 Hz) is ambiguous by frequency alone and fires a kick. Measured "
+                          "94-133 of 144 hits. Needs the real track, or a duration/decay feature.",
+                   strict=False)
+def test_snare_with_fundamental_in_kick_band_does_not_fire_kicks():
+    fired = hits = 0
+    for seed in (0, 1, 2):
+        x, kick_t, snare_t = synth(seed=seed, kick=_kick_sweep, snare=_snare_dark(120, 1200),
+                                   kick_beats=lambda b: b % 2 == 0,
+                                   snare_beats=lambda b: b % 2 == 1)
+        fired += match(times(analyze(x, SR), "kick"), snare_t, 0.05)
+        hits += len(snare_t)
+    assert fired <= 0.02 * hits
 
 
 @pytest.mark.parametrize("make", [synth, alternating])
