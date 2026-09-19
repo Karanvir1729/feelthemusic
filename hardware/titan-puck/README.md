@@ -6,8 +6,15 @@ A flat puck for the TITAN Core board and three DRAKE motors (LF, LFi, MF). Worn 
 Closed body: **56 x 49 x 28.7 mm**. The base is 74 x 79 mm including the strap flanges and the cable tongue.
 
 > **Before you print:** a photo of the real motors suggests their black end caps are about 10.4 mm across, wider
-> than the 9.9 mm cradles in this version. See [FIT.md](FIT.md). Print `motor_gauge.stl` first (about 10
-> minutes), then set `CRADLE_D` and `MOTOR_Z` in `model.py` from what it shows.
+> than the 9.9 mm cradles of the 9.5 mm datasheet size (the files in this folder). See [FIT.md](FIT.md).
+>
+> 1. Print `motor_gauge.stl` (about 10 minutes). Push a motor's black end cap into the holes, smallest first.
+> 2. Note the first hole it enters with a light push, for example 10.5.
+> 3. Print `variants/d10.5/puck_plate.3mf` (or whichever hole it was). Every variant (9.6, 9.9, 10.2, 10.5, 10.8
+>    and 11.1) is checked: 0 mm³ against the board and the motors, and the same outside size (56 x 49 x 28.7 mm).
+>
+> Each variant has a cradle 0.4 mm bigger than its hole, with the motor axis and the snap rim raised to match. Its
+> `check.txt` has the numbers. Any other size: `MOTOR_D=10.3 python model.py` (then `plate.py`, `check.py`).
 
 ## Print (Bambu P1P, PLA)
 
@@ -87,6 +94,8 @@ caps look about 10.4 mm across, which the 9.9 mm cradles would not take. Measure
 | `check.py` | interference, clearance and printability checks |
 | `gen_keepout.py`, `titan_core_keepout.json/.stl` | board keep-out envelope, used in place of the vendor STEP (not redistributable) |
 | `gauge.py`, `motor_gauge.stl` | motor diameter and length gauge |
+| `variants.py`, `variants/d*/` | one checked print plate per gauge hole (`MOTOR_D` = the hole) |
+| `plate.py` | puts base and lid on one Bambu plate (`puck_plate.3mf`) |
 | `render.py`, `renders/` | MuJoCo renders |
 | `BRIEF.md` | requirements and the facts they came from |
 | `FIT.md`, `photos/` | fit analysis against the real parts |

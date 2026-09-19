@@ -1,0 +1,29 @@
+base 74.0 x 79.3 x 27.1 mm; lid 56.0 x 49.2 x 12.5 mm
+closed puck body 56.0 x 49.2 x 28.7 mm (plus strap flanges and cable tongue)
+board: keep-out envelope (959 boxes)
+motors checked as 9.9 mm x 23.0 mm
+== interference volumes (mm3), must be 0
+  board x base: 0.000
+  LF x base: 0.000
+  MF x base: 0.000
+  LFi x base: 0.000
+  USB plug overmould x base: 0.004
+  board x lid: 0.000
+  LF x lid: 0.000
+  MF x lid: 0.000
+  LFi x lid: 0.000
+  USB plug overmould x lid: 0.000
+  lid x base (closed): 0.000
+  board x motors: 0.000
+== minimum clearances (mm)
+  board to base: 0.00   board to lid: 0.34
+  LF: to base 0.20, to lid 11.98, to board 4.01
+  MF: to base 0.20, to lid 11.98, to board 17.44
+  LFi: to base 0.00, to lid 1.26, to board 10.53
+  LFi top end to lid underside: 2.50
+  LF/MF ends to -Y wall: 5.64; MF end to LFi sleeve: 4.53
+== printability
+  puck_base.stl: watertight True, volume 18.9 cm3 (~23 g PLA solid), size [74.  79.2 27.1], bed contact 3191 mm2, down-facing >45deg not on bed: 300 mm2
+     where (z bands above bed): [(0.0, 138.0), (2.0, 0.0), (6.0, 0.0), (10.0, 38.0), (14.0, 28.0), (20.0, 96.0)]
+  puck_lid_print.stl: watertight True, volume 5.0 cm3 (~6 g PLA solid), size [56.  49.3 12.5], bed contact 2132 mm2, down-facing >45deg not on bed: 94 mm2
+     where (z bands above bed): [(0.0, 75.0), (2.0, 19.0), (6.0, 0.0), (10.0, 0.0), (14.0, 0.0), (20.0, 0.0)]

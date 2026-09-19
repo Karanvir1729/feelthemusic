@@ -12,6 +12,8 @@ Measured from the vendor STEP (height maps, 0.5 mm cells):
 - USB-C receptacle X 9.0..17.5, 0..3.2 above the PCB top; terminal blocks Y 14.5..20.5, 8.5 tall, wires enter
   from the USB side; snap-off line at Y ~13.7.
 """
+import os
+
 import cadquery as cq
 
 # ---------------------------------------------------------------- parameters
@@ -25,13 +27,15 @@ LID = 1.6
 LIP_H, LIP_T, LIP_GAP = 4.0, 1.2, 0.2
 BOARD_CL = 0.3
 
-MOTOR_D, MOTOR_L = 9.5, 23.0
-CRADLE_D = 9.9          # 0.2 mm radial clearance; snap opening narrower than the motor
-SADDLE_H = 7.0
+MOTOR_D = float(os.environ.get("MOTOR_D", 9.5))   # widest part (the end caps): measure with motor_gauge.stl
+MOTOR_L = 23.0
+CRADLE_D = MOTOR_D + 0.4   # 0.2 mm radial clearance; snap opening narrower than the motor
+SADDLE_H = MOTOR_D / 2 + 2.25   # rim 1.85 mm above the axis: the snap opening is about 0.3 mm narrower than the motor
 LF = (29.0, 4.0)        # axis X, start Y (lying, axis along Y)
 MF = (42.6, 4.0)
 LFI = (35.8, 36.0)      # standing, axis vertical
-MOTOR_Z = 5.15          # axis height for the lying motors (0.4 mm above the floor)
+MOTOR_Z = MOTOR_D / 2 + 0.4   # axis height for the lying motors (0.4 mm above the floor)
+LFI_SLEEVE_H = 12.0     # the wire slot runs its full height; the leads leave at mid-length (8 to 14 mm up)
 
 IX0, IX1 = -1.5, 50.5   # interior (0.5 mm extra at the board side for the small inner corner radius)
 IY0, IY1 = -1.34 - BOARD_CL, 43.31 + BOARD_CL
@@ -73,13 +77,14 @@ def base():
     # lying motors: two snap saddles each, 2.5 mm in from each end
     for mx, my in (LF, MF):
         for s0 in (my + 2.5, my + 15.5):
-            saddle = rbox(mx - 6.15, mx + 6.15, s0, s0 + 5.0, 0, SADDLE_H, 0.5)
+            sw = CRADLE_D / 2 + 1.2
+            saddle = rbox(mx - sw, mx + sw, s0, s0 + 5.0, 0, SADDLE_H, 0.5)
             cut = cq.Workplane("XZ").center(mx, MOTOR_Z).circle(CRADLE_D / 2).extrude(-6).translate((0, s0 - 0.5, 0))
             b = b.union(saddle.cut(cut))
     # standing LFi: sleeve with a wire slot facing -X
     lx, ly = LFI
-    sleeve = cq.Workplane("XY").circle(CRADLE_D / 2 + 1.6).circle(CRADLE_D / 2).extrude(12.0).translate((lx, ly, 0))
-    sleeve = sleeve.cut(rbox(lx - 8, lx - 3, ly - 1.6, ly + 1.6, 0, 13, 0.1))
+    sleeve = cq.Workplane("XY").circle(CRADLE_D / 2 + 1.6).circle(CRADLE_D / 2).extrude(LFI_SLEEVE_H).translate((lx, ly, 0))
+    sleeve = sleeve.cut(rbox(lx - 9, lx - 3, ly - 1.6, ly + 1.6, 0, LFI_SLEEVE_H + 1, 0.1))
     b = b.union(sleeve)
 
     # raised labels on the floor, clear of every motor: in front of the lying ones, vertical beside the LFi sleeve

@@ -39,7 +39,7 @@ cradles. The cradles are sized alike, so a wrong guess only means swapping two m
 | Lying cradles (LF, MF) | snap saddles, bore 9.9 mm, 2.5 to 7.5 mm and 15.5 to 20.5 mm along the motor (on the end caps) | 50 mm³ overlap per motor (`MOTOR_D=10.4 python check.py`) | **does not fit** if the caps are over 9.9 mm |
 | Lying motor axis height | 5.15 mm (4.75 radius + 0.4 air) | cap bottom 0.05 mm into the floor | **raise** to cap radius + 0.4 |
 | LFi standing sleeve | bore 9.9 mm, 12 mm tall | 86 mm³ overlap | **does not fit** if the caps are over 9.9 mm |
-| LFi lead slot | 3.2 mm wide, floor to 13 mm | lead ring at about 9 to 14 mm up | fits; make it reach 15 mm for margin |
+| LFi lead slot | 3.2 mm wide, the full 12 mm height of the sleeve | lead ring at about 8 to 14 mm up | fits: the leads leave through the slot or over the top of the sleeve |
 | Gap between saddles | 7.5 to 15.5 mm along the motor | lead ring at about 9 to 14 mm | fits: the leads leave between the saddles |
 | Air at motor ends | at least 2 mm | length 22.8 mm | fits |
 | Inside height | 25.5 mm (LFi 23 + 2.5 air) | | fits |
