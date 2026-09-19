@@ -32,7 +32,7 @@ Status: first version, 2026-09-19. Facts marked **measured** were observed on ou
 ## The sync contract
 
 1. One conductor owns the clock. Every client estimates its offset to that clock with repeated request/response probes and keeps the minimum-delay samples.
-2. **Everything is scheduled on the shared clock, never on packet arrival.** Each event carries a presentation time `pts`. Clients fire it at `pts + L`, where `L` is a fixed room latency budget. Start at 300 ms. Do not minimise `L`: a fixed budget is what lets phone, actuator and light land together.
+2. **Everything is scheduled on the shared clock, never on packet arrival.** Each event carries a presentation time that **already includes** `L`, a fixed room latency budget (300 ms). Clients fire it at that time converted to their own clock (`masterTs - offset - trim`) and never add `L` again: measured on the real conductor, the event's `masterTs` was about 267 ms ahead of its arrival, matching its `leadUs`, so adding `L` a second time fires about 300 ms late (`docs/ftm-protocol.md`; golden-byte tests in the lamp client). Audio anchors carry a presentation time that needs its own latency conversion. Do not minimise `L`: a fixed budget is what lets phone, actuator and light land together.
 3. Each client subtracts its own output latency as a trim (Taptic Engine, TitanCore, LED path and servo start-up all differ). Trims are measured, per device.
 4. Clients use a monotonic clock. The lamp has no battery-backed clock, so its wall time is wrong offline and may jump when a network appears.
 5. Transport is UDP on the local network, with discovery that works with no internet and a manual address as fallback.
