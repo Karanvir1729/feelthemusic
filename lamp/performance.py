@@ -109,22 +109,37 @@ class MusicPerformer:
         # Minimum delay offset filter (keeps lowest delay samples)
         self._offset_samples: list[tuple[float, float]] = []  # (delay, offset)
 
-    def update_clock_offset(self, conductor_pts: float, local_receive_time: Optional[float] = None) -> None:
-        """Update monotonic clock offset (conductor - local)."""
+    def update_clock_offset(
+        self,
+        conductor_pts: float,
+        local_receive_time: Optional[float] = None,
+        delay_s: Optional[float] = None,
+    ) -> None:
+        """Update monotonic clock offset using minimum-delay filter.
+
+        Filters out high-jitter / queuing-delay samples, retaining the lowest-delay
+        measurements which provide the tightest bounds on true clock offset.
+        """
         if not math.isfinite(conductor_pts):
             return
-        pts_s = (conductor_pts / 1e9) if conductor_pts > 1e11 else conductor_pts
+        pts_s = (conductor_pts / 1e9) if conductor_pts > 1e8 else conductor_pts
         rec = self.clock() if local_receive_time is None else local_receive_time
         offset = pts_s - rec
+        delay = delay_s if (delay_s is not None and math.isfinite(delay_s) and delay_s >= 0.0) else abs(rec - pts_s)
+
         with self._lock:
-            self.clock_offset = offset
-            self._offset_samples.append((0.005, offset))
+            self._offset_samples.append((delay, offset))
             if len(self._offset_samples) > 16:
                 self._offset_samples.pop(0)
+            # Pick median offset of the lowest-delay samples
+            best_samples = sorted(self._offset_samples, key=lambda x: x[0])[:min(4, len(self._offset_samples))]
+            offsets = sorted(s[1] for s in best_samples)
+            self.clock_offset = offsets[len(offsets) // 2]
+            self.stats.clock_sync_count += 1
 
     def conductor_to_local_time(self, pts: float) -> float:
         """Map conductor pts to local monotonic target fire time with room budget and trim."""
-        pts_s = (pts / 1e9) if pts > 1e11 else pts
+        pts_s = (pts / 1e9) if pts > 1e8 else pts
         with self._lock:
             offset = self.clock_offset
         # pts_local = pts_s - offset
@@ -174,8 +189,15 @@ class MusicPerformer:
         if rendered is None:
             return False
         rgb_255, lum = rendered
+
+        # Live mode gate: avoid sending real network HTTP requests in dry-run mode
+        if not self.config.live_mode and type(self.sdk).__name__ == "LampSDK":
+            logger.debug("[DRY RUN] Would glow: %s (live_mode=False)", rgb_255)
+            return True
+
         try:
-            self.sdk.glow(rgb_255, luminance=lum)
+            # rgb_255 already has luminance scaled and limited; pass without extra luminance parameter
+            self.sdk.glow(rgb_255)
             return True
         except SDKError as exc:
             self.stats.last_error = f"glow failed: {exc}"
@@ -183,9 +205,6 @@ class MusicPerformer:
 
     def set_mode(self, mode: str) -> None:
         """Set operation mode: 'follow', 'dance', 'light_only', 'off'."""
-        valid_modes = {"follow", "dance", "light_only", "off"}
-        if mode not in valid_modes:
-            raise ValueError(f"Invalid mode {mode}. Expected one of: {valid_modes}")
         with self._lock:
             self.config.mode = mode
             logger.info("Performer mode set to: %s", mode)
@@ -203,6 +222,14 @@ class MusicPerformer:
                 return False
             dur = duration_s or self.config.default_gesture_duration_s
             self._gesture_busy_until = now + dur + self.config.gesture_cooldown_s
+
+        # Live mode gate: avoid sending real physical moves in dry-run mode
+        if not self.config.live_mode and type(self.sdk).__name__ == "LampSDK":
+            logger.info("[DRY RUN] Would play gesture '%s' (live_mode=False)", gesture_name)
+            with self._lock:
+                self.stats.gestures_played += 1
+                self._refusal_count = 0
+            return True
 
         try:
             self.sdk.play_animation(gesture_name)
@@ -354,6 +381,22 @@ class PerformanceBridge(threading.Thread):
         self.pinned_sender: Optional[str] = allow_ip
         self.running = threading.Event()
         self.sock: Optional[socket.socket] = None
+        self._event_queue: queue.Queue = queue.Queue(maxsize=256)
+        self._worker_thread: Optional[threading.Thread] = None
+
+    def _worker_loop(self) -> None:
+        """Worker thread loop consuming events from the queue so UDP receive loop is never blocked."""
+        while self.running.is_set():
+            try:
+                packet = self._event_queue.get(timeout=0.1)
+                if packet is None:
+                    break
+                self.performer.handle_event(packet)
+                self._event_queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as exc:
+                self.performer.stats.last_error = f"worker error: {exc}"
 
     def run(self) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -364,6 +407,13 @@ class PerformanceBridge(threading.Thread):
         except OSError as exc:
             self.performer.stats.last_error = f"UDP bind failed: {exc}"
             return
+
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop,
+            daemon=True,
+            name="lamp-performer-worker",
+        )
+        self._worker_thread.start()
 
         while self.running.is_set():
             try:
@@ -380,7 +430,7 @@ class PerformanceBridge(threading.Thread):
 
                 packet = json.loads(data.decode("utf-8"))
                 if isinstance(packet, dict):
-                    # Answer wire probes for clock synchronization
+                    # Answer wire probes immediately without queue delay
                     if packet.get("t") == "probe":
                         t1_ns = int(time.monotonic() * 1e9)
                         t0_ns = int(packet.get("t0", 0))
@@ -395,7 +445,18 @@ class PerformanceBridge(threading.Thread):
                         }
                         self.sock.sendto(json.dumps(reply).encode("utf-8"), addr)
                         continue
-                    self.performer.handle_event(packet)
+
+                    # Handle probe replies immediately for fast clock sync
+                    if packet.get("t") == "probe_reply" or packet.get("kind") == "clock_sync":
+                        self.performer.handle_event(packet)
+                        continue
+
+                    # Musical events are queued for execution on worker thread
+                    try:
+                        self._event_queue.put_nowait(packet)
+                    except queue.Full:
+                        with self.performer._lock:
+                            self.performer.stats.events_dropped_late += 1
             except (socket.timeout, json.JSONDecodeError, UnicodeDecodeError):
                 continue
             except Exception as exc:
@@ -406,3 +467,9 @@ class PerformanceBridge(threading.Thread):
 
     def stop(self) -> None:
         self.running.clear()
+        try:
+            self._event_queue.put_nowait(None)
+        except queue.Full:
+            pass
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=0.5)

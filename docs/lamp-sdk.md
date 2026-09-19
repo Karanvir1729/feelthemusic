@@ -60,16 +60,17 @@ Music events arrive timestamped from the conductor. The performer coordinates:
 ### Safe Light Glow
 - Driven by the continuous 50–100 Hz `bass_envelope` (0.0 to 1.0) and onsets.
 - **WCAG 2.2 Flash Limiting**: AGENTS.md Rule 6 mandates that light must be safe to look at (no more than 3 flashes per second, no saturated red flashes). Every RGB candidate passes through `safety.flash.FlashLimiter` before being dispatched to `sdk.glow()`.
+- **Single Scaling**: `FlashLimiter` limits linear chromaticity scaled by luminance; the resulting safe RGB is passed directly to `sdk.glow(rgb_255)` without a redundant second `luminance` multiplier.
 - **Hold Guarantee**: If a transition would violate the flash budget or red threshold, the limiter holds the previous safe state rather than causing abrupt dark cuts.
-- **Update Rate**: The SDK `light.glow` call fades over ~0.6 s. The renderer throttles updates (default 150 ms interval) and applies a deadband (0.05) to avoid flooding the HTTP gateway.
+- **Update Rate**: The SDK `light.glow` call fades over ~0.6 s. The renderer throttles updates (`min_glow_interval_s = 0.030`) and applies a deadband (0.05) to avoid flooding the HTTP gateway.
 
-### Musical Gestures
-- The vendor runtime includes 33 expressive animations (`nod`, `curious`, `excited`, `dance`, `happy`, `look_up`, etc.).
-- `PerformanceConfig` defines mappings:
-  - High-energy drops / climaxes -> `excited` or `dance`
-  - Build sections -> `curious` or `look_up`
-  - Strong beats / onsets -> subtle `nod`
-- **Cooldown**: Animations take 2–3 seconds to execute. A strict gesture cooldown (`gesture_cooldown_s = 3.0`) ensures the robot is never spammed or jerky.
+### Mode Arbitration & Gestures
+- Four distinct operation modes are supported (`follow`, `dance`, `light_only`, `off`):
+  - **`follow` (default)**: Head tracking remains locked on the listener. Whole-arm musical gestures are strictly suppressed (`gestures_skipped += 1`) so that arm movements never interrupt head orientation or fight with vision tracking. Tactile visual pulses continue via `FlashLimiter`.
+  - **`dance`**: Musical gestures fire on major drops, kicks, and section climaxes.
+  - **`light_only`**: Light pulses follow the music; no arm movement.
+  - **`off`**: All performance activity is silenced.
+- **Cooldown & Latch-Off**: A strict gesture cooldown (`gesture_cooldown_s = 3.0`) ensures the robot is never spammed. Any HTTP 409 or 3 consecutive refusals permanently latches off the performer (`latched_off = True`).
 
 ---
 
@@ -78,9 +79,12 @@ Music events arrive timestamped from the conductor. The performer coordinates:
 In accordance with AGENTS.md Rule 5:
 1. Every event carries a presentation timestamp `pts` from the conductor's monotonic clock.
 2. Target fire time is scheduled as:
-   $$\text{target\_time} = \text{pts} + L - \text{trim} + \text{clock\_offset}$$
-   where $L = 300\text{ ms}$ (room latency budget) and $\text{trim} = 50\text{ ms}$ (lamp output trim).
-3. **Late Events**: Late events exceeding `max_drop_late_s` (80 ms) are dropped and recorded in `stats.events_dropped_late`, never fired late.
+   $$\text{target\_time} = (\text{pts} - \text{clock\_offset}) + L - \text{trim}$$
+   where $L = 300\text{ ms}$ (room latency budget) and $\text{trim} = 30\text{ ms}$ (lamp output latency trim).
+3. Clock synchronization uses a minimum-delay filter over UDP `probe` and `probe_reply` exchanges, filtering out network queue dispersion to compute optimal offset estimates.
+4. **Late and Far-Future Events**:
+   - Late events exceeding `max_drop_late_s` (80 ms) are dropped and recorded in `stats.events_dropped_late`, never fired late.
+   - Far-future events (> lookahead window of 350 ms) are dropped rather than fired prematurely.
 
 ---
 
