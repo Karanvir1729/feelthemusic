@@ -24,12 +24,17 @@ from pathlib import Path
 
 import numpy as np
 
-from sdk import LampSDK, SDKError, read_token
+from sdk import LampSDK, SDKError, read_token, refusal_policy
 from spatial import DEFAULT_ROBOT_DIR, JOINTS, LampModel
 
 LISTEN_PORT = 47400
 DEFAULT_REPLY_PORT = 47401
 DEFAULT_TTL_MS = 1500
+# A real target packet is about 200 bytes and a flat object. Anything bigger or deeper is hostile.
+# The limits keep json.loads away from deep nesting, which raises RecursionError (a RuntimeError,
+# not a ValueError) and used to kill the bridge from one datagram.
+MAX_DATAGRAM_BYTES = 2048
+MAX_NESTING = 4
 THERMAL_PATH = "/sys/class/thermal/thermal_zone0/temp"
 
 
@@ -141,6 +146,40 @@ def normalize_packet(packet: object, max_step: float) -> dict | None:
     return packet
 
 
+def _nesting_depth(data: bytes) -> int:
+    """Deepest [ / { nesting in a JSON byte string, ignoring brackets inside strings."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for byte in data:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:            # backslash
+                escaped = True
+            elif byte == 0x22:            # closing quote
+                in_string = False
+        elif byte == 0x22:
+            in_string = True
+        elif byte in (0x5B, 0x7B):        # [ {
+            depth += 1
+            deepest = max(deepest, depth)
+        elif byte in (0x5D, 0x7D):        # ] }
+            depth = max(0, depth - 1)
+    return deepest
+
+
+def parse_datagram(data: bytes, max_step: float) -> dict | None:
+    """One untrusted UDP datagram to a validated packet, or None. Never raises."""
+    if not isinstance(data, (bytes, bytearray)) or not data or len(data) > MAX_DATAGRAM_BYTES:
+        return None
+    if _nesting_depth(bytes(data)) > MAX_NESTING:
+        return None
+    try:
+        return normalize_packet(json.loads(bytes(data).decode("utf-8")), max_step)
+    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
+        return None
+
+
 def terminal_motion_failure(exc: SDKError) -> bool:
     """Whether it is unsafe for the bridge to send another move after this error."""
     return exc.status == 409 or exc.code in {"lost_track", "timeout", "not_reached", "canceled"}
@@ -246,6 +285,7 @@ def main() -> None:
     last_telemetry = 0.0
     measured = {j: float(info["positions"][j]) for j in JOINTS}
     moves = 0
+    failures, retry_after, exit_code = 0, 0.0, 0
     previous_idle = None if args.keep_idle else idle_off(sdk.base)
     threading.Thread(target=thermal_watch, name="pi-thermal-guard", daemon=True).start()
 
@@ -260,8 +300,8 @@ def main() -> None:
                 telemetry(sock, latest_addr, latest_reply_port, "thermal_cutoff", temp)
                 print(f"THERMAL STOP: Pi {temp:.1f} C >= {args.cutoff_c:.1f} C", flush=True); break
             try:
-                data, addr = sock.recvfrom(8192)
-                packet = normalize_packet(json.loads(data.decode("utf-8")), args.max_step)
+                data, addr = sock.recvfrom(MAX_DATAGRAM_BYTES + 1)   # +1 so an oversize datagram is detectable
+                packet = parse_datagram(data, args.max_step)
                 if packet is None:
                     continue
                 peer_ip = str(addr[0])
@@ -289,6 +329,7 @@ def main() -> None:
             except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
                 continue
 
+            now = time.monotonic()      # re-read: recvfrom blocks for up to its 0.25 s timeout
             if now - last_telemetry >= 1.0:
                 telemetry(sock, latest_addr, latest_reply_port, "tracking" if latest else "waiting", temp,
                           moves=moves, reached=False if latest else True)
@@ -297,7 +338,7 @@ def main() -> None:
                 continue
             if now - last_packet_at > float(latest.get("ttlMs", 1500)) / 1000.0:
                 latest = None; continue
-            if now - last_move < args.min_interval:
+            if now - last_move < args.min_interval or now < retry_after:
                 continue
 
             try:
@@ -313,7 +354,7 @@ def main() -> None:
                     print(f"target rejected by local workspace checks ({kind})", flush=True); latest = None; continue
                 telemetry(sock, latest_addr, latest_reply_port, "moving", temp, reached=False)
                 action = sdk.move(step)
-                measured = step; last_move = time.monotonic(); moves += 1
+                measured = step; last_move = time.monotonic(); moves += 1; failures = 0
                 telemetry(sock, latest_addr, latest_reply_port, "reached", temperature_c(), reached=True,
                           action=action.get("action_id"))
                 print(f"move {moves}: {kind}, Pi {temp:.1f} C, aim error {report['aim_error_deg']:.1f} deg", flush=True)
@@ -323,14 +364,24 @@ def main() -> None:
                 latest = None
                 if terminal_motion_failure(exc):
                     print("stopping after an uncertain or incomplete move; no move will be sent on top of it", flush=True)
+                    exit_code = 2
                     stop.set()
                 else:
-                    time.sleep(0.5)
+                    failures += 1
+                    stop_now, wait_s, why = refusal_policy(exc, failures)
+                    if stop_now:
+                        print(f"stopping: {why}", flush=True)
+                        exit_code = 2
+                        stop.set()
+                    else:
+                        retry_after = time.monotonic() + wait_s
+                        print(f"the lamp refused the move; no new move for {wait_s:.0f} s", flush=True)
     finally:
         sock.close()
         idle_restore(sdk.base, previous_idle)
         print(f"stopped; {moves} SDK moves completed", flush=True)
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

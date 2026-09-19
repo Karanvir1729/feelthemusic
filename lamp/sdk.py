@@ -30,6 +30,28 @@ class SDKError(RuntimeError):
         self.status, self.code, self.message, self.details = status, code, message, details or {}
 
 
+REFUSAL_LIMIT = 3          # refusals in a row before a person has to look at it
+RETRY_WAIT_S = 10.0        # never hammer: a collision refusal will be refused again
+RATE_LIMIT_WAIT_S = 60.0   # a rate limit needs a full window
+
+
+def refusal_policy(exc: SDKError, consecutive: int) -> tuple[bool, float, str]:
+    """What to do after the lamp REFUSED a move (nothing moved): (stop, seconds_to_wait, reason).
+
+    `consecutive` counts this refusal. This is the policy follow.py applies inline, kept here as a
+    function so the two scripts cannot drift: stop at once when torque is off or the SDK session
+    limit is hit, stop after REFUSAL_LIMIT refusals in a row, otherwise back off (longer for a rate
+    limit). A 409 (accepted, then not completed) is a different case and is always terminal.
+    """
+    text = exc.message.lower()
+    if "torque" in text or "too many active sdk sessions" in text:
+        return True, 0.0, "torque is off, or too many SDK sessions this hour"
+    if consecutive >= REFUSAL_LIMIT:
+        return True, 0.0, f"{REFUSAL_LIMIT} refusals in a row; this needs a person to look at it"
+    limited = exc.status == 429 or exc.code == "rate_limited"
+    return False, RATE_LIMIT_WAIT_S if limited else RETRY_WAIT_S, "refused"
+
+
 def read_token(env_file: Path = DEFAULT_ENV_FILE) -> str:
     token = os.environ.get("LELAMP_SDK_TOKEN", "").strip()
     if not token and Path(env_file).exists():
