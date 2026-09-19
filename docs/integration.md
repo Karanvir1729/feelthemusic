@@ -26,7 +26,8 @@ Decision by Franklin: build on the **existing Mac FTM Conductor**, not the Pytho
 | The single lamp controller (modes, arbitration, safety latch) | `lamp/performance.py` (gemini38's lane) | PR #7, being fixed |
 | Head tracking | `lamp/follow.py`, `lamp/spatial.py` (existing) | needs the supervised gate |
 | Light | `safety/flash.py` between the envelope and `light.glow` | PR #5 |
-| Simulation | `simulation/`, `tests/simulation/` (codexfranklin's lane) | blocked: needs the Unity file from the Pi |
+| Simulator foundation: scheduler, mode arbitration, replay and evidence | task #16, `simulation/`, `tests/simulation/` (codexfranklin's lane) | **actionable now**; does not need the Unity file |
+| Unity scene import and scene tests | task #18, depends on #16 | blocked: needs the Unity file from the Pi |
 | Haptics | TitanCore driver, `titancore/` (PR #11), on the **Mac** | fake port only |
 
 ## 3. The clock and scheduling
