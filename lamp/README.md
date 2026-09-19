@@ -26,4 +26,35 @@ The SDK needs `LELAMP_SDK_TOKEN` in the runtime's environment (the lamp's own `.
 
 ## What is here
 
-Landing by PR from `karanclaude/lamp-sdk`: a small client for the whole SDK surface, and a follower that keeps the lamp facing a hand or a face using SDK moves only.
+| File | What it does |
+|---|---|
+| `sdk.py` | Client for the vendor SDK gateway, and nothing else. One session reused across runs, renewed on 401. Every `move()` names all five joints (a joint left out is held at its *measured* position, which on a loaded joint is a little lower every time). No `stop()`: the vendor's `system.stop` releases torque and the head falls. |
+| `spatial.py` | Where the head is, where the target is, where the lamp may go. Forward kinematics from the vendor's URDF and this lamp's servo calibration (both read at run time on the lamp, never copied here), a workspace check (table, the lamp's own base, joint limits), picture position + apparent size to a 3D point, and an inverse-kinematics `look_at()` over yaw, base pitch, elbow and head tilt. |
+| `follow.py` | Look, locate in 3D, decide, make ONE safe move. A face first, a hand if there is no face. Thermally aware, runs below the vendor runtime's priority. |
+| `tests/test_spatial.py` | 11 checks, including that the model's predicted picture motion matches what was measured on the real lamp. Needs the vendor robot description: `FTM_ROBOT_DIR=.../static/robots/lelamp_v1/pi5_feetech_r1`. |
+
+```bash
+cd ~/feelthemusic-lamp
+.venv/bin/python -m pytest tests -q
+.venv/bin/python follow.py --dry-run          # sees, locates and decides, never moves
+.venv/bin/python follow.py                    # Ctrl-C to stop; the idle animation is restored on exit
+```
+
+## How it behaves
+
+It does not chase. Every SDK move is planned by the lamp: at least 2 s, eased, self-collision checked, settled. So the lamp looks, thinks and turns, every few seconds. Between moves it holds still, because the follower switches the lamp's looped idle animation off while it runs (the SDK resumes idle after each move, and the head would drift off the person) and restores it on exit. That switch is the lamp dashboard's own idle selector, the single non-SDK call in this directory; it commands no motion.
+
+A move is sent only if our own workspace check passes; the lamp's planner then checks it again. If an accepted move does not complete, the follower relaxes the servos with a planned hold at the measured pose, never fights a cancel from whoever owns the lamp, and stops after three failures in a row.
+
+## Measured on the lamp (2026-09-19, Raspberry Pi 5, vendor runtime running)
+
+| What | Value |
+|---|---|
+| MediaPipe 0.10.18, 640x480, nothing in view (worst case) | hands 45.7 ms/frame (22 fps), face 22.6 ms/frame (44 fps) |
+| Follower CPU, dry run, 40 s | about 28% of one core of four |
+| SoC temperature, same run | 63.9 C before, 66.1 C peak, fan step 2 of 4, `get_throttled` 0x0 |
+| Follower thermal policy | half frame rate at 70 C, pause vision at 77 C |
+| Camera, from a calibration nudge at neutral | yaw +7.4 units moves the picture -0.083 widths, head tilt +8.1 units moves it -0.085 heights (about 61 x 44 degrees field of view) |
+| Spatial model vs those measurements | within 15% on both axes using the servo calibration; the vendor's single approximate joint scale overstates head tilt by about 1.5x |
+
+Not measured yet: a live SDK move from this follower, end-to-end latency from a person moving to the lamp facing them, behaviour offline.
