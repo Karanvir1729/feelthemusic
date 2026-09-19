@@ -1,0 +1,8 @@
+# Everything the test suite imports, pinned. Install: pip install -r requirements-dev.txt
+# Mirrors the lamp's environment (AGENTS.md): numpy<2 and opencv 4.11.0.86. The headless OpenCV wheel is used
+# here because CI has no display; the lamp uses opencv-contrib-python 4.11.0.86 (same version).
+# mediapipe is imported lazily by lamp/follow.py and is not needed to collect or run the tests.
+pytest==8.3.5
+numpy==1.26.4
+requests==2.32.3
+opencv-contrib-python-headless==4.11.0.86
