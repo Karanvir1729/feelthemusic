@@ -9,9 +9,10 @@
   move    ONE motion.move through the SDK. The lamp's runtime plans it: reachability, self-collision,
           velocity limit, eased, at least 2 s, waits until the arm has settled.
 
-So the lamp does not chase. It looks, thinks, and turns, every few seconds, like a person would. That
-is the price of using only the vendor's safe motion path, and it is the right price for a robot that
-is not ours. Every move names all five joints, so gravity-loaded joints are never left to sag.
+Only one planned move is active at a time. After settlement, fresh detections accumulate during
+the minimum observation interval instead of waiting to start vision until that interval ends.
+The vendor's two-second motion floor still applies; this is not a fast pursuit controller.
+Every move names all five joints, so gravity-loaded joints are never left to sag.
 
 On the lamp:
   ~/feelthemusic-lamp/.venv/bin/python follow.py --target hand --dry-run     # never moves
@@ -46,7 +47,8 @@ class Camera(threading.Thread):
         super().__init__(daemon=True)
         self.sdk, self.fps = sdk, fps
         self._lock = threading.Lock()
-        self._frame, self._stamp = None, 0.0
+        self._frame: np.ndarray | None = None
+        self._stamp = 0.0
         self.error, self.running = "", True
 
     def run(self) -> None:
@@ -205,7 +207,8 @@ class Thermal:
     PATH = "/sys/class/thermal/thermal_zone0/temp"
 
     def __init__(self, warm_c: float, hot_c: float):
-        self.warm_c, self.hot_c, self.peak_c, self._last, self._temp = warm_c, hot_c, 0.0, 0.0, None
+        self.warm_c, self.hot_c, self.peak_c, self._last = warm_c, hot_c, 0.0, 0.0
+        self._temp: float | None = None
 
     def celsius(self) -> float | None:
         if time.monotonic() - self._last > 2.0:
@@ -248,7 +251,9 @@ def main() -> None:
                     help="do not move for aim errors smaller than this (the planner itself accepts ~7 deg of elbow settle error)")
     ap.add_argument("--prefer-distance", type=float, default=0.45, help="viewing distance to aim for, metres")
     ap.add_argument("--fps", type=float, default=10)
-    ap.add_argument("--min-interval", type=float, default=1.5, help="seconds to watch between moves")
+    ap.add_argument("--min-interval", type=float, default=0.3,
+                    help="minimum seconds after a move before another may start (floor 0.3); "
+                         "fresh sightings accumulate during this interval")
     ap.add_argument("--max-step", type=float, default=20.0,
                     help="largest joint change per move, in units. Every SDK move takes about 2 s whatever its size, "
                          "so an unlimited move can peak near 70 deg/s. A big turn becomes several calm steps.")
@@ -258,6 +263,8 @@ def main() -> None:
                     help="leave the lamp's idle animation playing between our moves (the head will drift off target)")
     ap.add_argument("--robot-dir", default=str(DEFAULT_ROBOT_DIR))
     args = ap.parse_args()
+    if not math.isfinite(args.min_interval) or args.min_interval < 0:
+        ap.error("--min-interval must be a finite, nonnegative number")
 
     model = LampModel(args.robot_dir)
     try:
@@ -286,8 +293,9 @@ def main() -> None:
           flush=True)
     cam = Camera(sdk, args.fps)
     cam.start()
-    trackers = [(name, cls()) for name, cls in (("face", FaceTracker), ("hand", HandTracker))
-                if args.target in ("auto", name)]
+    trackers: list[tuple[str, FaceTracker | HandTracker | ObjectTracker]] = [
+        (name, cls()) for name, cls in (("face", FaceTracker), ("hand", HandTracker))
+        if args.target in ("auto", name)]
     if args.target in ("auto", "object"):
         if ObjectTracker.MODEL.exists():
             ObjectTracker.NOMINAL = model.fx / 1.0                # a cut-off box is treated as about 1 m away
@@ -324,7 +332,9 @@ def main() -> None:
     idle_was = None if (args.dry_run or args.keep_idle) else idle_off(sdk.base)
 
     started = last_note = time.monotonic()
-    fresh_after, sightings, moves, refused, failures = time.monotonic(), [], 0, 0, 0
+    next_move_at = started
+    sightings: list[tuple] = []
+    fresh_after, moves, refused, failures = time.monotonic(), 0, 0, 0
     while not stop.is_set() and (not args.seconds or time.monotonic() - started < args.seconds):
         if thermal.too_hot():
             print("Thermal cutoff: ending tracking.", flush=True)
@@ -341,8 +351,9 @@ def main() -> None:
         for name, tracker in trackers:                 # a face wins over a hand
             seen = tracker.locate(frame)
             if seen is not None:
-                kind = tracker.label if name == "object" else name
+                kind = tracker.label if isinstance(tracker, ObjectTracker) else name
                 break
+        vision_ms = 1000 * (time.monotonic() - now)
         sightings = recent_sightings(sightings, now)
         if seen is None:
             if now - last_note > 2:
@@ -353,14 +364,18 @@ def main() -> None:
         sightings.append((now, *seen, kind))
         if len(sightings) < 3:                 # decide on a steady sighting, not on one frame
             continue
+        if now < next_move_at:                # keep seeing while command admission is paused
+            continue
         x, y, size = (float(np.median([s[k] for s in sightings])) for k in (1, 2, 3))
 
+        joints_started = time.monotonic()
         try:
             measured = {j: float(v) for j, v in sdk.joints()["positions"].items() if j in JOINTS}
         except (SDKError, OSError) as exc:
             print(f"cannot read joints: {exc}", flush=True)
             time.sleep(1)
             continue
+        planning_started = time.monotonic()
         near, far = {"face": (0.30, 2.5), "hand": (0.20, 1.2)}.get(kind, (0.30, 3.0))
         distance = float(np.clip(model.distance_from_size(size, 1.0), near, far))   # size = picture widths per metre
         point = model.target_point(measured, (x, y), distance)
@@ -417,7 +432,17 @@ def main() -> None:
         try:
             if stop.is_set():
                 break
-            action = sdk.move(pose)
+            action_started = time.monotonic()
+            # Camera stamps record local receipt, not exposure. Do not claim this
+            # measures camera capture latency or physical target-to-motion delay.
+            print(f"     timing received_frame_age_ms={1000 * (action_started - stamp):.0f} "
+                  f"vision_ms={vision_ms:.0f} "
+                  f"joint_read_ms={1000 * (planning_started - joints_started):.0f} "
+                  f"planning_ms={1000 * (action_started - planning_started):.0f}", flush=True)
+            try:
+                action = sdk.move(pose)
+            finally:
+                print(f"     timing sdk_wait_ms={1000 * (time.monotonic() - action_started):.0f}", flush=True)
             moves += 1
             took = action.get("result", {}).get("duration_seconds")
             print(f"     moved{f' in {took:.1f} s' if took else ''}, planner collision-checked", flush=True)
@@ -449,7 +474,11 @@ def main() -> None:
             # never hammer: a collision refusal will be refused again, a rate limit needs a full window
             stop.wait(60.0 if exc.status == 429 or exc.code == "rate_limited" else 10.0)
         sightings.clear()
-        fresh_after = time.monotonic() + max(0.3, args.min_interval)   # settle, then watch before deciding again
+        # Reject every pre-settlement frame, but collect fresh sightings NOW.
+        # The admission gate and three-sighting check both have to pass before
+        # the next move; their waits overlap rather than adding together.
+        fresh_after = time.monotonic()
+        next_move_at = fresh_after + max(0.3, args.min_interval)
 
     cam.running = False
     stop.set()
