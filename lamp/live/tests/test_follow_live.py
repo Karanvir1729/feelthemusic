@@ -8,6 +8,7 @@ import sys
 import threading
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 
@@ -687,6 +688,310 @@ def test_face_tracker_rejects_spatial_jumps_using_previous_box_width(face_lock, 
         assert result is not None and result[0] == pytest.approx(0.25 + jump)
     else:
         assert result is None
+
+
+def phone_frame(*rectangles, color=(160, 60, 245)):
+    """Synthetic screen-sized pink rectangles, never camera captures or device identifiers."""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    for center, size, angle in rectangles:
+        corners = cv2.boxPoints((center, size, angle)).astype(np.int32)
+        cv2.fillConvexPoly(frame, corners, color)
+    return frame
+
+
+@pytest.mark.parametrize("angle", [0, 25, 60, 90, 135])
+def test_phone_tracker_locates_pink_screen_and_uses_its_narrow_span(angle):
+    frame = phone_frame(((210, 190), (60, 130), angle))
+    seen = F.PhoneTracker().locate(frame)
+    assert seen is not None
+    assert seen[0] == pytest.approx(210 / 640, abs=0.003)
+    assert seen[1] == pytest.approx(190 / 480, abs=0.003)
+    # Rotating the same screen must not imply that it moved much closer to the camera.
+    assert seen[2] == pytest.approx((60 / 640) / 0.075, rel=0.04)
+
+
+@pytest.mark.parametrize("color", [(0, 0, 255), (0, 128, 255), (0, 255, 0),
+                                  (255, 0, 0), (200, 200, 220), (40, 10, 60)])
+def test_phone_tracker_rejects_nonpink_unsaturated_or_dark_regions(color):
+    assert F.PhoneTracker().locate(phone_frame(((320, 240), (60, 130), 0), color=color)) is None
+
+
+@pytest.mark.parametrize("center,size", [((320, 240), (4, 9)), ((320, 240), (90, 90)),
+                                       ((320, 240), (10, 150)), ((10, 240), (60, 130)),
+                                       ((320, 30), (60, 130)), ((320, 240), (430, 600))])
+def test_phone_tracker_rejects_small_wrong_shape_or_clipped_regions(center, size):
+    assert F.PhoneTracker().locate(phone_frame((center, size, 0))) is None
+
+
+def test_phone_tracker_rejects_blank_irregular_and_hollow_regions():
+    tracker = F.PhoneTracker()
+    frame = phone_frame()
+    assert tracker.locate(frame) is None
+    cv2.fillPoly(frame, [np.array([[200, 150], [280, 150], [230, 290]], dtype=np.int32)], (160, 60, 245))
+    assert tracker.locate(frame) is None
+    frame = phone_frame(((320, 240), (70, 150), 0))
+    cv2.rectangle(frame, (288, 168), (352, 312), (0, 0, 0), -1)
+    assert tracker.locate(frame) is None
+
+
+def test_phone_tracker_accepts_screen_with_small_nonpink_interface_regions():
+    frame = phone_frame(((320, 240), (80, 170), 0))
+    for y in (190, 220, 250):
+        cv2.rectangle(frame, (293, y), (345, y + 7), (255, 255, 255), -1)
+    seen = F.PhoneTracker().locate(frame)
+    assert seen is not None and seen[:2] == pytest.approx((0.5, 0.5))
+
+
+def test_phone_tracker_keeps_screen_lock_then_reacquires_after_loss():
+    clock = FakeClock()
+    tracker = F.PhoneTracker(clock=clock)
+    first = ((160, 240), (60, 130), 0)
+    other = ((460, 240), (50, 110), 0)
+    assert tracker.locate(phone_frame(first, other))[0] == pytest.approx(0.25)
+    clock.sleep(0.1)
+    larger_other = ((460, 240), (85, 180), 20)
+    assert tracker.locate(phone_frame(first, larger_other))[0] == pytest.approx(0.25)
+    clock.sleep(0.1)
+    assert tracker.locate(phone_frame(larger_other)) is None
+    clock.sleep(0.3)
+    assert tracker.locate(phone_frame()) is None
+    clock.sleep(0.21)
+    assert tracker.locate(phone_frame(larger_other))[0] == pytest.approx(460 / 640, abs=0.003)
+
+
+def test_phone_lock_retains_incumbent_across_a_blocking_planner_observation_gap():
+    clock = FakeClock()
+    tracker = F.PhoneTracker(clock=clock)
+    first = ((160, 240), (60, 130), 0)
+    assert tracker.locate(phone_frame(first, ((460, 240), (50, 110), 0)))[0] == pytest.approx(0.25)
+    clock.sleep(3.5)                                   # SDK move plus the configured observation pause
+    assert tracker.locate(phone_frame(first, ((460, 240), (85, 180), 0)))[0] == pytest.approx(0.25)
+
+
+def test_phone_geometric_lock_reacquires_when_a_camera_turn_moves_every_box_outside_its_gate():
+    clock = FakeClock()
+    tracker = F.PhoneTracker(clock=clock)
+    assert tracker.locate(phone_frame(((160, 240), (60, 130), 0)))[0] == pytest.approx(0.25)
+    clock.sleep(3.5)
+    # There is no camera-motion compensation or screen identity: both boxes are now outside
+    # the previous gate, so expired geometric lock acquires the larger candidate afresh.
+    changed_view = phone_frame(((320, 240), (60, 130), 0), ((460, 240), (85, 180), 0))
+    assert tracker.locate(changed_view)[0] == pytest.approx(460 / 640, abs=0.003)
+
+
+@pytest.mark.parametrize("loss", ["missing", "expired"])
+def test_phone_following_requires_three_fresh_sightings_after_loss(one_axis_follow, loss):
+    follower, clock, motors, camera = one_axis_follow
+    follower.cfg.target = "phone"
+    follower.trackers = [("phone", FakeFaces())]
+    run_cycles(follower, clock, 2)
+    if loss == "missing":
+        camera.point[1] = -1.0
+        run_cycles(follower, clock, 1)
+        camera.point[1] = 1.0
+    else:
+        clock.sleep(0.61)
+    run_cycles(follower, clock, 2)
+    assert motors.posts == []
+    run_cycles(follower, clock, 1)
+    assert len(motors.posts) == 1
+    assert motors.posts[0][1]["base_yaw"] > 0
+
+
+def test_phone_tracker_drives_existing_controller_with_synthetic_frames_and_dry_run(one_axis_follow):
+    follower, clock, motors, _ = one_axis_follow
+    follower.cfg.target, follower.cfg.dry_run = "phone", True
+    follower.trackers = [("phone", F.PhoneTracker(clock=clock))]
+    frame = phone_frame(((480, 240), (60, 130), 0))
+    follower.frames = SimpleNamespace(newest=lambda **kwargs: (frame, clock() - 0.03))
+    run_cycles(follower, clock, 3)
+    assert follower.aim_error > follower.cfg.deadband_deg
+    assert follower.state == "tracking"
+    assert follower.commands == 0 and motors.posts == []
+    frame[:] = 0
+    run_cycles(follower, clock, 1)
+    assert follower.sightings == [] and follower.aim_error is None
+
+
+@pytest.mark.parametrize("slow_stage", ["receipt", "detector", "joints", "ik"])
+def test_phone_live_rejects_expired_receipt_before_any_command(one_axis_follow, monkeypatch, slow_stage):
+    follower, clock, motors, camera = one_axis_follow
+    follower.cfg.target = "phone"
+    tracker = FakeFaces()
+    follower.trackers = [("phone", tracker)]
+    if slow_stage == "receipt":
+        newest = camera.newest
+
+        def expired_frame(**kwargs):
+            frame, stamp = newest(**kwargs)
+            return frame, stamp - 0.61
+
+        monkeypatch.setattr(camera, "newest", expired_frame)
+    else:
+        obj, method = {"detector": (tracker, "locate"), "joints": (motors, "positions"),
+                       "ik": (follower.model, "look_at")}[slow_stage]
+        original = getattr(obj, method)
+
+        def slow(*args, **kwargs):
+            result = original(*args, **kwargs)
+            clock.sleep(0.7)
+            return result
+
+        monkeypatch.setattr(obj, method, slow)
+    run_cycles(follower, clock, 3)
+    assert motors.posts == []
+    assert follower.sightings == [] and follower.aim_error is None and not follower.correcting
+
+
+@pytest.fixture
+def sdk_phone_main(monkeypatch):
+    """Run the real CLI orchestration with camera pixels and fake SDK, time and robot model."""
+    clock, model = FakeClock(), OneAxisModel()
+    model.scale_source, model.table_z = "offline fixture", 0.0
+
+    class Frames:
+        error, running = "", True
+
+        def __init__(self):
+            self.script, self.read_count = [], 0
+            self.stamp_age = 0.0
+
+        def start(self):
+            pass
+
+        def newest(self, after, timeout=2.0):
+            clock.t = max(clock(), after + 0.03)
+            delay, frame = self.script.pop(0) if self.script else (0.12, None)
+            clock.sleep(delay)
+            self.read_count += 1
+            return frame, clock() - self.stamp_age
+
+    camera = Frames()
+
+    class SDK:
+        def __init__(self):
+            self.moves, self.measured, self.read_delay = [], pose(), 0.0
+
+        def capabilities(self):
+            return {}
+
+        def joints(self):
+            if camera.read_count:
+                clock.sleep(self.read_delay)
+            return {"self_collision_check": True, "units": "normalized_m100_100",
+                    "joints": dict(self.measured), "positions": dict(self.measured)}
+
+        def move(self, commanded):
+            self.moves.append((camera.read_count, dict(commanded)))
+            self.measured = dict(commanded)
+            clock.sleep(2.0)
+            return {"result": {"duration_seconds": 2.0}}
+
+    def no_raw_idle(*args):
+        raise AssertionError("default SDK mode must not mutate the raw idle route")
+
+    sdk = SDK()
+    phone_tracker = F.PhoneTracker(clock=clock)
+    monkeypatch.setattr(F.time, "monotonic", clock)
+    monkeypatch.setattr(F, "PhoneTracker", lambda: phone_tracker)
+    monkeypatch.setattr(F, "LampModel", lambda path: model)
+    monkeypatch.setattr(F, "LampSDK", lambda token: sdk)
+    monkeypatch.setattr(F, "read_token", lambda: "offline-fixture")
+    monkeypatch.setattr(F, "Camera", lambda sdk, fps: camera)
+    thermal = NoThermal()
+    thermal.peak_c = 0.0
+    monkeypatch.setattr(F, "Thermal", lambda warm, hot: thermal)
+    monkeypatch.setattr(F, "describe", lambda model, measured: "offline pose")
+    monkeypatch.setattr(F.os, "nice", lambda value: None)
+    monkeypatch.setattr(F.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(F, "idle_off", no_raw_idle)
+    monkeypatch.setattr(F, "idle_restore", no_raw_idle)
+
+    def run(script, *flags):
+        camera.script = [(0.12, frame) for frame in script]
+        monkeypatch.setattr(sys, "argv", ["follow.py", "--target", "phone", "--seconds", "10", *flags])
+        F.main()
+
+    return run, sdk, camera, phone_tracker, model, clock
+
+
+def test_sdk_phone_cli_dry_run_uses_pixels_without_moving_or_raw_idle(sdk_phone_main, capsys):
+    run, sdk, camera, _, _, _ = sdk_phone_main
+    frame = phone_frame(((160, 240), (60, 130), 0))
+    run([frame] * 3, "--dry-run")
+    output = capsys.readouterr().out
+    assert "watching for a bright pink phone screen (dry run: will not move)" in output
+    assert "phone " in output and "base_yaw +0->-22" in output
+    assert sdk.moves == [] and not camera.running
+
+
+def test_sdk_phone_cli_keeps_incumbent_after_blocking_move_and_larger_distractor(sdk_phone_main):
+    run, sdk, _, _, _, _ = sdk_phone_main
+    first = ((160, 240), (60, 130), 0)
+    before = phone_frame(first, ((460, 240), (50, 110), 0))
+    after = phone_frame(first, ((460, 240), (85, 180), 0))
+    run([before] * 3 + [after] * 3)
+    assert len(sdk.moves) == 2
+    assert sdk.moves[0][0] == 3 and sdk.moves[1][0] == 6
+    assert sdk.moves[1][1]["base_yaw"] < sdk.moves[0][1]["base_yaw"] < 0
+
+
+def test_sdk_phone_cli_clears_sightings_after_a_blank_frame(sdk_phone_main):
+    run, sdk, _, _, _, _ = sdk_phone_main
+    frame = phone_frame(((160, 240), (60, 130), 0))
+    run([frame] * 2 + [phone_frame()] + [frame] * 3)
+    assert len(sdk.moves) == 1
+    assert sdk.moves[0][0] == 6
+
+
+@pytest.mark.parametrize("slow_stage", ["receipt", "joints", "ik"])
+def test_sdk_phone_cli_rejects_expired_receipt_before_move(sdk_phone_main, monkeypatch, slow_stage):
+    run, sdk, camera, _, model, clock = sdk_phone_main
+    if slow_stage == "receipt":
+        camera.stamp_age = 0.7
+    elif slow_stage == "joints":
+        sdk.read_delay = 0.7
+    else:
+        look_at = model.look_at
+
+        def slow_ik(*args, **kwargs):
+            clock.sleep(0.7)
+            return look_at(*args, **kwargs)
+
+        monkeypatch.setattr(model, "look_at", slow_ik)
+    run([phone_frame(((160, 240), (60, 130), 0))] * 3)
+    assert sdk.moves == []
+
+
+def test_sdk_phone_cli_slow_detection_cannot_count_as_a_fresh_sighting(sdk_phone_main, monkeypatch):
+    run, sdk, _, tracker, _, clock = sdk_phone_main
+    locate, calls = tracker.locate, 0
+
+    def slow_third(frame):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            clock.sleep(0.7)
+        return locate(frame)
+
+    monkeypatch.setattr(tracker, "locate", slow_third)
+    run([phone_frame(((160, 240), (60, 130), 0))] * 6)
+    assert len(sdk.moves) == 1
+    assert sdk.moves[0][0] == 6                       # three fresh observations after the expired one
+
+
+@needs_model
+def test_phone_off_center_target_uses_existing_safe_whole_arm_base_rotation(model):
+    seen = F.PhoneTracker().locate(phone_frame(((140, 240), (60, 130), 0)))
+    assert seen is not None
+    x, y, size = seen
+    measured = dict(model.neutral)
+    distance = float(np.clip(model.distance_from_size(size, 1.0), 0.3, 3.0))
+    target = model.target_point(measured, (x, y), distance)
+    goal, _ = model.look_at(target, prefer_distance=0.45)
+    assert abs(goal["base_yaw"] - measured["base_yaw"]) > 1.0
+    assert model.aim_error_deg(goal, target) < model.aim_error_deg(measured, target)
+    assert not model.problems(goal)
 
 
 @needs_model

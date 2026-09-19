@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make the LeLamp turn to face a hand (or a face). Runs on the lamp, needs no internet.
+"""Make the LeLamp turn toward a face, hand, or pink phone screen. Runs on the lamp, needs no internet.
 
   see     camera frames from the lamp's SDK gateway, MediaPipe finds the palm or the face
   locate  picture position + apparent size -> a 3D point in the lamp's base frame (spatial.py)
@@ -38,6 +38,8 @@ from spatial import DEFAULT_ROBOT_DIR, JOINTS, LampModel
 PALM_WIDTH_M = 0.08      # index knuckle to little-finger knuckle, adult
 PALM_LENGTH_M = 0.10     # wrist to middle knuckle
 FACE_WIDTH_M = 0.15
+PHONE_WIDTH_M = 0.075   # approximate visible screen width, not a calibrated distance measurement
+FRAME_TARGETS = ("face", "hand", "phone")  # sampled every frame, unlike the throttled object detector
 
 
 class Camera(threading.Thread):
@@ -98,39 +100,36 @@ class HandTracker:
         return x, y, max(span(5, 17) / PALM_WIDTH_M, span(0, 9) / PALM_LENGTH_M)
 
 
-class FaceTracker:
-    """Keep the geometrically associated face, not whichever box is largest this frame.
+class TargetLock:
+    """One geometric association rule for face boxes and pink screen rectangles.
 
-    This is box continuity, not person recognition. A brief loss holds the old selection but
-    returns no target; after expiry the follower must confirm the newly selected face afresh.
+    This is box continuity, not identity recognition or camera-motion compensation. Brief loss
+    returns no target; after expiry the follower must confirm a new selection afresh. The span
+    is measured in picture widths. A large camera turn can require target reacquisition.
     """
     LOST_S = 0.6
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
-        import mediapipe as mp
-        self.faces = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.35)
         self.clock = clock
         self._locked: tuple[float, float, float] | None = None
         self._last_seen = float("-inf")
+        self._missed = False
 
-    def locate(self, bgr: np.ndarray) -> tuple[float, float, float] | None:
-        result = self.faces.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+    def select(self, boxes: list[tuple[float, float, float]], aspect: float) -> tuple[float, float, float] | None:
         now = self.clock()
-        boxes: list[tuple[float, float, float]] = []
-        for detection in result.detections or []:
-            box = detection.location_data.relative_bounding_box
-            candidate = (box.xmin + box.width / 2, box.ymin + box.height / 2, box.width)
-            if all(math.isfinite(v) for v in candidate) and 0 < candidate[2] <= 1:
-                boxes.append(candidate)
-        if now - self._last_seen >= self.LOST_S:
+        boxes = [b for b in boxes if all(math.isfinite(v) for v in b) and 0 < b[2] <= 1]
+        expired = now - self._last_seen >= self.LOST_S
+        # A blocking SDK move creates an observation gap, not an observed loss. Prefer a
+        # qualifying incumbent on the next frame; actual missing detections still expire.
+        if expired and self._missed:
             self._locked = None
         if not boxes:
+            self._missed = True
             return None
         if self._locked is None:
             selected = max(boxes, key=lambda b: b[2])
         else:
             x, y, width = self._locked
-            aspect = bgr.shape[0] / bgr.shape[1]
 
             def separation(box):
                 return math.hypot(box[0] - x, (box[1] - y) * aspect)
@@ -138,10 +137,78 @@ class FaceTracker:
             nearby = [b for b in boxes if 0.5 <= b[2] / width <= 2.0
                       and separation(b) <= max(0.06, 0.75 * width)]
             if not nearby:
-                return None
-            selected = min(nearby, key=separation)
+                self._missed = True
+                if not expired:
+                    return None
+                selected = max(boxes, key=lambda b: b[2])
+            else:
+                selected = min(nearby, key=separation)
         self._locked, self._last_seen = selected, now
+        self._missed = False
+        return selected
+
+
+def phone_frame_is_fresh(stamp: float, now: float) -> bool:
+    """Bound processing delay from camera receipt, not unobservable sensor exposure time."""
+    return math.isfinite(stamp) and 0 <= now - stamp <= TargetLock.LOST_S
+
+
+class FaceTracker:
+    """Keep the geometrically associated face, not whichever box is largest this frame."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        import mediapipe as mp
+        self.faces = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.35)
+        self.lock = TargetLock(clock=clock)
+
+    def locate(self, bgr: np.ndarray) -> tuple[float, float, float] | None:
+        result = self.faces.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+        boxes = [d.location_data.relative_bounding_box for d in result.detections or []]
+        selected = self.lock.select([(b.xmin + b.width / 2, b.ymin + b.height / 2, b.width) for b in boxes],
+                                    bgr.shape[0] / bgr.shape[1])
+        if selected is None:
+            return None
         return selected[0], selected[1], selected[2] / FACE_WIDTH_M
+
+
+class PhoneTracker:
+    """Follow a bright pink, screen-shaped region without models or runtime downloads.
+
+    A color/shape match is not proof of a phone, identity, handedness, or beat accuracy. Rotated
+    screens use their narrow span for rough distance; clipped screens are not distance samples.
+    """
+    HSV_LOW = (140, 90, 90)
+    HSV_HIGH = (175, 255, 255)
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self.lock = TargetLock(clock=clock)
+
+    def locate(self, bgr: np.ndarray) -> tuple[float, float, float] | None:
+        height, width = bgr.shape[:2]
+        mask = cv2.inRange(cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV), self.HSV_LOW, self.HSV_HIGH)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        boxes: list[tuple[float, float, float]] = []
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            if x <= 1 or y <= 1 or x + w >= width - 1 or y + h >= height - 1:
+                continue
+            center, sides, _ = cv2.minAreaRect(contour)
+            narrow, long = sorted(sides)
+            area = narrow * long
+            if narrow < 8 or not 0.002 <= area / (width * height) <= 0.6 or not 1.35 <= long / narrow <= 2.8:
+                continue
+            corners = cv2.approxPolyDP(contour, 0.03 * cv2.arcLength(contour, True), True)
+            if len(corners) != 4 or not cv2.isContourConvex(corners) or cv2.contourArea(contour) / area < 0.75:
+                continue
+            region = np.zeros((h, w), dtype=np.uint8)
+            cv2.drawContours(region, [contour - np.array([x, y])], -1, 255, cv2.FILLED)
+            if cv2.countNonZero(cv2.bitwise_and(mask[y:y + h, x:x + w], region)) / area < 0.65:
+                continue
+            boxes.append((center[0] / width, center[1] / height, narrow / width))
+        selected = self.lock.select(boxes, height / width)
+        if selected is None:
+            return None
+        return selected[0], selected[1], selected[2] / PHONE_WIDTH_M
 
 
 class ObjectTracker:
@@ -527,12 +594,23 @@ class LiveFollower:
         self.settles = 0
         self.stalled_noted, self.parked_noted = False, False
         self.correcting = False
-        self.confirmed_face_until = float("-inf")
+        self.confirmed_target_until = float("-inf")
 
     # -------------------------------------------------------------- helpers
     def _pose_at(self, stamp: float) -> dict:
         """The measured pose nearest the time a frame was taken (the arm moves between frames)."""
         return min(self.history, key=lambda h: abs(h[0] - stamp))[1]
+
+    def _require_fresh_phone(self, stamp: float) -> bool:
+        now = self.clock()
+        if self.cfg.target != "phone" or phone_frame_is_fresh(stamp, now):
+            return True
+        self.sightings.clear()
+        self.correcting, self.aim_error = False, None
+        self.confirmed_target_until = float("-inf")
+        self.fresh_after, self.state = now, "holding"
+        self.out("holding   phone frame receipt expired; waiting for three fresh sightings", flush=True)
+        return False
 
     def _settle(self, measured: dict, why: str) -> bool:
         """One POST of the MEASURED pose (all five joints), so the runtime's servo goal becomes where
@@ -621,6 +699,8 @@ class LiveFollower:
         gap = self.thermal.frame_gap(tracking=bool(self.sightings)) if self.thermal is not None else 0.1
         self.fresh_after = max(stamp, now - 0.02 + gap)
         frame_age_ms = (now - stamp) * 1000
+        if not self._require_fresh_phone(stamp):
+            return self.state
 
         try:
             measured, torque = self.link.positions()
@@ -655,6 +735,8 @@ class LiveFollower:
                 break
         detect_ms = (time.perf_counter() - t0) * 1000
         now = self.clock()                               # inference time counts against sighting freshness
+        if not self._require_fresh_phone(stamp):
+            return self.state
         if kind == "face" and seen is not None:
             self.face_hold_until = now + self.FACE_STICKY_S
 
@@ -664,26 +746,26 @@ class LiveFollower:
             near, far = {"face": (0.30, 2.5), "hand": (0.20, 1.2)}.get(kind, (0.30, 3.0))
             distance = float(np.clip(model.distance_from_size(size, 1.0), near, far))
             point = model.target_point(self._pose_at(stamp), (x, y), distance)
-            window = 0.6 if kind in ("face", "hand") else 3.5
+            window = TargetLock.LOST_S if kind in FRAME_TARGETS else 3.5
             self.sightings = [s for s in self.sightings if now - s[0] < window and s[2] == kind]
             if not self.sightings:
                 self.correcting, self.aim_error = False, None
-            self.sightings.append((now, point, kind))
+            self.sightings.append((stamp if kind == "phone" else now, point, kind))
             del self.sightings[:-self.SIGHTINGS]
-            # A confirmed face can blink out for a frame without starting a search. Only the
+            # A confirmed face or phone can blink out for a frame without starting a search. Only the
             # associated incumbent survives this grace period; new selection follows lock expiry.
-            if kind == "face" and now < self.confirmed_face_until:
+            if kind in ("face", "phone") and now < self.confirmed_target_until:
                 self.search.saw(now, measured["base_yaw"])
-                self.confirmed_face_until = now + FaceTracker.LOST_S
+                self.confirmed_target_until = now + TargetLock.LOST_S
             if len(self.sightings) < self.SIGHTINGS:      # decide on a steady sighting, not on one frame
                 self.state, note = "tracking", f"{kind} sighted ({len(self.sightings)}/{self.SIGHTINGS})"
             else:
                 self.search.saw(now, measured["base_yaw"])
                 self.parked_noted = False
-                if kind == "face":
-                    self.confirmed_face_until = now + FaceTracker.LOST_S
+                if kind in ("face", "phone"):
+                    self.confirmed_target_until = now + TargetLock.LOST_S
                 target = np.median(np.array([s[1] for s in self.sightings]), axis=0)
-                self.aim_error = model.aim_error_deg(measured, target)
+                self.aim_error = float(model.aim_error_deg(measured, target))
                 # Once centered, small detector noise must not restart a correction. A genuine
                 # correction continues to the tighter stop band before this latch clears.
                 if self.aim_error < cfg.deadband_deg:
@@ -702,6 +784,8 @@ class LiveFollower:
                     t1 = time.perf_counter()
                     goal, report = model.look_at(target, prefer_distance=cfg.prefer_distance)
                     ik_ms = (time.perf_counter() - t1) * 1000
+                    if not self._require_fresh_phone(self.sightings[0][0]):
+                        return self.state
                     step, note = self._send(now, measured, goal)
                     self.state = "tracking"
                     if report["rejected"]:
@@ -709,13 +793,13 @@ class LiveFollower:
         else:
             self.aim_error = None
             self.correcting = False
-            if cfg.target in ("face", "hand") or (self.sightings and self.sightings[-1][2] in ("face", "hand")):
+            if cfg.target in FRAME_TARGETS or (self.sightings and self.sightings[-1][2] in FRAME_TARGETS):
                 self.sightings.clear()
             self.state, want = self.search.want(now)
             if self.state == "stalled" or self.guard.blocked(None):
                 self.state, note = "stalled", "holding until the target moves"
             elif want is None:
-                note = "no face"
+                note = "no target"
             elif self.state == "parked" and moved_units(want, measured) < 1.0:
                 note = "at neutral, still looking"
                 if not self.parked_noted:
@@ -777,9 +861,9 @@ def describe(model: LampModel, units: dict) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--target", choices=["auto", "face", "hand", "object"], default=None,
+    ap.add_argument("--target", choices=["auto", "face", "hand", "object", "phone"], default=None,
                     help="auto = a face if one is in view, otherwise a hand, otherwise a person or a thing "
-                         "(default: auto; face with --live)")
+                         "(default: auto; face with --live); phone = bright pink screen, selected explicitly")
     ap.add_argument("--dry-run", action="store_true", help="see, locate and decide, but never move")
     ap.add_argument("--seconds", type=float, default=0, help="stop after this long (0 = until Ctrl-C)")
     ap.add_argument("--deadband-deg", type=float, default=None,
@@ -793,7 +877,7 @@ def main() -> None:
     live.add_argument("--live-step", type=float, default=10.0, help="largest per-joint change per command, units")
     live.add_argument("--live-base", default=LIVE_BASE, help="the runtime's dashboard (motor routes)")
     live.add_argument("--no-search", action="store_true",
-                      help="with no face in view, hold still instead of the slow yaw sweep")
+                    help="with no target in view, hold still instead of the slow yaw sweep")
     ap.add_argument("--prefer-distance", type=float, default=0.45, help="viewing distance to aim for, metres")
     ap.add_argument("--fps", type=float, default=10)
     ap.add_argument("--min-interval", type=float, default=1.5, help="seconds to watch between moves")
@@ -803,7 +887,7 @@ def main() -> None:
     ap.add_argument("--warm-c", type=float, default=70.0, help="SoC temperature at which we halve our frame rate")
     ap.add_argument("--hot-c", type=float, default=77.0, help="SoC temperature at which we stop looking until it cools")
     ap.add_argument("--keep-idle", action="store_true",
-                    help="leave the lamp's idle animation playing between our moves (the head will drift off target)")
+                    help="live mode only: do not change idle animation; SDK mode always leaves idle configuration alone")
     ap.add_argument("--robot-dir", default=str(DEFAULT_ROBOT_DIR))
     args = ap.parse_args()
     if args.target is None:
@@ -838,9 +922,11 @@ def main() -> None:
           flush=True)
     cam = Camera(sdk, args.fps)
     cam.start()
-    trackers: list[tuple[str, FaceTracker | HandTracker | ObjectTracker]] = [
+    trackers: list[tuple[str, FaceTracker | HandTracker | ObjectTracker | PhoneTracker]] = [
                 (name, cls()) for name, cls in (("face", FaceTracker), ("hand", HandTracker))
                 if args.target in ("auto", name)]
+    if args.target == "phone":
+        trackers.append(("phone", PhoneTracker()))
     if args.target in ("auto", "object"):
         if ObjectTracker.MODEL.exists():
             ObjectTracker.NOMINAL = model.fx / 1.0                # a cut-off box is treated as about 1 m away
@@ -851,9 +937,9 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     watching = {"auto": "a face, then a hand, then a person or a thing", "face": "a face", "hand": "a hand",
-                "object": "a person or a thing"}[args.target]
+                "object": "a person or a thing", "phone": "a bright pink phone screen"}[args.target]
     print(f"watching for {watching}{' (dry run: will not move)' if args.dry_run else ''}. Ctrl-C to stop.", flush=True)
-    idle_was = None if (args.dry_run or args.keep_idle) else idle_off(sdk.base)
+    idle_was = idle_off(sdk.base) if args.live and not (args.dry_run or args.keep_idle) else None
 
     if args.live:
         cfg = LiveConfig(target=args.target, deadband_deg=args.deadband_deg, prefer_distance=args.prefer_distance,
@@ -899,6 +985,9 @@ def main() -> None:
                 last_note = now
             continue
         fresh_after = max(stamp, now - 0.02 + thermal.frame_gap(tracking=bool(sightings)))
+        if args.target == "phone" and not phone_frame_is_fresh(stamp, now):
+            sightings.clear()
+            continue
         seen, kind = None, args.target
         for name, tracker in trackers:                 # a face wins over a hand
             seen = tracker.locate(frame)
@@ -906,15 +995,19 @@ def main() -> None:
                 kind = tracker.label if isinstance(tracker, ObjectTracker) else name
                 break
         now = time.monotonic()                           # do not blend pre-inference sightings after a slow frame
-        sightings = [s for s in sightings if now - s[0] < (3.5 if kind not in ("face", "hand") else 0.6) and s[4] == kind]
+        if args.target == "phone" and not phone_frame_is_fresh(stamp, now):
+            sightings.clear()
+            continue
+        window = TargetLock.LOST_S if kind in FRAME_TARGETS else 3.5
+        sightings = [s for s in sightings if now - s[0] < window and s[4] == kind]
         if seen is None:
-            if args.target in ("face", "hand") or (sightings and sightings[-1][4] in ("face", "hand")):
+            if args.target in FRAME_TARGETS or (sightings and sightings[-1][4] in FRAME_TARGETS):
                 sightings.clear()
             if now - last_note > 2:
-                print("nobody in view" if args.target != "hand" else "no hand in view", flush=True)
+                print(f"no {args.target} in view" if args.target in ("hand", "phone") else "nobody in view", flush=True)
                 last_note = now
             continue
-        sightings.append((now, *seen, kind))
+        sightings.append((stamp if kind == "phone" else now, *seen, kind))
         if len(sightings) < 3:                 # decide on a steady sighting, not on one frame
             continue
         x, y, size = (float(np.median([s[k] for s in sightings])) for k in (1, 2, 3))
@@ -973,6 +1066,10 @@ def main() -> None:
         if args.dry_run:
             sightings.clear()
             fresh_after = time.monotonic() + 1.0
+            continue
+        if args.target == "phone" and not phone_frame_is_fresh(sightings[0][0], time.monotonic()):
+            sightings.clear()
+            print("     phone frame receipt expired: waiting for three fresh sightings.", flush=True)
             continue
         try:
             action = sdk.move(pose)

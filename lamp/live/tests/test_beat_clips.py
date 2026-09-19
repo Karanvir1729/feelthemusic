@@ -188,6 +188,60 @@ def _unaccented(tier, variant):
     return {"groove": bc.groove_excursions, "hype": bc.hype_excursions}[tier](variant)
 
 
+def test_hype_b_has_two_bottom_up_phrases_instead_of_a_head_circle():
+    K = bc.keyframes("hype", "b")
+    for start in (1, 5):
+        phrase = K[start:start + 3]
+        # Authored joint sequence only: actual head-height direction also needs calibrated FK.
+        assert (np.diff(phrase[:, [bc.BP, bc.EL, bc.WP]], axis=0) > 0).all()
+        assert phrase[0, bc.EL] < bc.START[bc.EL] < phrase[-1, bc.EL]
+        assert np.sign(phrase[:, bc.YAW]).tolist() == [np.sign(phrase[0, bc.YAW])] * 3
+    assert K[1, bc.YAW] * K[5, bc.YAW] < 0               # rises on each side, not repeated nods
+    assert np.allclose(K[4], bc.START)
+
+
+def test_hype_c_crosses_both_diagonals_through_the_centre():
+    K = bc.keyframes("hype", "c")
+    for start in (1, 5):
+        phrase = K[start:start + 3]
+        assert phrase[0, bc.YAW] * phrase[-1, bc.YAW] < 0
+        assert phrase[1, bc.YAW] == pytest.approx(0.0)
+        assert (np.diff(phrase[:, [bc.BP, bc.EL, bc.WP]], axis=0) > 0).all()
+        assert phrase[0, bc.EL] < bc.START[bc.EL] < phrase[-1, bc.EL]
+    assert (K[3, bc.YAW] - K[1, bc.YAW]) * (K[7, bc.YAW] - K[5, bc.YAW]) < 0
+
+
+@pytest.mark.parametrize("bpm", [80, 127.3, 132, 180])
+def test_expressive_hype_and_inherited_drop_tails_keep_all_command_gates(bpm):
+    for tier, variant in itertools.product(("hype", "drop"), ("b", "c")):
+        U = bc.commanded(tier, bpm, variant)
+        assert np.isfinite(U).all()
+        assert not bc.envelope_violations(U), (tier, variant, bpm)
+        assert bc.peak_speed(U).max() <= bc.SPEED_LIMIT, (tier, variant, bpm)
+        assert np.allclose(U[0], bc.START) and np.allclose(U[-1], bc.START)
+        assert len(U) == round(bc.clip_seconds(bpm) * bc.FPS)
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+@pytest.mark.parametrize("bpm", [80, 132, 180])
+def test_expressive_gestures_rise_and_cross_in_calibrated_head_space(bpm):
+    validator = bc.Validator(ROBOTDESC)
+    for tier, variant in itertools.product(("hype", "drop"), ("b", "c")):
+        U = bc.commanded(tier, bpm, variant)
+        report = validator.validate(U)
+        assert report["ok"], (tier, variant, bpm, report["reasons"])
+        # Take the first complete frame at each beat, during its hold rather than before arrival.
+        indices = np.ceil(bc.beat_instants(bpm) * bc.FPS).astype(int)
+        heads = np.array([validator.model.head(dict(zip(bc.JOINTS, U[i])))["position"] for i in indices])
+        for start in ((1, 5) if tier == "hype" else (5,)):
+            assert heads[start + 2, 2] - heads[start, 2] > 0.01, (tier, variant, bpm, heads)
+        if tier == "hype" and variant == "c":
+            dx_first = heads[3, 0] - heads[1, 0]
+            dx_second = heads[7, 0] - heads[5, 0]
+            assert dx_first * dx_second < 0, (bpm, heads)
+            assert min(abs(dx_first), abs(dx_second)) > 0.01
+
+
 def test_drop_and_build_poses_follow_the_spec():
     D = bc.keyframes("drop", "b")
     assert np.allclose(D[1], [0.0, -36.0, 2.0, 0.0, 50.0])                       # spring
@@ -252,7 +306,8 @@ def test_per_joint_scales_fill_the_speed_budget(bpm):
         for j in range(5):
             if s[j] < 1.0:
                 assert pre[j] >= bc.SPEED_DESIGN * bc.SPEED_MARGIN * 0.98, (tier, variant, j, pre[j])
-                s2 = s.copy(); s2[j] += 2 * bc.SCALE_STEP
+                s2 = s.copy()
+                s2[j] += 2 * bc.SCALE_STEP
                 assert bc.peak_speed(bc.apply_gain(bc.scaled(raw, s2)))[j] > bc.SPEED_DESIGN * bc.SPEED_MARGIN
         assert np.allclose(cmd[0], bc.START) and np.allclose(cmd[-1], bc.START)
         assert not bc.envelope_violations(cmd)
@@ -323,6 +378,33 @@ def test_names():
 
 
 # ----------------------------------------------------------------------------- end to end
+@pytest.mark.parametrize("inertial", [
+    '<origin xyz="0 0 0"/>',
+    '<mass value="1"/>',
+    '<mass/><origin xyz="0 0 0"/>',
+    '<mass value="1"/><origin/>',
+])
+def test_validator_rejects_inertial_xml_missing_required_fields(monkeypatch, inertial):
+    root = bc.ET.fromstring(f"<robot><link><inertial>{inertial}</inertial></link></robot>")
+    monkeypatch.setattr(bc, "LampModel", lambda *args, **kwargs: object())
+    monkeypatch.setattr(bc.ET, "parse", lambda path: bc.ET.ElementTree(root))
+    with pytest.raises(ValueError, match="inertial requires mass.*origin"):
+        bc.Validator(Path("/synthetic-robot"))
+
+
+def test_validator_still_skips_links_without_inertial_data(monkeypatch):
+    root = bc.ET.fromstring('<robot><link/><link><inertial>'
+                            '<mass value="2"/><origin xyz="0.1 0.2 0.3"/>'
+                            '</inertial></link></robot>')
+    monkeypatch.setattr(bc, "LampModel", lambda *args, **kwargs: object())
+    monkeypatch.setattr(bc.ET, "parse", lambda path: bc.ET.ElementTree(root))
+    validator = bc.Validator(Path("/synthetic-robot"))
+    assert len(validator.inertials) == 1
+    mass, origin = validator.inertials[0]
+    assert mass == pytest.approx(2.0)
+    assert np.allclose(origin, [0.1, 0.2, 0.3])
+
+
 @pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC} "
                     "(restricted material, read in place from the scratchpad; set LAMP_ROBOTDESC)")
 def test_generate_128_all_tiers_and_variants(tmp_path):
@@ -388,7 +470,8 @@ def test_generate_refuses_failing_clip_and_removes_stale_csv(tmp_path, monkeypat
     # a clip that does not start at START is refused by the validator itself
     monkeypatch.setattr(bc, "SPEED_LIMIT", 140.0)
     U = bc.commanded("groove", 128, "a")
-    U2 = U.copy(); U2[0, bc.YAW] = 3.0
+    U2 = U.copy()
+    U2[0, bc.YAW] = 3.0
     assert any("START" in r for r in bc.Validator(ROBOTDESC).validate(U2)["reasons"])
     assert bc.Validator(ROBOTDESC).validate(U)["ok"]
 

@@ -15,8 +15,8 @@ re-trigger blends nothing: the runtime skips its blend-in when the first frames 
 
 v2 -- what changed and why (the v1 dance was timid on the arm: at 132 bpm it gave base_yaw +-12..18):
 * THREE variants per tier and bpm, beat_<tier>_<bpm>_<a|b|c>, that differ in choreography, not just
-  amplitude (groove: sway+bob / figure-eight / nod-led; hype: wide sway with elbow pump / head circles /
-  stabs; drop: spring + sweep, then the matching hype; build: a progressive crouch with shivers on a
+  amplitude (groove: sway+bob / figure-eight / nod-led; hype: wide sway with elbow pump / bottom-up /
+  crossing diagonals; drop: spring + sweep, then the matching hype; build: a progressive crouch with shivers on a
   different joint). The scheduler rotates a -> b -> c so the audience never sees the same 8 beats twice
   in a row. The unsuffixed v1 names stay as ALIASES (an identical copy of variant a, listed in the
   manifest with "alias_of") so a v4 scheduler that only knows beat_<tier>_<bpm> keeps working.
@@ -238,25 +238,24 @@ FOLD = dict(bp=-8.0, el=-20.0, wp=-10.0)   # deeper: elbow -46 commanded lets ba
 def hype_excursions(variant: str) -> list[np.ndarray]:
     """Hype beats 1..7 as excursions from START (nominal size, no accents yet)."""
     s4 = [math.sin(k * math.pi / 2) for k in range(8)]                  # 4-beat sine: 0 +1 0 -1 ...
-    c4 = [math.cos(k * math.pi / 2) for k in range(8)]
     if variant == "a":      # wide sway (4-beat sine) with the elbow pumping every beat
         return [_pose(yaw=1.2 * Y * s4[k], roll=-0.35, **(UP if k % 2 else FOLD)) for k in range(1, 8)]
-    if variant == "b":      # head circles: yaw and pitch in quadrature (sin / cos over 4 beats)
-        out = []
-        for k in range(1, 8):
-            pitch = c4[k]
-            kw = UP if pitch > 0.5 else (DOWN if pitch < -0.5 else {})
-            out.append(_pose(yaw=Y * s4[k], roll=-0.3, **kw))
-        return out
-    if variant == "c":      # stabs: a thrust on the beat, a small recoil, one two-beat hold
-        recoil = _pose(0.0, -1.0, -6.0, 0.0, -4.0)
-        return [_pose(Y, 4.0, 18.0, 0.3 * Y, 12.0),        # 1 stab right and up
-                recoil,                                     # 2
-                _pose(-Y, -2.0, -16.0, -0.3 * Y, -12.0),    # 3 stab left and down
-                recoil,                                     # 4
-                _pose(0.0, 8.0, 22.0, 0.0, 12.0),           # 5 big stab centre-up (held ...)
-                _pose(0.0, 8.0, 22.0, 0.0, 12.0),           # 6 ... for two beats)
-                _pose(Y, -2.0, -16.0, 0.3 * Y, -12.0)]      # 7 stab right and down
+    if variant == "b":      # bottom-up phrases on each side, spread over two beats per rise
+        return [_pose(yaw=-0.5 * Y, **DOWN),           # 1 lower-left
+                _pose(yaw=-0.5 * Y, bp=1.0),          # 2 halfway up
+                _pose(yaw=-0.5 * Y, **UP),            # 3 upper-left
+                _pose(),                              # 4 centre before changing sides
+                _pose(yaw=0.5 * Y, **DOWN),           # 5 lower-right
+                _pose(yaw=0.5 * Y, bp=1.0),           # 6 halfway up
+                _pose(yaw=0.5 * Y, **UP)]             # 7 upper-right
+    if variant == "c":      # crossing diagonals: each stroke passes through centre, never a one-beat reversal
+        return [_pose(yaw=Y, roll=0.3, **DOWN),        # 1 lower-right
+                _pose(),                              # 2 centre of the first diagonal
+                _pose(yaw=-Y, roll=0.3, **UP),        # 3 upper-left
+                _pose(yaw=-Y, bp=1.0, roll=0.3),      # 4 lower on the same side
+                _pose(yaw=-Y, roll=0.3, **DOWN),      # 5 lower-left
+                _pose(),                              # 6 centre of the second diagonal
+                _pose(yaw=Y, roll=0.3, **UP)]          # 7 upper-right
     raise ValueError(f"unknown variant {variant!r}")
 
 
@@ -294,7 +293,7 @@ def drop_excursions(variant: str) -> list[np.ndarray]:
     (the spring's recoil) so no single beat carries more than Y of yaw (+Y -> -Y in one beat bound the
     yaw scale at half the size); beats 5-7 the matching hype, the sweep's direction chosen so the hype's
     first beat continues it. a sweeps left first and lands in hype a; b sweeps right first and plays
-    hype b mirrored (its circle runs the other way); c sweeps right in a fold and lands in the stabs."""
+    hype b mirrored (the bottom-up phrase changes sides); c sweeps right in a fold then crosses diagonally."""
     hype = hype_excursions(variant)
     if variant == "a":
         sign, roll, sweep, tail = -1.0, -0.4, UP, hype[4:7]
@@ -448,9 +447,13 @@ class Validator:
             it = link.find("inertial")
             if it is None:
                 continue
-            o = it.find("origin")
-            self.inertials.append((float(it.find("mass").get("value")),
-                                   np.array([float(v) for v in o.get("xyz").split()])))
+            mass, origin = it.find("mass"), it.find("origin")
+            if mass is None or origin is None:
+                raise ValueError(f"{self.robot / 'robot.urdf'}: inertial requires mass and origin elements")
+            mass_value, xyz = mass.get("value"), origin.get("xyz")
+            if mass_value is None or xyz is None:
+                raise ValueError(f"{self.robot / 'robot.urdf'}: inertial requires mass value and origin xyz")
+            self.inertials.append((float(mass_value), np.array([float(v) for v in xyz.split()])))
 
     def com_and_head(self, u) -> tuple[np.ndarray, np.ndarray]:
         model = self.model
