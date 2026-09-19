@@ -28,10 +28,13 @@ The SDK needs `LELAMP_SDK_TOKEN` in the runtime's environment (the lamp's own `.
 
 | File | What it does |
 |---|---|
-| `sdk.py` | Client for the vendor SDK gateway, and nothing else. One session reused across runs, renewed on 401. Every `move()` names all five joints (a joint left out is held at its *measured* position, which on a loaded joint is a little lower every time). No `stop()`: the vendor's `system.stop` releases torque and the head falls. |
+| `sdk.py` | Client for the vendor SDK gateway, and nothing else. One session reused across runs, renewed on 401. Every `move()` names all five joints. Dispatches `glow()`, `play_animation()`, and `play_clip()`. No `stop()`: the vendor's `system.stop` releases torque and the head falls. |
 | `spatial.py` | Where the head is, where the target is, where the lamp may go. Forward kinematics from the vendor's URDF and this lamp's servo calibration (both read at run time on the lamp, never copied here), a workspace check (table, the lamp's own base, joint limits), picture position + apparent size to a 3D point, and an inverse-kinematics `look_at()` over yaw, base pitch, elbow and head tilt. |
 | `follow.py` | Look, locate in 3D, decide, make ONE safe move. A face first, a hand if there is no face. Thermally aware, runs below the vendor runtime's priority. |
-| `tests/test_spatial.py` | 11 checks, including that the model's predicted picture motion matches what was measured on the real lamp. Needs the vendor robot description: `FTM_ROBOT_DIR=.../static/robots/lelamp_v1/pi5_feetech_r1`. |
+| `bridge.py` | Local UDP server (port 47400) receiving Mac tracking targets, guarded against hostile JSON nesting, rate limits, and thermal throttling. |
+| `performance.py` | Music-driven performance controller. Maps bass envelope to smooth light glows constrained by WCAG 2.2 SC 2.3.1 `FlashLimiter`, and choreographs vendor animations (`nod`, `curious`, `excited`, `dance`) on presentation clock `pts`. |
+| `tests/` | Test suites for SDK, spatial geometry, follower, hostile bridge, and musical performance. |
+
 
 ```bash
 cd ~/feelthemusic-lamp

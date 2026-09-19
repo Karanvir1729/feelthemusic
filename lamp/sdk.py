@@ -233,6 +233,11 @@ class LampSDK:
             payload["luminance"] = float(luminance)
         return self.action("light.glow", payload, wait_s=8)
 
-    # There is deliberately no stop(). The vendor's system.stop stops motion AND releases torque over
-    # 0.6 s: the arm goes limp and the head falls onto the table. To stop following, stop sending
-    # moves: the runtime finishes the current planned move on its own.
+    def play_animation(self, name: str, wait_s: float = 30.0) -> dict:
+        """Play a built-in animation from the vendor catalog (e.g. nod, curious, excited, happy, dance)."""
+        return self.action("animation.play", {"name": str(name)}, wait_s=wait_s)
+
+    def play_clip(self, clip_id: str, wait_s: float = 30.0) -> dict:
+        """Play a validated choreography clip."""
+        return self.action("clip.play", {"clip_id": str(clip_id)}, wait_s=wait_s)
+

@@ -72,3 +72,20 @@ def test_move_returns_only_after_explicit_reached_confirmation():
     sdk.action = lambda *_args, **_kwargs: {"state": "succeeded", "result": {"reached": True}}
 
     assert sdk.move({"base_yaw": 1.23})["result"]["reached"] is True
+
+
+def test_play_animation_dispatches_animation_play():
+    sdk = object.__new__(LampSDK)
+    recorded = []
+    sdk.action = lambda cmd, payload, **kwargs: recorded.append((cmd, payload)) or {"state": "succeeded"}
+    sdk.play_animation("nod")
+    assert recorded == [("animation.play", {"name": "nod"})]
+
+
+def test_play_clip_dispatches_clip_play():
+    sdk = object.__new__(LampSDK)
+    recorded = []
+    sdk.action = lambda cmd, payload, **kwargs: recorded.append((cmd, payload)) or {"state": "succeeded"}
+    sdk.play_clip("clip_42")
+    assert recorded == [("clip.play", {"clip_id": "clip_42"})]
+
