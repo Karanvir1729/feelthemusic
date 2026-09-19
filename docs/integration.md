@@ -77,9 +77,15 @@ The parser, clock estimator and event normaliser for these packets are PR #16 (t
 
 - Control the lamp **only** through the vendor SDK gateway. No raw motor routes. [agreed]
 - `motion.move` plans a minimum-jerk move of **at least 2 s**, one at a time. This is deliberate re-aiming, not pursuit. [measured on the lamp, `AGENTS.md`]
-- `light.glow` fades over about 0.6 s and serialises changes. [reported in `docs/architecture.md`; whether a glow can run while a move is in flight is **[unknown]**, measure it]
+- `light.glow` fades over about 0.6 s and serialises changes. [reported in `docs/architecture.md`] **Measured on the real lamp (Nyquist, hub seq 843): the HTTP light route tops out at about 3 calls per second**: 10 serial `set_solid` calls took 6.22 s, and 12 concurrent ones took 4.13 s, because the light manager serialises through the event-bus lifecycle. Bass arrives at 100 Hz, so the transport is already below the 3-per-second flash cap and the flash limiter's real job on this hardware is **shaping**, not rate-capping. Whether a glow can run while a move is in flight is still **[unknown]**.
 - `system.stop` releases torque and the head falls. Never use it as a stop. `lamp/sdk.py` has no `stop()` on purpose. [agreed by the code and its comment]
-- A 409 from the gateway means "accepted, then not completed" and is **terminal**: stop, and a person looks. [`lamp/sdk.py`, `refusal_policy`]
+- A 409 from the gateway means "accepted, then not completed". The current code treats every 409 as **terminal** (stop, and a person looks) [`lamp/sdk.py`, `refusal_policy`]. **Measured on the real lamp (Nyquist, hub seq 843): that is too blunt.** A 409 of the form `action_failed: Robot did not reach the planned target within its safety tolerance: wrist_pitch` (with `position_errors`) is routine in normal following, because the IK often asks for an angle a short joint cannot deliver, and the shipped follower ends its whole run on one such move. **Open decision for the robot-safety owner (Tempo):** whether a *not-reached* 409 whose errors stay inside a stated bound may be skipped (with a consecutive-skip cap, then latch) while every other 409 (lost track, timeout, anything unclassified) stays terminal. Until that is decided, nothing here changes the terminal behaviour.
+
+**Measured on the real lamp (Nyquist, hub seq 843; STS3215 servos, 4096 ticks = 360 degrees):**
+- **The calibration disagrees with the vendor URDF on three joints:** base_yaw 148.8 degrees calibrated vs 360.0 in the URDF (41%); elbow_pitch 149.9 vs 136.5 (**110%, over-range**); wrist_pitch 95.5 vs 147.0 (**65%**); wrist_roll 80%, base_pitch 95%. `safety.yaml` is `calibrated_normalized`, so a short joint reports a tidy +-100 and stops short in the real world, and the only span check (512 ticks) passes all of them. Nyquist clamped elbow_pitch to exactly 100% (midpoint held).
+- **Consequence: the lamp physically cannot look up at a standing face.** The head sits about 20 cm above the table; a standing face at 1 m needs about 52 degrees of up-tilt (about 33 degrees at 2 m). The most Nyquist could get before the wrist ran out of travel was **about 15 degrees**. **"Stay locked on the head" is therefore gated on a physical recalibration, not on code. Seated subjects work.**
+- **Idle cannot be turned off the obvious ways:** the idle animation is reinstated a second after it is cancelled, and an empty config falls back to "idle". What works: hold the motion lease (direct position commands outrank idle), or run the follower, which suppresses idle itself and restores it on exit.
+- A `no camera frames` log line is not a stream failure: frames stamped before the post-move pause are excluded by design, so that window is always empty.
 
 ### 5.2 Modes [design]
 
@@ -107,7 +113,7 @@ Path [design]: bass envelope (0..1) -> `safety.flash.FlashLimiter` -> `light.glo
 
 - The limiter sees the **colour and brightness that will actually be emitted**, and there must be exactly one place in the code that calls `light.glow`.
 - At most 3 flashes per second for large, bright changes; no saturated red. Orange counts as saturated red under the limiter's linear reading. [agreed; `safety/README.md`]
-- Because glow fades over about 0.6 s, light follows the bass envelope and section changes, **not every kick**.
+- Because glow fades over about 0.6 s, and the HTTP light route measures about **3 calls per second** on the real lamp (section 5.1, Nyquist), light follows the bass envelope and section changes, **not every kick**, and a renderer must **coalesce to the latest level** rather than queue one call per 10 ms bass sample.
 - The limiter's numbers are arithmetic on the WCAG 2.2 definitions and have **not been measured on the real lamp LED**. The lamp's angular size is unknown, so every change is treated as full-field. [`safety/README.md`]
 
 ## 7. Haptics
@@ -138,7 +144,7 @@ Path [design]: bass envelope (0..1) -> `safety.flash.FlashLimiter` -> `light.glo
 1. **Confirmation of the reported wire spec.** The layouts and codes in section 4 are source-reported (task #6 text, recovered from the hub UI), not tested against the native app. Still missing: the audio-anchor and audio packets, `leadUs`, whether `BassEnvelope.startTs` already includes `L`, what `Assign`'s first byte is, and the file `base-protocol-for-new-clients.md` the task text refers to. One capture from the real conductor, or a read of its source, settles all of them.
    - Nyquist also asked for Karan's confirmation that an event-window client we write today, speaking a protocol defined by shipped code, is acceptable under the event rules. Franklin's decision to build on the existing conductor presumably answers it, but it should be confirmed before the client is written.
    - **Operational hazard:** two conductors advertised on one LAN and the shipped phone joins the first result with no filter, so phones split between them. Run exactly one conductor. [reported, Nyquist]
-2. **The Unity file** (Franklin says it is on the lamp's Raspberry Pi). Blocks task #18. Nobody should log into the lamp on their own; a person copies the file out.
+2. ~~The Unity file from the Pi.~~ **Resolved: there is none.** Nyquist searched the lamp (`*.unity`, `*.unitypackage`, `ProjectSettings`, `Assets`, `*.fbx`) and found only `simulation.yaml`, `robot.urdf` and Python (hub seq 843); Tempo also found no Unity project in the public LeLamp repository, only a MuJoCo model. Task #18 (Unity scene import) has nothing to import, and Tempo's MuJoCo twin (task #23, built from the vendor URDF and this lamp's calibration) is the simulation path. Whether Franklin has a Unity file somewhere else is still worth asking.
 3. How good are the conductor's events on a dense real track, and what is their latency? (Reported to exist; never measured by us.)
 4. How does the phone connect to the TitanCore?
 5. Can `light.glow` run while a `motion.move` is in flight? Measure it.
