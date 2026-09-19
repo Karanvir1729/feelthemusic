@@ -89,12 +89,19 @@ class TitanDriver:
         baudrate: int = 115200,
         serial_instance: Optional[Any] = None,
         time_fn: Optional[Any] = None,
+        armed: Optional[bool] = None,
     ) -> None:
         self.port_name: Optional[str] = port
         self.baudrate: int = baudrate or self.BAUDRATE
         self._time_fn = time_fn or time.monotonic
         self._last_strike_time: float = -1.0
         self._last_pcm_sample: int = self.REST_VALUE
+
+        # Arming gate: real serial ports require explicit arming; mock/in-memory ports default to armed
+        if armed is not None:
+            self.armed: bool = armed
+        else:
+            self.armed: bool = (port is None)
 
         # Telemetry
         self.total_commands_sent: int = 0
@@ -129,10 +136,24 @@ class TitanDriver:
     def is_connected(self) -> bool:
         return bool(self._serial and getattr(self._serial, "is_open", False))
 
+    def arm(self) -> None:
+        """Arm the driver for live serial transmissions."""
+        self.armed = True
+        logger.info("TITAN Core driver armed for transmission.")
+
+    def disarm(self) -> None:
+        """Disarm the driver to prevent hardware transmissions."""
+        self.emergency_stop()
+        self.armed = False
+        logger.info("TITAN Core driver disarmed.")
+
     def _write_command(self, cmd: str) -> None:
         """Write an ASCII command string to the serial interface."""
         if not self.is_connected:
             raise TitanDriverError("TITAN Core driver is not connected")
+        if not self.armed:
+            logger.info("Driver is disarmed: skipping serial write for '%s'", cmd.strip())
+            return
         if not (cmd.endswith(";") or cmd.endswith("\n")):
             cmd += ";\n"
         elif not cmd.endswith("\n"):
@@ -191,12 +212,12 @@ class TitanDriver:
             smoothed.append(val)
             current = val
 
-        self._last_pcm_sample = current
-
-        # Format command
+        # Format and write command BEFORE advancing last sample state
         values_str = " ".join(str(v) for v in smoothed)
         cmd = f"PCM {values_str};"
         self._write_command(cmd)
+
+        self._last_pcm_sample = current
         return smoothed
 
     def send_transient(self, amplitude: int, duration_ms: int) -> bool:
@@ -233,19 +254,25 @@ class TitanDriver:
 
     def emergency_stop(self) -> None:
         """Instantly silence all channels and reset state to rest."""
+        if not self.is_connected:
+            return
+        # Force armed state to guarantee emergency stop commands are transmitted
+        was_armed = self.armed
+        self.armed = True
         try:
-            if self.is_connected:
-                # Neutralize Channel M and reset L/R to rest (128)
-                self._write_command("CHNL M 0 0;")
-                rest_frame = [self.REST_VALUE] * 8
-                self._last_pcm_sample = self.REST_VALUE
-                values_str = " ".join(str(v) for v in rest_frame)
-                self._write_command(f"PCM {values_str};")
-        except Exception as exc:
-            logger.error(f"Emergency stop encountered error: {exc}")
+            # Neutralize Channel M and reset L/R to rest (128)
+            self._write_command("CHNL M 0 0;")
+            rest_frame = [self.REST_VALUE] * 8
+            values_str = " ".join(str(v) for v in rest_frame)
+            self._write_command(f"PCM {values_str};")
+            self._last_pcm_sample = self.REST_VALUE
+        finally:
+            self.armed = was_armed
 
     def close(self) -> None:
         """Shut down the driver and close serial connection."""
         if self.is_connected:
-            self.emergency_stop()
-            self._serial.close()
+            try:
+                self.emergency_stop()
+            finally:
+                self._serial.close()

@@ -132,12 +132,13 @@ driver.emergency_stop()
 
 Per AGENTS.md rule 8 (say what is measured and what is a guess):
 
-- **Measured & Benchmarked**:
-  - ESP32 USB UART enumeration at 115200 baud 8N1 across test rigs.
+- **Simulated & Software-Verified**:
   - Slew-rate limiter prevents mathematical discontinuity in generated waveform buffers.
   - Driver runs headless using `FakeSerialPort` in unit test environments.
+  - Presentation scheduling, late dropping (>80 ms), far-future dropping, and immediate emergency-stop dispatch verified in automated tests.
 
-- **Proposed Driver Abstractions (Pending Task #9 Hardware Bench Testing)**:
+- **Proposed Driver Abstractions & Unverified Assumptions (Pending Task #9 Physical Bench Testing)**:
+  - ESP32 USB UART enumeration at 115200 baud 8N1 was reported by teammates (seq 127) but not physically verified or benchmarked in this workspace.
   - The `CHNL M <amplitude> <duration_ms>;` syntax is a driver-proposed ASCII command extension to actuate the DRV8212 H-bridge Channel M independently from continuous PCM audio streams.
   - Rest center value `128` (0 V / zero coil current) assumes unipolar 8-bit DAC convention for the PAM8403 input stages.
   - The slew limit `MAX_SLEW_STEP = 40` and 50 ms thermal cooldown are conservative safety protections proposed pending oscilloscope and thermal probe measurements on physical hardware.

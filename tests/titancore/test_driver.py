@@ -240,3 +240,104 @@ def test_event_mapper_early_event_holding():
     assert len(slept) == 1
     assert pytest.approx(slept[0], 0.001) == 0.195
 
+
+def test_event_mapper_late_stop_never_dropped():
+    fake = FakeSerialPort()
+    clock = MockClock(start_time=100.0)
+    driver = TitanDriver(serial_instance=fake, time_fn=clock.time)
+    mapper = TitanEventMapper(driver=driver, time_fn=clock.time)
+
+    # Stop event with ancient pts (1.0s vs current 100.0s)
+    late_stop = {"type": "stop", "pts": 1.0}
+    assert mapper.handle_event(late_stop) is True
+    assert "CHNL M 0 0" in fake.written_lines[-2]
+    assert mapper.dropped_late_events == 0
+
+
+def test_event_mapper_events_without_pts_rejected():
+    fake = FakeSerialPort()
+    driver = TitanDriver(serial_instance=fake)
+    mapper = TitanEventMapper(driver=driver)
+
+    # Rule 5: Events without pts must not be dispatched on packet arrival
+    assert mapper.handle_event({"type": "kick", "intensity": 0.9}) is False
+    assert mapper.dropped_no_pts == 1
+    assert mapper.kicks_fired == 0
+
+
+def test_event_mapper_far_future_events_dropped():
+    fake = FakeSerialPort()
+    clock = MockClock(start_time=100.0)
+    driver = TitanDriver(serial_instance=fake, time_fn=clock.time)
+    mapper = TitanEventMapper(driver=driver, time_fn=clock.time)
+
+    # Event 5.0s in the future (pts = 105.0)
+    far_future = {"type": "snare", "pts": 105.0, "intensity": 0.8}
+    assert mapper.handle_event(far_future) is False
+    assert mapper.dropped_far_future == 1
+    assert mapper.snares_fired == 0
+
+
+def test_driver_pcm_state_rollback_on_write_error():
+    fake = FakeSerialPort()
+    driver = TitanDriver(serial_instance=fake)
+    driver._last_pcm_sample = 128
+
+    # Close port so write fails
+    fake.close()
+    with pytest.raises(TitanDriverError):
+        driver.send_pcm([180])
+
+    # Ensure last_pcm_sample was not updated
+    assert driver._last_pcm_sample == 128
+
+
+def test_driver_arming_gate():
+    fake = FakeSerialPort()
+    driver = TitanDriver(serial_instance=fake, armed=False)
+    assert not driver.armed
+
+    # Disarmed write does not reach serial port
+    driver.configure_frame(100, 16)
+    assert len(fake.written_lines) == 0
+
+    # Arming allows writes
+    driver.arm()
+    assert driver.armed
+    driver.configure_frame(100, 16)
+    assert "F 100 16" in fake.written_lines
+
+    # Disarming sends emergency stop then disarms
+    driver.disarm()
+    assert not driver.armed
+    assert "CHNL M 0 0" in fake.written_lines[-2]
+
+
+def test_driver_and_mapper_clamping():
+    fake = FakeSerialPort()
+    clock = MockClock(start_time=100.0)
+    driver = TitanDriver(serial_instance=fake, time_fn=clock.time)
+    mapper = TitanEventMapper(driver=driver)
+
+    # Transient amplitude and duration clamping
+    assert driver.send_transient(amplitude=999, duration_ms=500) is True
+    assert fake.written_lines[-1] == "CHNL M 255 100"
+
+    clock.advance(0.060)
+    assert driver.send_transient(amplitude=-50, duration_ms=1) is True
+    assert fake.written_lines[-1] == "CHNL M 0 5"
+
+    # PCM sample clamping
+    smoothed = driver.send_pcm([-50, 300])
+    # Starting from 128: -50 clamped to 0 -> slew limited 128 - 40 = 88
+    # 300 clamped to 255 -> slew limited 88 + 40 = 128
+    assert smoothed == [88, 128]
+
+    # Synthesize bass intensity clamping
+    frame_neg = mapper.synthesize_bass_frame(intensity=-0.5)
+    assert all(s == 128 for s in frame_neg)
+
+    frame_over = mapper.synthesize_bass_frame(intensity=2.0)
+    assert max(frame_over) <= 255
+    assert min(frame_over) >= 0
+

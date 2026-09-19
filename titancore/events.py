@@ -39,6 +39,8 @@ class TitanEventMapper:
         # Metrics
         self.processed_events: int = 0
         self.dropped_late_events: int = 0
+        self.dropped_no_pts: int = 0
+        self.dropped_far_future: int = 0
         self.kicks_fired: int = 0
         self.snares_fired: int = 0
         self.bass_frames_sent: int = 0
@@ -76,31 +78,48 @@ class TitanEventMapper:
     def handle_event(self, event: Dict[str, Any], now: Optional[float] = None) -> bool:
         """Process a conductor event and dispatch to TITAN Core hardware.
 
-        Returns True if the event was dispatched, False if dropped (e.g. late).
+        Returns True if the event was dispatched, False if dropped (e.g. late, no pts, far future).
         """
+        event_type = str(event.get("type", "")).lower()
+
+        # 1. Critical safety rule: Emergency stop is ALWAYS executed immediately
+        # regardless of presentation timestamp or clock offset.
+        if event_type in ("stop", "emergency_stop"):
+            self.processed_events += 1
+            self.driver.emergency_stop()
+            return True
+
         current_time = self.time_fn() if now is None else now
 
-        # Parse presentation timestamp (pts)
+        # 2. Rule 5: Everything is scheduled on shared clock; packet arrival dispatch prohibited
         raw_pts = event.get("pts")
-        if raw_pts is not None:
-            try:
-                pts_val = float(raw_pts)
-                if not math.isfinite(pts_val):
-                    return False
-                pts_s = (pts_val / 1e9) if pts_val > 1e12 else pts_val
-                target_presentation_s = pts_s + self.latency_budget_s - self.trim_s
+        if raw_pts is None:
+            self.dropped_no_pts += 1
+            return False
 
-                # Late event drop rule: pts + L - trim < now - 80ms
-                if current_time > (target_presentation_s + self.LATE_DROP_THRESHOLD_S):
-                    self.dropped_late_events += 1
-                    return False
-
-                # Early event: hold until target presentation time (Rule 5: fire at pts + L - trim)
-                lead_time = target_presentation_s - current_time
-                if 0.0 < lead_time <= (self.latency_budget_s + 0.050):
-                    self.sleep_fn(lead_time)
-            except (ValueError, TypeError):
+        try:
+            pts_val = float(raw_pts)
+            if not math.isfinite(pts_val):
                 return False
+            pts_s = (pts_val / 1e9) if pts_val > 1e8 else pts_val
+            target_presentation_s = pts_s + self.latency_budget_s - self.trim_s
+
+            # Late event drop rule: pts + L - trim < now - 80ms
+            if current_time > (target_presentation_s + self.LATE_DROP_THRESHOLD_S):
+                self.dropped_late_events += 1
+                return False
+
+            # Early event handling
+            lead_time = target_presentation_s - current_time
+            if lead_time > 0.0:
+                if lead_time <= (self.latency_budget_s + 0.050):
+                    self.sleep_fn(lead_time)
+                else:
+                    # Far-future event (> budget + 50ms): drop rather than firing early
+                    self.dropped_far_future += 1
+                    return False
+        except (ValueError, TypeError):
+            return False
 
         try:
             raw_intensity = float(event.get("intensity", 1.0))
@@ -110,7 +129,6 @@ class TitanEventMapper:
         except (ValueError, TypeError):
             return False
 
-        event_type = str(event.get("type", "")).lower()
         self.processed_events += 1
 
         if event_type == "kick":
