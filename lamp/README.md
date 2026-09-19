@@ -58,3 +58,17 @@ A move is sent only if our own workspace check passes; the lamp's planner then c
 | Spatial model vs those measurements | within 15% on both axes using the servo calibration; the vendor's single approximate joint scale overstates head tilt by about 1.5x |
 
 Not measured yet: a live SDK move from this follower, end-to-end latency from a person moving to the lamp facing them, behaviour offline.
+# Mac camera bridge
+
+The FeelTheMusic Mac conductor can do the camera/Vision work and send normalized target packets
+over the LAN. Start the bridge on the Pi (with the vendor runtime running):
+
+```sh
+.venv/bin/python bridge.py --cutoff-c 70 --max-step 5
+```
+
+It listens on UDP port 47400 and replies with Pi temperature/action telemetry to the Mac. The
+bridge keeps the SDK token on the Pi, sends only whole-arm `motion.move` actions through the
+vendor SDK gateway, checks the local spatial model, limits each joint step to five units, and
+stops issuing moves at the thermal cutoff. The Mac add-on panel displays the camera feed and
+telemetry; it does not need the lamp token.

@@ -308,6 +308,27 @@ def main() -> None:
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    signal.signal(signal.SIGHUP, lambda *_: stop.set())
+    def temperature_watch():
+        last_note = 0.0
+        while not stop.is_set():
+            try:
+                temp = int(Path(Thermal.PATH).read_text()) / 1000.0
+                thermal.peak_c = max(thermal.peak_c, temp)
+                if not math.isfinite(temp) or temp >= args.hot_c:
+                    print(f"THERMAL STOP: Pi {temp:.1f} C; no more moves.", flush=True)
+                    stop.set()
+                    return
+                if time.monotonic() - last_note >= 2:
+                    print(f"Pi {temp:.1f} C | cutoff {args.hot_c:.1f} C | Ctrl-C stops tracking", flush=True)
+                    last_note = time.monotonic()
+            except (OSError, ValueError):
+                print("THERMAL STOP: temperature unavailable; no more moves.", flush=True)
+                stop.set()
+                return
+            stop.wait(0.25)
+    guard = threading.Thread(target=temperature_watch, daemon=True)
+    guard.start()
     watching = {"auto": "a face, then a hand, then a person or a thing", "face": "a face", "hand": "a hand",
                 "object": "a person or a thing"}[args.target]
     print(f"watching for {watching}{' (dry run: will not move)' if args.dry_run else ''}. Ctrl-C to stop.", flush=True)
@@ -317,11 +338,8 @@ def main() -> None:
     fresh_after, sightings, moves, refused, failures = time.monotonic(), [], 0, 0, 0
     while not stop.is_set() and (not args.seconds or time.monotonic() - started < args.seconds):
         if thermal.too_hot():
-            print(f"SoC is {thermal.celsius():.0f} C: pausing vision for 20 s to let it cool", flush=True)
-            sightings.clear()
-            stop.wait(20)
-            fresh_after = time.monotonic()
-            continue
+            print("Thermal cutoff: ending tracking.", flush=True)
+            break
         frame, stamp = cam.newest(after=fresh_after, timeout=1.5)
         now = time.monotonic()
         if frame is None:
@@ -388,6 +406,16 @@ def main() -> None:
                 fresh_after = time.monotonic() + 2.0
                 continue
             pose = step
+        if max(abs(pose[j] - measured[j]) for j in JOINTS) > args.max_step + 0.001:
+            print("Step exceeds configured bound after joint-limit adjustment; stopping.", flush=True)
+            break
+        # A measured joint can start beyond our extra margin while still inside the SDK range.
+        # Interpolate toward the already-validated endpoint, checking geometry throughout.
+        if any(any("outside" not in problem for problem in model.problems(
+                {j: measured[j] + (pose[j] - measured[j]) * fraction / 20 for j in JOINTS}))
+                for fraction in range(1, 21)):
+            print("Intermediate pose outside our workspace; stopping.", flush=True)
+            break
         plan = ", ".join(f"{j} {measured[j]:+.0f}->{pose[j]:+.0f}" for j in JOINTS if abs(pose[j] - measured[j]) >= 2)
         note = f" (whole-arm pose refused: {report['rejected'][0]}; turning from neutral instead)" if report["rejected"] else ""
         print(where, flush=True)
@@ -398,6 +426,8 @@ def main() -> None:
             fresh_after = time.monotonic() + 1.0
             continue
         try:
+            if stop.is_set():
+                break
             action = sdk.move(pose)
             moves += 1
             took = action.get("result", {}).get("duration_seconds")
@@ -411,7 +441,6 @@ def main() -> None:
                 errors = exc.details.get("position_errors") if isinstance(exc.details, dict) else None
                 if errors:
                     print(f"     position errors: {errors}", flush=True)
-                settle_here(sdk)
                 if exc.code == "canceled":
                     print("     something else stopped the lamp. Not fighting it: stopping.", flush=True)
                 elif exc.code in ("timeout", "lost_track"):
@@ -434,6 +463,7 @@ def main() -> None:
         fresh_after = time.monotonic() + max(0.3, args.min_interval)   # settle, then watch before deciding again
 
     cam.running = False
+    stop.set()
     if idle_was:
         idle_restore(sdk.base, idle_was)
     print(f"SoC peaked at {thermal.peak_c:.0f} C during this run", flush=True)
