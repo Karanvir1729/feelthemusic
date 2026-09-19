@@ -1,5 +1,6 @@
 """Spatial model checks. They need the vendor's robot description, which is not in this repository:
 point FTM_ROBOT_DIR at .../static/robots/lelamp_v1/pi5_feetech_r1 (on the lamp it is found by default)."""
+import math
 import os
 from pathlib import Path
 
@@ -36,7 +37,21 @@ def test_picture_motion_matches_what_was_measured_on_the_real_lamp(lamp):
         nudged[joint] += step
         shift = lamp.project(nudged, far_point)[axis] - 0.5
         assert np.sign(shift) == np.sign(measured), f"{joint}: model says {shift:+.3f}, lamp did {measured:+.3f}"
-        assert 0.5 < shift / measured < 2.0, f"{joint}: model says {shift:+.3f}, lamp did {measured:+.3f}"
+        assert 0.85 < shift / measured < 1.18, f"{joint}: model says {shift:+.3f}, lamp did {measured:+.3f}"
+
+
+def test_uses_the_lamps_own_servo_calibration(lamp):
+    assert lamp.scale_source.startswith("servo calibration"), lamp.scale_source
+    # head tilt is the joint the vendor's single scale gets most wrong: 95.5 degrees over 200 units
+    assert abs(math.degrees(lamp._scale["wrist_pitch"]) - 0.478) < 0.01
+
+
+def test_a_sight_line_stops_at_the_table(lamp):
+    looking_down = dict(lamp.neutral, wrist_pitch=90.0)
+    point = lamp.target_point(looking_down, (0.5, 0.5), 3.0)          # "3 m away" straight into the table
+    assert point[2] >= lamp.table_z + 0.049
+    level = lamp.target_point(lamp.neutral, (0.5, 0.5), 3.0)           # level gaze: nothing to clip
+    assert np.linalg.norm(level - lamp.head(lamp.neutral)["position"]) == pytest.approx(3.0)
 
 
 def test_project_inverts_ray(lamp):
