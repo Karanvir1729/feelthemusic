@@ -34,6 +34,6 @@ xcuserdata/
 # restricted distribution; it does not belong in this repository. Fetch it per sim/robot/README.md.
 sim/robot/pi5_feetech_r1/
 **/static/robots/lelamp_v1/
-*.stl
-*.onnx
+sim/robot/**/*.stl
+sim/robot/**/*.onnx
 sim/robot/lelamp-calibration.json

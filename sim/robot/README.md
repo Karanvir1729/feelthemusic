@@ -16,27 +16,36 @@ pytestmark = pytest.mark.skipif(not (ROBOT_DIR / "robot.urdf").exists(),
                                 reason="vendor robot description not found")
 ```
 
-A clean checkout therefore builds and tests green; those 9 tests report as skipped. `.gitignore`
-blocks `*.stl`, `*.onnx` and `sim/robot/pi5_feetech_r1/` so the description cannot be committed here
-by accident.
+A clean checkout therefore builds and tests green; the spatial tests report as skipped. `.gitignore`
+blocks `sim/robot/pi5_feetech_r1/`, the calibration file and any `*.stl` / `*.onnx` under `sim/robot/`,
+so the description cannot be committed here by accident.
 
 ## Getting it
 
 ```sh
-./sim/robot/fetch.sh                              # private mirror, for agents with access
-./sim/robot/fetch.sh lelamp@lelamp-bfc5eta0.local # or straight off a lamp
+./sim/robot/fetch.sh user@host                     # straight off a lamp, over scp
+FTM_ROBOT_MIRROR=<git url> ./sim/robot/fetch.sh    # from a private mirror; ask an operator for the URL
 FTM_ROBOT_DIR=sim/robot/pi5_feetech_r1 \
 LELAMP_CALIBRATION_PATH=sim/robot/lelamp-calibration.json \
 pytest lamp/tests
 ```
 
-Both matter. With the description alone, 9 of the 11 spatial tests pass and two fail: `LampModel`
-falls back to the vendor approximate joint map, which `spatial.py` itself notes overstates head tilt
-by about 1.5x. `test_picture_motion_matches_what_was_measured_on_the_real_lamp` catches it as a 1.49x
-error against a figure measured on the hardware. With the calibration too, all 11 pass.
+`user@host` is the lamp's SSH login (the lamp's address is not written down in this repository).
+The script fetches two files, checks `robot.urdf` against the checksum of the description shipped on
+the lamp, and exits 0 only when both are present; run it again with a lamp host if it reports the
+calibration missing. The mirror is a private copy for people who already have access to the runtime;
+its URL is handed out by an operator, not published.
 
-The private mirror is `MeharPro/lelamp-robot-description`. Ask an operator for access; do not fork
-it anywhere public.
+Both files matter. `LampModel` reads the lamp's own servo calibration for the true radians-per-unit
+of each joint; without it, it falls back to the vendor's approximate joint map, which `spatial.py`
+itself notes overstates head tilt by about 1.5x.
+
+Which tests that changes depends on which `spatial.py` you have. On today's `main`, `spatial.py`
+does not read `LELAMP_CALIBRATION_PATH` yet and `test_spatial.py` has 9 cases: they run on the
+description alone. PR #7's lineage adds the calibration lookup and two tests for it
+(`test_uses_the_lamps_own_servo_calibration` and the measured picture-motion check, which catches
+the 1.49x error against a figure taken on the hardware): 11 cases, all passing with both files,
+9 with the description only.
 
 ## What it gives you
 
