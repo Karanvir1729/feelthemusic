@@ -18,6 +18,7 @@ import math
 import signal
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -140,11 +141,21 @@ def main() -> None:
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port)); sock.settimeout(0.25)
-    stop = False
+    stop = threading.Event()
 
     def request_stop(*_):
-        nonlocal stop
-        stop = True
+        stop.set()
+
+    def thermal_watch() -> None:
+        while not stop.is_set():
+            temp = temperature_c()
+            if temp is None:
+                print("THERMAL STOP: Pi temperature unavailable", flush=True)
+                stop.set(); return
+            if temp >= args.cutoff_c:
+                print(f"THERMAL STOP: Pi {temp:.1f} C >= {args.cutoff_c:.1f} C", flush=True)
+                stop.set(); return
+            stop.wait(0.25)
 
     signal.signal(signal.SIGINT, request_stop); signal.signal(signal.SIGTERM, request_stop)
     print(f"SDK {caps.get('protocol_version', info.get('units'))} ready; UDP {host}:{port}; cutoff {args.cutoff_c:.1f} C",
@@ -162,9 +173,10 @@ def main() -> None:
     measured = {j: float(info["positions"][j]) for j in JOINTS}
     moves = 0
     previous_idle = None if args.keep_idle else idle_off(sdk.base)
+    threading.Thread(target=thermal_watch, name="pi-thermal-guard", daemon=True).start()
 
     try:
-        while not stop:
+        while not stop.is_set():
             now = time.monotonic()
             temp = temperature_c()
             if temp is None:
