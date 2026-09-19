@@ -330,6 +330,7 @@ class Session:
         hello_interval_ns: int = 1 * NS_PER_S,
         hello_silence_ns: int = 2 * NS_PER_S,
         conductor_lost_ns: int = 4 * NS_PER_S,  # under the conductor's 6 s peer drop; see the module docstring
+        content_silence_ns: int = 5 * NS_PER_S,  # joined, SyncResp arrives, but no Assign/Control/event/bass: re-hello
         sync_timeout_ns: int = 3 * NS_PER_S,
         jitter_source: Callable[[], int] | None = None,
         id_source: Callable[[], int] | None = None,
@@ -340,6 +341,7 @@ class Session:
         self.hello_interval_ns = _positive("hello_interval_ns", hello_interval_ns)
         self.hello_silence_ns = _positive("hello_silence_ns", hello_silence_ns)
         self.conductor_lost_ns = _positive("conductor_lost_ns", conductor_lost_ns)
+        self.content_silence_ns = _positive("content_silence_ns", content_silence_ns)
         self.sync_timeout_ns = _positive("sync_timeout_ns", sync_timeout_ns)
         self.max_outstanding = _positive("max_outstanding", max_outstanding)
         if jitter_source is not None and not callable(jitter_source):
@@ -364,6 +366,7 @@ class Session:
         self._next_sync: int | None = None
         self._sync_sent = 0  # SyncReqs sent in the current session (drives the 50 ms burst)
         self._last_rx: int | None = None  # local ns of the last datagram received from the conductor
+        self._last_content: int | None = None  # ... of the last non-SyncResp one (Assign/Control/event/bass)
         self._suspended = False  # conductor was lost: mode stays 'off' until a fresh Assign/Control
         self._mode: tuple[str, bool, int] | None = None  # mode, lights, gen (of the current session)
         self._status: dict | None = None
@@ -472,7 +475,11 @@ class Session:
         self._expire(now_ns)
         out: list[bytes] = []
         silent = self._last_rx is None or now_ns - self._last_rx >= self.hello_silence_ns
-        if (not self._joined or silent) and (
+        # After a conductor restart the peer table is empty: SyncReq alone re-creates a peer that is answered
+        # (SyncResp) but never sent Assign, Control, events or bass until it says hello again. Silence of the
+        # whole conductor is therefore not enough: silence of everything except SyncResp also means hello.
+        orphaned = self._joined and (self._last_content is None or now_ns - self._last_content >= self.content_silence_ns)
+        if (not self._joined or silent or orphaned) and (
                 self._last_hello is None or now_ns - self._last_hello >= self.hello_interval_ns):
             out.append(self.hello_datagram())
             self._last_hello = now_ns
@@ -538,6 +545,7 @@ class Session:
         if isinstance(pkt, SyncResp):
             self._on_sync_resp(pkt, now_ns)
             return []
+        self._last_content = now_ns  # a parsed Assign, Control, event or bass envelope (even a duplicate)
         if isinstance(pkt, EventPacket):
             if pkt.target != ftm_client.TARGET_ALL and pkt.target != self._index:
                 self._c["not_for_me"] += 1

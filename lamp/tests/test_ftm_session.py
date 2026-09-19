@@ -290,7 +290,7 @@ def test_hello_is_resent_once_a_second_after_2s_of_conductor_silence():
 def test_any_datagram_from_the_conductor_defers_the_hello_resend():
     s = joined()
     now = T0 + MS
-    for _ in range(10):  # a datagram every 1.5 s keeps the silence under 2 s
+    for _ in range(2):  # a datagram every 1.5 s keeps the silence under 2 s (and content silence under 5 s)
         now += 1500 * MS
         feed(s, resp_bytes(1, 0, 0), now)
         assert not any(b'"hi"' in d for d in s.poll(now + MS))
@@ -1290,3 +1290,47 @@ def test_parse_error_from_decode_is_counted(monkeypatch):
     monkeypatch.setattr(ftm_client, "decode", bad)
     s = make()
     assert feed(s, bytes([3]) + bytes(25), T0) == [] and s.stats()["parse_errors"] == 1
+
+
+# ---------------------------------------------------------------------------------------- orphaned peer
+def _hellos(datagrams):
+    return [d for d in datagrams if d[:1] == b"\x04" and b'"hi"' in d]
+
+
+def test_rehello_when_only_syncresp_keeps_arriving_after_a_conductor_restart():
+    """Reported by meharsclaude (hub general seq 1065, on a real lamp): after a conductor restart the session changes
+    and a peer that said hello once and then only sends SyncReq looks joined but receives nothing. The conductor still
+    answers SyncReq, so 'the conductor is silent' (hello_silence) never fires. Content silence (no Assign, Control,
+    event or bass) while joined must bring the hello back."""
+    s = Session("lamp", jitter_source=lambda: 0)
+    now = T0
+    s.poll(now)
+    assert s.on_datagram(assign_bytes(777), now + MS) == [SessionOut(777)]
+    assert s.joined
+    hello_count = 0
+    for i in range(1, 40):  # 20 s at 0.5 s steps: SyncReqs are answered, nothing else ever arrives
+        now = T0 + i * 500 * MS
+        out = s.poll(now)
+        hello_count += len(_hellos(out))
+        for d in out:
+            if d[:1] == b"\x01":
+                rid = struct.unpack("<BH", d)[1]
+                s.on_datagram(resp_bytes(rid, 5 * S + now, 5 * S + now + MS), now + 2 * MS)
+    assert hello_count >= 3, "peer stayed silent to the conductor: an orphaned session is never re-hello'd"
+
+
+def test_no_rehello_while_content_keeps_arriving():
+    s = Session("lamp", jitter_source=lambda: 0)
+    s.poll(T0)
+    s.on_datagram(assign_bytes(777), T0 + MS)
+    hellos = 0
+    for i in range(1, 40):
+        now = T0 + i * 500 * MS
+        s.on_datagram(control_bytes({"lat": 300, "session": 777}), now)  # periodic Control counts as content
+        out = s.poll(now)
+        hellos += len(_hellos(out))
+        for d in out:
+            if d[:1] == b"\x01":
+                rid = struct.unpack("<BH", d)[1]
+                s.on_datagram(resp_bytes(rid, 5 * S + now, 5 * S + now + MS), now + 2 * MS)
+    assert hellos == 0
