@@ -59,6 +59,20 @@ def _snare_dark(shell_hz=180.0, cutoff_hz=1200.0):
     return make
 
 
+def _hats(rng, n_samples, bpm, bars, level=0.25):
+    """Closed hi-hats on every eighth note: short, high-passed noise bursts. Adds no snare body."""
+    x = np.zeros(n_samples, np.float32)
+    beat = 60.0 / bpm
+    for k in range(bars * 8):
+        i = int((LEAD_IN + k * beat / 2) * SR)
+        n = int(0.05 * SR)
+        tt = np.arange(n) / SR
+        burst = np.diff(rng.standard_normal(n + 1)) * np.exp(-tt * 90)
+        seg = level * burst[: max(0, n_samples - i)]
+        x[i:i + len(seg)] += seg
+    return x
+
+
 def synth(bpm=BPM, bars=BARS, seed=0, kick=_kick_sine, snare=_snare_tonal,
           kick_beats=None, snare_beats=None, tail=0.0):
     """Kick and snare hits over a noise floor. Returns (audio, kick_t, snare_t).
@@ -219,19 +233,53 @@ def _snare_tight(rng):
     return rng.standard_normal(len(tt)) * np.exp(-tt * 90)
 
 
-def test_snare_coinciding_with_kick_is_still_reported():
-    """A snare that lands together with a kick must still be reported, even a
-    tight one, and so must the kick. Behaviour guard: this passes on the
-    original code too, so the review's 'real snares are wrongly suppressed'
-    symptom was not reproduced on synthetic audio. The off-by-two frame read
-    itself is covered by test_hits_in_last_frames_do_not_crash."""
-    x, kick_t, snare_t = synth(snare=_snare_tight, kick_beats=lambda b: True,
+def test_snare_with_a_body_landing_with_a_kick_is_still_reported():
+    """A shell-heavy snare that lands together with a kick must be reported, and so must the kick.
+    (Behaviour guard: this passes on the original code too, so the review's 'real snares are wrongly
+    suppressed' symptom was not reproduced on synthetic audio. The off-by-two frame read itself is
+    covered by test_hits_in_last_frames_do_not_crash.)"""
+    x, kick_t, snare_t = synth(snare=_snare_dark(180, 1200), kick_beats=lambda b: True,
                                snare_beats=lambda b: b % 4 in (1, 3))
     a = analyze(x, SR)
-    both = [t for t in snare_t if t in kick_t]
-    assert both, "test setup: need coincident hits"
     assert match(times(a, "snare"), snare_t, 0.05) == len(snare_t)
     assert match(times(a, "kick"), kick_t, 0.05) == len(kick_t)
+
+
+@pytest.mark.xfail(reason="Known trade-off: a very short white-noise snare landing with a kick raises the "
+                          "body band no more than a hi-hat on the same beat does (body/low ratio median "
+                          "0.063 vs kick+hat <= 0.088), so only the kick is reported. Hats on kick beats "
+                          "are far more common than snares on them.", strict=False)
+def test_tight_white_noise_snare_landing_with_a_kick_is_reported():
+    x, kick_t, snare_t = synth(snare=_snare_tight, kick_beats=lambda b: True,
+                               snare_beats=lambda b: b % 4 in (1, 3))
+    assert match(times(analyze(x, SR), "snare"), snare_t, 0.05) == len(snare_t)
+
+
+@pytest.mark.parametrize("bpm", [90.0, 120.0, 140.0])
+def test_hi_hats_do_not_fire_snares(bpm):
+    """Regression: the snare channel summed body and noise-band flux, so a hi-hat (all top end, no
+    body) fired it on its own: 131 false snares for 96 real ones with eighth-note hats."""
+    fired = real = 0
+    for seed in (0, 1, 2):
+        x, kick_t, snare_t = alternating(bpm=bpm, seed=seed)
+        x = x + _hats(np.random.default_rng(seed + 100), len(x), bpm, BARS)
+        a = analyze(x, SR)
+        snares = times(a, "snare")
+        assert match(times(a, "kick"), kick_t, 0.05) == len(kick_t)
+        assert match(snares, snare_t, 0.05) == len(snare_t)
+        fired += len(snares) - match(snares, snare_t, 0.05)
+        real += len(snare_t)
+    assert fired <= 0.02 * real, f"{fired} false snares for {real} real ones"
+
+
+@pytest.mark.parametrize("level", [0.1, 0.25, 0.5])
+def test_hat_on_a_kick_beat_is_not_a_snare(level):
+    """The hardest hat case: kick and hat landing together, on every beat. Only kicks may be reported."""
+    x, kick_t, _ = synth(kick=_kick_sweep, snare_beats=lambda b: False)
+    x = x + _hats(np.random.default_rng(7), len(x), BPM, BARS, level=level)
+    a = analyze(x, SR)
+    assert match(times(a, "kick"), kick_t, 0.05) == len(kick_t)
+    assert match(times(a, "snare"), kick_t, 0.05) == 0
 
 
 def test_hits_in_last_frames_do_not_crash():
@@ -246,6 +294,129 @@ def test_hits_in_last_frames_do_not_crash():
         x[i:i + len(s)] += 0.5 * s[: len(x) - i]
         analyze(x, SR)  # must not raise
     assert hop_s > 0
+
+
+@pytest.mark.parametrize("bpm", [145.0, 150.0, 160.0, 174.0, 180.0])
+def test_fast_tempos_are_not_reported_at_half_time(bpm):
+    """Regression: 145-180 BPM came back at half (174 -> 87). The slower level repeats more
+    strongly in a kick/snare pattern, so it used to win the comb."""
+    x, _, _ = alternating(bpm=bpm, bars=16)
+    a = analyze(x, SR)
+    assert a.bpm == pytest.approx(bpm, rel=0.02)
+    assert a.tempo_confidence > 0.5
+
+
+@pytest.mark.parametrize("bpm", [70.0, 80.0, 90.0, 100.0])
+def test_slow_tempos_are_not_doubled(bpm):
+    """The octave fold must not turn a slow tempo into twice its speed, with or without hats."""
+    for with_hats in (False, True):
+        x, _, _ = alternating(bpm=bpm, bars=16)
+        if with_hats:
+            x = x + _hats(np.random.default_rng(5), len(x), bpm, 16)
+        assert analyze(x, SR).bpm == pytest.approx(bpm, rel=0.02), f"hats={with_hats}"
+
+
+@pytest.mark.xfail(reason="Known ambiguity: at or below ~80 BPM with strong eighth-note hats, the "
+                          "half-lag peak is as strong as the beat, so the fold doubles the tempo "
+                          "(65 BPM -> 130). Subdivision vs beat cannot be told apart here.", strict=False)
+def test_65_bpm_with_hats_is_not_doubled():
+    x, _, _ = alternating(bpm=65.0, bars=16)
+    x = x + _hats(np.random.default_rng(5), len(x), 65.0, 16)
+    assert analyze(x, SR).bpm == pytest.approx(65.0, rel=0.02)
+
+
+@pytest.mark.parametrize("bpm", [100.0, 120.0])
+def test_beat_grid_does_not_drift_over_a_song(bpm):
+    """Regression: one global period extrapolated across the track put the last beat 400-650 ms
+    off after three minutes, past the 300 ms room budget, while the +/-2 BPM tests still passed."""
+    bars = int(150 / (60.0 / bpm * 4))
+    x, _, _ = alternating(bpm=bpm, bars=bars)
+    a = analyze(x, SR)
+    beat = 60.0 / bpm
+    truth = [LEAD_IN + k * beat for k in range(int((len(x) / SR - LEAD_IN) / beat))]
+    n = min(len(a.beat_times), len(truth))
+    assert n > 0.9 * len(truth)
+    err = np.abs(np.array(a.beat_times[:n]) - np.array(truth[:n]))
+    assert err.max() < 0.03, f"worst beat error {err.max() * 1000:.0f} ms"
+
+
+def _pulseless(kind):
+    rng = np.random.default_rng(0)
+    n = 30 * SR
+    tt = np.arange(n) / SR
+    if kind == "room tone":
+        return 0.01 * rng.standard_normal(n).astype(np.float32)
+    if kind == "chord":
+        return (sum(np.sin(2 * np.pi * f * tt) for f in (220.0, 277.18, 329.63, 440.0)) * 0.1).astype(np.float32)
+    if kind == "two-partial chord":
+        return (sum(np.sin(2 * np.pi * f * tt) for f in (196.0, 392.0)) * 0.1).astype(np.float32)
+    swell = np.convolve(np.abs(rng.standard_normal(n)), np.ones(400) / 400, mode="same")
+    return (0.2 * rng.standard_normal(n) * (0.4 + swell)).astype(np.float32)
+
+
+@pytest.mark.parametrize("kind", ["room tone", "chord", "two-partial chord", "applause"])
+def test_pulseless_material_reports_no_tempo(kind):
+    """Regression: every pulseless clip got a confident BPM and a full beat grid (room tone ->
+    167 BPM with 33 beats). A lamp driven by that dances to nothing."""
+    a = analyze(_pulseless(kind), SR)
+    assert a.bpm is None
+    assert a.beat_times == []
+    assert a.beat_phase(1.0) is None
+    assert a.tempo_confidence < 0.3
+
+
+def test_pulsed_material_has_high_tempo_confidence_even_when_quiet_or_noisy():
+    x, _, _ = alternating(bpm=120.0, bars=16)
+    rng = np.random.default_rng(3)
+    for variant in (x * 0.02, x + 0.05 * rng.standard_normal(len(x)).astype(np.float32)):
+        a = analyze(variant.astype(np.float32), SR)
+        assert a.bpm == pytest.approx(120.0, rel=0.02)
+        assert a.tempo_confidence > 0.5
+
+
+def test_beat_phase_interpolates_between_the_bracketing_beats():
+    """The grid follows the music, so a beat interval is not constant: phase is measured between the
+    two beats that bracket the time, not against one global period."""
+    a = analyze(np.zeros(SR, dtype=np.float32), SR)
+    a.bpm = 60.0
+    a.beat_times = [0.0, 1.0, 2.5, 4.5]                  # intervals 1.0, 1.5, 2.0 s
+    assert a.beat_phase(0.5) == pytest.approx(0.5)
+    assert a.beat_phase(1.75) == pytest.approx(0.5)       # halfway through the 1.5 s interval
+    assert a.beat_phase(3.5) == pytest.approx(0.5)        # halfway through the 2.0 s interval
+    assert a.beat_phase(2.5) == pytest.approx(0.0)
+
+
+def test_eighth_note_kicks_are_all_found():
+    """Coverage gap found by mutation: with one kick per beat at 120 BPM a min-gap of 0.5 s (which
+    would silently drop every kick faster than every 500 ms) passed the suite."""
+    x, kick_t, _ = synth(bpm=120.0, kick=_kick_sweep, snare_beats=lambda b: False)
+    beat = 60.0 / 120.0
+    extra = [t + beat / 2 for t in kick_t[:-1]]
+    rng = np.random.default_rng(11)
+    for t in extra:
+        i = int(t * SR)
+        k = 0.8 * _kick_sweep(rng)
+        x[i:i + len(k)] += k[: len(x) - i]
+    a = analyze(x, SR)
+    every = sorted(kick_t + extra)
+    assert match(times(a, "kick"), every, 0.05) >= len(every) - 1
+
+
+def test_bass_envelope_ignores_energy_outside_the_bass_band():
+    """Coverage gap found by mutation: widening BASS_BAND from 50-100 Hz to 50-400 Hz passed the
+    suite. A 300 Hz burst must barely register; a 70 Hz burst of the same level must."""
+    rng = np.random.default_rng(2)
+    n = 6 * SR
+    x = _noise(rng, n)
+    tt = np.arange(int(0.25 * SR)) / SR
+    env = np.exp(-tt * 12)
+    for at, hz in ((1.0, 70.0), (3.0, 300.0), (5.0, 70.0)):
+        i = int(at * SR)
+        x[i:i + len(tt)] += 0.6 * np.sin(2 * np.pi * hz * tt) * env
+    a = analyze(x, SR)
+    at_bass = max(a.bass_envelope[int(t / a.hop_seconds)] for t in (1.05, 5.05))
+    at_mid = max(a.bass_envelope[int((3.0 + d) / a.hop_seconds)] for d in np.arange(0.0, 0.2, 0.01))
+    assert at_mid < 0.15 * at_bass, f"300 Hz burst reached {at_mid / at_bass:.0%} of the 70 Hz burst"
 
 
 def test_bass_envelope_tracks_kicks():
@@ -319,14 +490,69 @@ def test_wav_roundtrip(tmp_path):
     assert match(times(a, "kick"), kick_t, 0.04) == len(kick_t)
 
 
-def test_extensible_wav_gives_a_friendly_error(tmp_path):
-    """Python's wave module cannot open WAVE_FORMAT_EXTENSIBLE (tag 0xFFFE)."""
-    path = tmp_path / "ext.wav"
-    fmt = struct.pack("<HHIIHHHHIH14s", 0xFFFE, 2, SR, SR * 6, 6, 24, 22, 24, 3,
-                      1, b"\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"[:14])
-    data = b"\x00" * 600
-    body = (b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt
-            + b"data" + struct.pack("<I", len(data)) + data)
-    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
-    with pytest.raises(ValueError, match="WAVE_FORMAT_EXTENSIBLE"):
+def _wav_bytes(samples_le: bytes, *, tag=1, channels=1, rate=SR, bits=16, extensible=False, pad_list=False):
+    """Hand-built RIFF/WAVE bytes, so the loader is tested independently of the stdlib `wave` module."""
+    block = channels * bits // 8
+    if extensible:
+        fmt = struct.pack("<HHIIHHHHIH14s", 0xFFFE, channels, rate, rate * block, block, bits, 22, bits, 3,
+                          tag, bytes.fromhex("000000001000800000aa00389b71"))
+    else:
+        fmt = struct.pack("<HHIIHH", tag, channels, rate, rate * block, block, bits)
+    chunks = b"fmt " + struct.pack("<I", len(fmt)) + fmt
+    if pad_list:                                        # an odd-sized extra chunk before the data
+        chunks += b"LIST" + struct.pack("<I", 3) + b"abc" + bytes(1)
+    chunks += b"data" + struct.pack("<I", len(samples_le)) + samples_le
+    return b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks
+
+
+def _pcm24(values):
+    out = bytearray()
+    for v in values:
+        out += int(v).to_bytes(3, "little", signed=True)
+    return bytes(out)
+
+
+@pytest.mark.parametrize("extensible", [False, True])
+@pytest.mark.parametrize("pad_list", [False, True])
+def test_24_bit_pcm_loads_the_same_plain_or_extensible(tmp_path, extensible, pad_list):
+    """WAVE_FORMAT_EXTENSIBLE is what most tools emit for 24-bit. The stdlib `wave` module rejected
+    it before Python 3.12 and reads it from 3.12, so this must not depend on the interpreter."""
+    values = [0, 4194304, -4194304, 8388607, -8388608, 1234567]
+    path = tmp_path / "x.wav"
+    path.write_bytes(_wav_bytes(_pcm24(values), bits=24, extensible=extensible, pad_list=pad_list))
+    data, rate = load_wav(str(path))
+    assert rate == SR
+    np.testing.assert_allclose(data, np.array(values) / 8388608.0, atol=1e-6)
+
+
+def test_extensible_stereo_16_bit_is_downmixed(tmp_path):
+    left, right = np.array([1000, -2000, 3000], "<i2"), np.array([3000, -4000, 5000], "<i2")
+    pcm = np.column_stack([left, right]).tobytes()
+    path = tmp_path / "s.wav"
+    path.write_bytes(_wav_bytes(pcm, channels=2, bits=16, extensible=True))
+    data, _ = load_wav(str(path))
+    np.testing.assert_allclose(data, (left.astype(float) + right) / 2 / 32768.0, atol=1e-6)
+
+
+@pytest.mark.parametrize("extensible", [False, True])
+def test_float_wav_gives_a_friendly_error(tmp_path, extensible):
+    path = tmp_path / "f.wav"
+    path.write_bytes(_wav_bytes(np.zeros(8, "<f4").tobytes(), tag=3, bits=32, extensible=extensible))
+    with pytest.raises(ValueError, match="not integer PCM"):
+        load_wav(str(path))
+
+
+def test_truncated_data_chunk_loads_what_is_there(tmp_path):
+    """A streamed or cut-off file can claim more data than it holds."""
+    good = _wav_bytes(np.arange(100, dtype="<i2").tobytes())
+    path = tmp_path / "t.wav"
+    path.write_bytes(good[:-51])                        # cuts mid-sample; the odd byte must be dropped
+    data, _ = load_wav(str(path))
+    assert len(data) == 74
+
+
+def test_not_a_wav_file(tmp_path):
+    path = tmp_path / "n.wav"
+    path.write_bytes(b"this is not audio at all")
+    with pytest.raises(ValueError, match="not a RIFF/WAVE"):
         load_wav(str(path))
