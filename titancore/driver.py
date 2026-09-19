@@ -1,10 +1,16 @@
 """TITAN Core haptic kit serial driver and communication interface.
 
 Communicates with the TITAN Core ESP32 board over USB UART at 115200 baud (8N1).
+Vendor Hardware Specification (V2.1 TC-153286-B datasheet 2025-04-30):
+  - Board Vin ABS MAX: 6.0 V, Recommended: 4.75-5.25 V (5V USB rail).
+    CAUTION: Never apply 12V to the board or its power inputs.
+  - GPIO max: 3.6 V (3.3V logic).
+  - Motor peak: 2 A (sustained lower); 1S LiPo JST-PH2 charger: 500 mA.
 Controls three independent actuator channels:
-  - L (Left): PAM8403 Class-D stereo amp driving continuous bass (50-100 Hz).
-  - R (Right): PAM8403 Class-D stereo amp driving continuous bass (50-100 Hz).
-  - M (Middle): DRV8212 H-bridge driver driving transient impacts (kicks/snares).
+  - L (Left, channel 1): PAM8403 Class-D stereo amp driving continuous bass (50-100 Hz).
+  - R (Right, channel 2): PAM8403 Class-D stereo amp driving continuous bass (50-100 Hz).
+  - M (Middle, channel 3): DRV8212 H-bridge driver driving transient impacts (kicks/snares).
+  - All (channel 0): Broadcast / all channels.
 """
 
 from __future__ import annotations
@@ -68,10 +74,14 @@ class TitanDriver:
     """Serial communication controller for TITAN Core haptic board.
 
     Enforces:
-      - 115200 baud 8N1 ASCII command grammar.
+      - 115200 baud 8N1 ASCII command grammar per vendor datasheet V2.1:
+        `CHNL <0..3>`, `Tick <strength> <durationMs>`, `Pulse <strength> <durationMs>`,
+        `vibrate <freqHz> <strength> <durationMs> <duty> <sharpness>`, `pause <durationMs>`,
+        `F <frameFreqHz> <frameSize>`, `PCM <v0>,<v1>,...,<vN>`.
       - Slew-rate limiting on continuous PCM to prevent voice-coil clicking.
       - Minimum 50 ms inter-strike interval on Channel M to protect the DRV8212 H-bridge.
       - Rest value centering (128 = 0 V / zero current).
+      - Board Vin limit: 4.75-5.25 V recommended (ABS MAX 6.0 V). Never apply 12 V.
     """
 
     BAUDRATE: int = 115200
@@ -182,7 +192,7 @@ class TitanDriver:
     def send_pcm(self, samples: Sequence[Union[int, float]]) -> List[int]:
         """Send a block of 8-bit PCM samples for continuous bass on Channels L/R.
 
-        Grammar: PCM <v0> <v1> ... <vN>;
+        Recovered vendor grammar: PCM <v0>,<v1>,...,<vN>;
         Enforces rest-centering (128) and slew-rate clamping.
         """
         if not samples:
@@ -212,19 +222,129 @@ class TitanDriver:
             smoothed.append(val)
             current = val
 
-        # Format and write command BEFORE advancing last sample state
-        values_str = " ".join(str(v) for v in smoothed)
+        # Format as comma-separated values per vendor datasheet grammar
+        values_str = ",".join(str(v) for v in smoothed)
         cmd = f"PCM {values_str};"
         self._write_command(cmd)
 
         self._last_pcm_sample = current
         return smoothed
 
-    def send_transient(self, amplitude: int, duration_ms: int) -> bool:
+    def send_tick(self, channel: int = 3, strength: float = 1.0, duration_ms: float = 20.0) -> bool:
+        """Send transient Tick command on specified channel (0=all, 1=L, 2=R, 3=M).
+
+        Grammar: CHNL <channel>; Tick <strength> <durationMs>;
+        """
+        try:
+            s_val = float(strength)
+            d_val = float(duration_ms)
+            if not (math.isfinite(s_val) and math.isfinite(d_val)):
+                return False
+        except (ValueError, TypeError):
+            return False
+
+        now = self._time_fn()
+        if channel == 3 and (now - self._last_strike_time) < self.MIN_STRIKE_INTERVAL_S:
+            logger.warning("Channel M transient strike dropped: cooldown active (<50 ms)")
+            self.dropped_strikes_cooldown += 1
+            return False
+
+        chnl = max(0, min(3, int(channel)))
+        str_clamped = max(0.0, min(1.0, s_val))
+        dur_clamped = max(
+            self.MIN_TRANSIENT_DURATION_MS,
+            min(self.MAX_TRANSIENT_DURATION_MS, d_val),
+        )
+
+        cmd = f"CHNL {chnl}; Tick {str_clamped:.2f} {dur_clamped:.1f};"
+        self._write_command(cmd)
+        if chnl in (0, 3):
+            self._last_strike_time = now
+        return True
+
+    def send_pulse(self, channel: int = 3, strength: float = 1.0, duration_ms: float = 20.0) -> bool:
+        """Send transient Pulse command on specified channel (0=all, 1=L, 2=R, 3=M).
+
+        Grammar: CHNL <channel>; Pulse <strength> <durationMs>;
+        """
+        try:
+            s_val = float(strength)
+            d_val = float(duration_ms)
+            if not (math.isfinite(s_val) and math.isfinite(d_val)):
+                return False
+        except (ValueError, TypeError):
+            return False
+
+        now = self._time_fn()
+        if channel == 3 and (now - self._last_strike_time) < self.MIN_STRIKE_INTERVAL_S:
+            logger.warning("Channel M transient strike dropped: cooldown active (<50 ms)")
+            self.dropped_strikes_cooldown += 1
+            return False
+
+        chnl = max(0, min(3, int(channel)))
+        str_clamped = max(0.0, min(1.0, s_val))
+        dur_clamped = max(
+            self.MIN_TRANSIENT_DURATION_MS,
+            min(self.MAX_TRANSIENT_DURATION_MS, d_val),
+        )
+
+        cmd = f"CHNL {chnl}; Pulse {str_clamped:.2f} {dur_clamped:.1f};"
+        self._write_command(cmd)
+        if chnl in (0, 3):
+            self._last_strike_time = now
+        return True
+
+    def send_vibrate(
+        self,
+        channel: int = 1,
+        freq_hz: float = 100.0,
+        strength: float = 0.5,
+        duration_ms: float = 100.0,
+        duty: float = 1.0,
+        sharpness: float = 1.0,
+    ) -> bool:
+        """Send continuous vibration command.
+
+        Grammar: CHNL <channel>; vibrate <freqHz> <strength> <durationMs> <duty> <sharpness>;
+        """
+        try:
+            f = float(freq_hz)
+            s = float(strength)
+            d = float(duration_ms)
+            du = float(duty)
+            sh = float(sharpness)
+            if not all(math.isfinite(v) for v in (f, s, d, du, sh)):
+                return False
+        except (ValueError, TypeError):
+            return False
+
+        chnl = max(0, min(3, int(channel)))
+        cmd = f"CHNL {chnl}; vibrate {max(10.0, f):.1f} {max(0.0, min(1.0, s)):.2f} {max(1.0, d):.1f} {max(0.0, min(1.0, du)):.2f} {max(0.0, min(1.0, sh)):.2f};"
+        self._write_command(cmd)
+        return True
+
+    def send_pause(self, duration_ms: float = 0.0) -> bool:
+        """Send pause command in milliseconds.
+
+        Grammar: pause <durationMs>;
+        """
+        try:
+            d = float(duration_ms)
+            if not math.isfinite(d):
+                return False
+        except (ValueError, TypeError):
+            return False
+
+        cmd = f"pause {max(0.0, d):.1f};"
+        self._write_command(cmd)
+        return True
+
+    def send_transient(self, amplitude: Union[int, float], duration_ms: Union[int, float]) -> bool:
         """Trigger a high-impact transient hit on Channel M (DRV8212).
 
-        Grammar: CHNL M <amplitude> <duration_ms>;
-        Enforces 50 ms thermal cooldown to prevent H-bridge damage.
+        Vendor grammar: CHNL 3; Tick <strength> <durationMs>;
+        Accepts amplitude as 0..255 integer or 0.0..1.0 float.
+        Enforces 50 ms thermal cooldown to protect the DRV8212 H-bridge.
         """
         try:
             amp_val = float(amplitude)
@@ -234,23 +354,13 @@ class TitanDriver:
         except (ValueError, TypeError):
             return False
 
-        now = self._time_fn()
-        if (now - self._last_strike_time) < self.MIN_STRIKE_INTERVAL_S:
-            logger.warning("Channel M transient strike dropped: cooldown active (<50 ms)")
-            self.dropped_strikes_cooldown += 1
-            return False
+        # Scale amplitude: if > 1.0, assume 0..255 scale
+        if amp_val > 1.0:
+            strength = amp_val / 255.0
+        else:
+            strength = amp_val
 
-        # Clamp parameters
-        amp = max(0, min(self.MAX_SAMPLE, int(round(amp_val))))
-        dur = max(
-            self.MIN_TRANSIENT_DURATION_MS,
-            min(self.MAX_TRANSIENT_DURATION_MS, int(round(dur_val))),
-        )
-
-        cmd = f"CHNL M {amp} {dur};"
-        self._write_command(cmd)
-        self._last_strike_time = now
-        return True
+        return self.send_tick(channel=3, strength=strength, duration_ms=dur_val)
 
     def emergency_stop(self) -> None:
         """Instantly silence all channels and reset state to rest."""
@@ -260,10 +370,10 @@ class TitanDriver:
         was_armed = self.armed
         self.armed = True
         try:
-            # Neutralize Channel M and reset L/R to rest (128)
-            self._write_command("CHNL M 0 0;")
+            # Neutralize all channels and reset L/R to rest (128)
+            self._write_command("CHNL 0; pause 0;")
             rest_frame = [self.REST_VALUE] * 8
-            values_str = " ".join(str(v) for v in rest_frame)
+            values_str = ",".join(str(v) for v in rest_frame)
             self._write_command(f"PCM {values_str};")
             self._last_pcm_sample = self.REST_VALUE
         finally:

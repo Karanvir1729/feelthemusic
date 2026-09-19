@@ -27,8 +27,8 @@ class MockClock:
 def test_fake_serial_port_line_buffering():
     fake = FakeSerialPort()
     fake.write(b"F 200 32;\n")
-    fake.write(b"CHNL M 255 30;")
-    assert fake.written_lines == ["F 200 32", "CHNL M 255 30"]
+    fake.write(b"CHNL 3; Tick 0.85 20.5;")
+    assert fake.written_lines == ["F 200 32", "CHNL 3", "Tick 0.85 20.5"]
 
     fake.clear()
     assert len(fake.written_lines) == 0
@@ -91,7 +91,8 @@ def test_driver_channel_m_cooldown():
     # First transient hit
     ok1 = driver.send_transient(amplitude=240, duration_ms=30)
     assert ok1 is True
-    assert fake.written_lines[-1] == "CHNL M 240 30"
+    assert fake.written_lines[-2] == "CHNL 3"
+    assert fake.written_lines[-1] == "Tick 0.94 30.0"
 
     # Rapid second hit 20 ms later (< 50 ms cooldown)
     clock.advance(0.020)
@@ -103,7 +104,8 @@ def test_driver_channel_m_cooldown():
     clock.advance(0.035)
     ok3 = driver.send_transient(amplitude=200, duration_ms=25)
     assert ok3 is True
-    assert fake.written_lines[-1] == "CHNL M 200 25"
+    assert fake.written_lines[-2] == "CHNL 3"
+    assert fake.written_lines[-1] == "Tick 0.78 25.0"
 
 
 def test_driver_emergency_stop():
@@ -113,8 +115,9 @@ def test_driver_emergency_stop():
     driver.send_pcm([200, 220])
     driver.emergency_stop()
 
-    assert "CHNL M 0 0" in fake.written_lines[-2]
-    assert "PCM 128 128 128 128 128 128 128 128" in fake.written_lines[-1]
+    assert "CHNL 0" in fake.written_lines[-3]
+    assert "pause 0" in fake.written_lines[-2]
+    assert "PCM 128,128,128,128,128,128,128,128" in fake.written_lines[-1]
     assert driver._last_pcm_sample == 128
 
     driver.close()
@@ -137,7 +140,8 @@ def test_event_mapper_kick_snare():
     handled = mapper.handle_event(kick_event)
     assert handled is True
     assert mapper.kicks_fired == 1
-    assert any("CHNL M" in line for line in fake.written_lines)
+    assert any("CHNL 3" in line for line in fake.written_lines)
+    assert any("Tick" in line for line in fake.written_lines)
     assert any("PCM" in line for line in fake.written_lines)
 
     # Test snare event
@@ -198,7 +202,7 @@ def test_event_mapper_stop_and_unknown():
 
     stop_event = {"type": "stop"}
     assert mapper.handle_event(stop_event) is True
-    assert "CHNL M 0 0" in fake.written_lines[-2]
+    assert "pause 0" in fake.written_lines[-2]
 
     unknown_event = {"type": "laser_beam"}
     assert mapper.handle_event(unknown_event) is False
@@ -250,7 +254,7 @@ def test_event_mapper_late_stop_never_dropped():
     # Stop event with ancient pts (1.0s vs current 100.0s)
     late_stop = {"type": "stop", "pts": 1.0}
     assert mapper.handle_event(late_stop) is True
-    assert "CHNL M 0 0" in fake.written_lines[-2]
+    assert "pause 0" in fake.written_lines[-2]
     assert mapper.dropped_late_events == 0
 
 
@@ -310,7 +314,7 @@ def test_driver_arming_gate():
     # Disarming sends emergency stop then disarms
     driver.disarm()
     assert not driver.armed
-    assert "CHNL M 0 0" in fake.written_lines[-2]
+    assert "pause 0" in fake.written_lines[-2]
 
 
 def test_driver_and_mapper_clamping():
@@ -321,11 +325,13 @@ def test_driver_and_mapper_clamping():
 
     # Transient amplitude and duration clamping
     assert driver.send_transient(amplitude=999, duration_ms=500) is True
-    assert fake.written_lines[-1] == "CHNL M 255 100"
+    assert fake.written_lines[-2] == "CHNL 3"
+    assert fake.written_lines[-1] == "Tick 1.00 100.0"
 
     clock.advance(0.060)
     assert driver.send_transient(amplitude=-50, duration_ms=1) is True
-    assert fake.written_lines[-1] == "CHNL M 0 5"
+    assert fake.written_lines[-2] == "CHNL 3"
+    assert fake.written_lines[-1] == "Tick 0.00 5.0"
 
     # PCM sample clamping
     smoothed = driver.send_pcm([-50, 300])
@@ -340,4 +346,42 @@ def test_driver_and_mapper_clamping():
     frame_over = mapper.synthesize_bass_frame(intensity=2.0)
     assert max(frame_over) <= 255
     assert min(frame_over) >= 0
+
+
+def test_driver_vendor_grammar():
+    fake = FakeSerialPort()
+    driver = TitanDriver(serial_instance=fake)
+
+    # send_tick
+    assert driver.send_tick(channel=3, strength=0.85, duration_ms=20.5) is True
+    assert fake.written_lines[-2] == "CHNL 3"
+    assert fake.written_lines[-1] == "Tick 0.85 20.5"
+
+    # send_pulse
+    assert driver.send_pulse(channel=1, strength=0.6, duration_ms=15.0) is True
+    assert fake.written_lines[-2] == "CHNL 1"
+    assert fake.written_lines[-1] == "Pulse 0.60 15.0"
+
+    # send_vibrate
+    assert (
+        driver.send_vibrate(
+            channel=1,
+            freq_hz=100.0,
+            strength=0.3,
+            duration_ms=15000.0,
+            duty=1.0,
+            sharpness=1.0,
+        )
+        is True
+    )
+    assert fake.written_lines[-2] == "CHNL 1"
+    assert fake.written_lines[-1] == "vibrate 100.0 0.30 15000.0 1.00 1.00"
+
+    # send_pause
+    assert driver.send_pause(duration_ms=50.0) is True
+    assert fake.written_lines[-1] == "pause 50.0"
+
+    # Comma-separated PCM
+    driver.send_pcm([128, 140, 150])
+    assert fake.written_lines[-1] == "PCM 128,140,150"
 
