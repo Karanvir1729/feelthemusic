@@ -1,29 +1,57 @@
-base 74.0 x 79.3 x 27.1 mm; lid 56.0 x 49.2 x 12.5 mm
+Parametric enclosure and checked motor diameter: 10.5 mm
+base 74.0 x 79.3 x 27.1 mm; lid 56.0 x 49.2 x 15.9 mm
 closed puck body 56.0 x 49.2 x 28.7 mm (plus strap flanges and cable tongue)
-board: keep-out envelope (959 boxes)
-motors checked as 10.5 mm x 23.0 mm
-== interference volumes (mm3), must be 0
-  board x base: 0.000
-  LF x base: 0.000
-  MF x base: 0.000
-  LFi x base: 0.000
-  USB plug overmould x base: 0.004
-  board x lid: 0.000
-  LF x lid: 0.000
-  MF x lid: 0.000
-  LFi x lid: 0.000
-  USB plug overmould x lid: 0.000
-  lid x base (closed): 0.000
-  board x motors: 0.000
-== minimum clearances (mm)
-  board to base: 0.00   board to lid: 0.34
-  LF: to base 0.20, to lid 11.42, to board 3.64
-  MF: to base 0.20, to lid 11.42, to board 17.11
-  LFi: to base 0.00, to lid 0.96, to board 10.23
-  LFi top end to lid underside: 2.50
-  LF/MF ends to -Y wall: 5.64; MF end to LFi sleeve: 4.23
-== printability
-  puck_base.stl: watertight True, volume 19.0 cm3 (~24 g PLA solid), size [74.  79.2 27.1], bed contact 3191 mm2, down-facing >45deg not on bed: 300 mm2
-     where (z bands above bed): [(0.0, 138.0), (2.0, 0.0), (6.0, 0.0), (10.0, 38.0), (14.0, 28.0), (20.0, 96.0)]
-  puck_lid_print.stl: watertight True, volume 5.0 cm3 (~6 g PLA solid), size [56.  49.3 12.5], bed contact 2132 mm2, down-facing >45deg not on bed: 94 mm2
-     where (z bands above bed): [(0.0, 75.0), (2.0, 19.0), (6.0, 0.0), (10.0, 0.0), (14.0, 0.0), (20.0, 0.0)]
+enclosure MOTOR_D=10.50 mm; motors checked as 10.50 mm x 23.50 mm
+checked waist: diameter 9.10 mm, start 8.60 mm, length 5.50 mm
+== interference volumes: pass at <= 0.01 mm3
+  keep-out board x base: 0.000000 mm3
+  LF x base: 0.000000 mm3
+  MF x base: 0.000000 mm3
+  LFi x base: 0.000000 mm3
+  USB plug overmould x base: 0.000000 mm3
+  keep-out board x lid: 0.000000 mm3
+  LF x lid: 0.000000 mm3
+  MF x lid: 0.000000 mm3
+  LFi x lid: 0.000000 mm3
+  USB plug overmould x lid: 0.000000 mm3
+  lid x base (closed): 0.000000 mm3
+  keep-out board x LF: 0.000000 mm3
+  keep-out board x MF: 0.000000 mm3
+  keep-out board x LFi: 0.000000 mm3
+  USB plug overmould x LF: 0.000000 mm3
+  USB plug overmould x MF: 0.000000 mm3
+  USB plug overmould x LFi: 0.000000 mm3
+  LF x MF: 0.000000 mm3
+  LF x LFi: 0.000000 mm3
+  MF x LFi: 0.000000 mm3
+== minimum clearances
+  LF to MF: 3.300 mm (minimum 3.000)
+  LF to LFi: 4.737 mm (minimum 3.000)
+  MF to LFi: 4.737 mm (minimum 3.000)
+  LF to board: 17.314 mm (minimum 0.000)
+  LF to lid: 0.300 mm (minimum 0.000)
+  MF to board: 3.644 mm (minimum 0.000)
+  MF to lid: 0.300 mm (minimum 0.000)
+  LFi to board: 10.330 mm (minimum 0.000)
+  LFi to lid: 0.560 mm (minimum 0.000)
+  LF front end to inner wall: 4.290 mm
+  LF rear end to inner wall: 17.460 mm
+  LF to LFi sleeve outside envelope: 2.937 mm (minimum 2.000)
+  MF front end to inner wall: 4.290 mm
+  MF rear end to inner wall: 17.460 mm
+  MF to LFi sleeve outside envelope: 2.937 mm (minimum 2.000)
+  LFi top end to lid underside: 2.000 mm
+  The LFi lower end contacts the floor; end protection/foam and motor retention require physical checks.
+== sampled axial capture: +/-1 mm travel at 0.300 mm upward lift
+  LF, Y -1.0 mm: blocking overlap 2.352848 mm3
+  LF, Y +1.0 mm: blocking overlap 2.352848 mm3
+  MF, Y -1.0 mm: blocking overlap 2.352848 mm3
+  MF, Y +1.0 mm: blocking overlap 2.352848 mm3
+  Static sampled configurations only: not a motion-path, strength, or dynamic-retention proof; measure the real profile.
+== structural and fresh-mesh checks
+  nominal structural walls and three material probes >= 1.6 mm; global minimum wall thickness requires slicer review
+  puck_base: watertight, one body, 19.73 cm3; size [74.   79.25 27.1 ] mm; bed contact 3191.3 mm2; down-facing >45deg above bed 273.3 mm2
+  puck_lid_print: watertight, one body, 6.27 cm3; size [56.   49.25 15.9 ] mm; bed contact 2342.1 mm2; down-facing >45deg above bed 62.3 mm2
+  Down-facing area is diagnostic only: it does not prove bridge length or support-free printability.
+PASS: geometry and fit checks passed; slicer and physical checks remain necessary.
+puck_plate.3mf: plate 136 x 79 mm

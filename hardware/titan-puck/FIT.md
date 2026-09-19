@@ -1,5 +1,16 @@
 # Fit analysis: puck v1 against the real parts (2026-09-19)
 
+## Current v2 status
+
+The historical v1 analysis below is measurement evidence, not current print approval.
+Karan clarified that v2 remains parameterized to the measured `MOTOR_D`, not one universal foam-lined bore.
+A fixed 1 mm foam wrap does not establish retention throughout 9.5-10.8 mm.
+The current model has open locators, lid lift-out retainers and lower-half waist collars using provisional cap/waist photo estimates.
+Measure `WAIST_D`, `WAIST_START` and `WAIST_LEN` before trusting the collars to restrain the physical motors.
+See `README.md` for current checks, unresolved wiring/jumper fit and the print-review boundary.
+
+## Original photo analysis
+
 Checked against a top-view photo of the real TITAN Core and the three DRAKE motors lying in a clear box
 (`photos/`, with a 1 mm grid drawn on). The board is the ruler: it measures 20.4 x 44.3 mm on the grid against
 20.3 x 44.6 mm from the vendor model. The board rides about 10 mm higher on its header pins than the motors, so the
