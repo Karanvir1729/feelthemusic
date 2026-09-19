@@ -77,7 +77,21 @@ the bridge; packets from other IPs are ignored. For a fixed deployment, restrict
 .venv/bin/python bridge.py --allow-ip <mac-lan-ip> --cutoff-c 70 --max-step 5
 ```
 
-Malformed packets are discarded, and an uncertain or incomplete SDK move (`lost_track`, timeout,
-cancelled, or not reached) is terminal: the bridge reports the failure and sends no follow-up move
-until an operator restarts it. The Mac add-on panel displays the camera feed and telemetry; it does
-not need the lamp token.
+What the bridge does with bad input and bad outcomes:
+
+- **Input.** A datagram is discarded, never fatal, if it is over 2 KiB, nests JSON deeper than 4
+  levels (deep nesting raises `RecursionError` inside `json.loads`, which used to kill the bridge
+  from one packet), is not valid UTF-8 or JSON, is not an object, or fails field validation.
+- **An uncertain or incomplete move** (`lost_track`, timeout, cancelled, not reached: any 409) is
+  terminal. The bridge reports it, sends no follow-up move, and **exits with status 2**, so a
+  supervisor that restarts on exit 0 will not restart it. Check the robot, then restart.
+- **A refusal** (the planner said no, nothing moved) is counted. The bridge stops sending moves for
+  10 s (60 s after a rate limit), stops after 3 in a row, and stops at once if torque is off or the
+  SDK session limit is hit (exit status 2). `sdk.refusal_policy` holds these numbers; `follow.py`
+  applies the same ones inline, so change both together.
+- **Who may send.** `--allow-ip` restricts senders. Without it the first valid sender is pinned, so
+  **whoever speaks first wins**. Neither is authentication: UDP source addresses can be spoofed on
+  the LAN, so this narrows the exposure and does not remove it. An HMAC with a per-session secret
+  would need a change on the Mac side too.
+
+The Mac add-on panel displays the camera feed and telemetry; it does not need the lamp token.
