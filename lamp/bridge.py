@@ -37,6 +37,31 @@ def temperature_c() -> float | None:
         return None
 
 
+def idle_off(base: str) -> str | None:
+    """Pause the runtime's dashboard idle selector so it cannot undo a tracking move.
+
+    This is the same non-motion selector used by follow.py. All arm movement still goes
+    through the token-gated SDK gateway.
+    """
+    import requests
+    try:
+        previous = requests.get(f"{base}/api/animations/status", timeout=4).json().get("current_idle") or "idle"
+        requests.post(f"{base}/api/animations/idle", json={"name": "none"}, timeout=8).raise_for_status()
+        return previous
+    except Exception:
+        return None
+
+
+def idle_restore(base: str, previous: str | None) -> None:
+    if not previous:
+        return
+    import requests
+    try:
+        requests.post(f"{base}/api/animations/idle", json={"name": previous}, timeout=8).raise_for_status()
+    except Exception:
+        print("warning: could not restore the lamp idle selector", flush=True)
+
+
 def telemetry(sock: socket.socket, addr: tuple[str, int] | None, reply_port: int, state: str,
               temp: float | None, **extra) -> None:
     if addr is None or not 1024 <= int(reply_port) <= 65535:
@@ -94,6 +119,7 @@ def main() -> None:
     ap.add_argument("--cutoff-c", type=float, default=70.0, help="stop motion at this Pi temperature")
     ap.add_argument("--max-step", type=float, default=5.0, help="maximum change to any joint per move")
     ap.add_argument("--min-interval", type=float, default=2.5, help="seconds between SDK moves")
+    ap.add_argument("--keep-idle", action="store_true", help="leave the lamp's idle animation running between moves")
     ap.add_argument("--robot-dir", default=str(DEFAULT_ROBOT_DIR))
     args = ap.parse_args()
     host, _, port_text = args.listen.rpartition(":")
@@ -135,6 +161,7 @@ def main() -> None:
     last_telemetry = 0.0
     measured = {j: float(info["positions"][j]) for j in JOINTS}
     moves = 0
+    previous_idle = None if args.keep_idle else idle_off(sdk.base)
 
     try:
         while not stop:
@@ -200,6 +227,7 @@ def main() -> None:
                 time.sleep(0.5)
     finally:
         sock.close()
+        idle_restore(sdk.base, previous_idle)
         print(f"stopped; {moves} SDK moves completed", flush=True)
 
 
