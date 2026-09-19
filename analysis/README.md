@@ -6,7 +6,7 @@ Conductor-side music analysis. Numpy only, deterministic, no I/O beyond an optio
 from analysis import analyze_file
 a = analyze_file("track.wav")
 a.bpm                        # tempo, or None when the audio has no pulse
-a.tempo_confidence           # 0..1; 0.0 and bpm None mean "no pulse", not "unsure"
+a.tempo_confidence           # 0..1 salience; key on `bpm`: None means no usable tempo. Clips under 12 beats also give None with a HIGH confidence (0.96 at 1 bar, 0.99 at 2 bars at 120 BPM, measured); 3 bars is enough
 a.beat_times                 # the beat grid in seconds; follows the onsets, empty without a pulse
 a.beat_phase(12.3)           # 0..1 position in the beat (interpolated between bracketing beats), None without a pulse
 a.events                     # Event(t, kind="kick"|"snare"|"onset", strength 0..1)
@@ -22,7 +22,7 @@ Run the tests from anywhere in the repo (`pytest`; needs Python 3.11 or newer an
 pytest tests/analysis
 ```
 
-There is no CI and no pinned requirements file in the repo yet (task #12), so "runs on my machine" is all this guarantees. Run on Python 3.11 with numpy 1.26.4, and on 3.12 and 3.13 with numpy 2.x.
+CI (`.github/workflows/tests.yml`, `requirements-dev.txt`, `pytest.ini`) runs the suite on Python 3.11 and 3.12 with numpy 1.26.4. Also run by hand on 3.12 and 3.13 with numpy 2.x.
 
 ## Input
 
@@ -50,7 +50,7 @@ Measured, on **synthetic** audio only (Windows dev machine, Python 3.11 and 3.13
 - Kick and snare over 12 tracks (90 to 140 BPM, 3 seeds each): every hit found, no kick on a snare, no snare on a kick, timing within about 3 ms of the truth on average.
 - Dark, shell-heavy snares (180 and 240 Hz shells): 0 of 144 hits fire a kick (the first version fired 9 to 114 of 144).
 - Eighth-note hi-hats over kick and snare: 0 false snares (the previous version gave 131 for 96 real snares).
-- Tempo: 145 to 180 BPM correct (they were reported at half), 70 to 110 BPM correct with and without hats. Beat grid within 4 ms of the truth after 150 to 180 s (it was 400 to 650 ms off).
+- Tempo: 145 to 180 BPM correct (they were reported at half), 70 to 110 BPM correct with and without hats. Beat grid within about 5 ms of the truth after 150 to 180 s (4.2 to 5.5 ms measured by an independent reviewer; it was 400 to 650 ms off).
 - Pulseless clips (room tone, sustained chords, applause-like noise): no tempo and no beat grid.
 - Peak Python-heap memory for a 240 s track about 28 MB (it was about 1 GB before chunking).
 

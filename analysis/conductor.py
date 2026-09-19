@@ -66,7 +66,8 @@ SNARE_MIN_BODY_TO_LOW_WITH_KICK = 0.09
 #  - confidence: how far the winning autocorrelation peak stands above the median of the search
 #    band (0..1). Pulsed synthetic material >= 0.84, room tone / applause / noise <= 0.06.
 #  - onset concentration: the share of all onset flux carried by the strongest 5% of frames.
-#    Pulsed >= 0.48, pulseless (chords, noise, sweep) <= 0.28.
+#    Pulsed >= 0.48, pulseless (chords, noise) <= 0.28. A slowly swept sine is NOT rejected: a 50 to 5000 Hz
+#    linear chirp over 20 s reads bpm 172 at confidence 0.68 (measured); log chirps, steady tones and vibrato are.
 # NOT measured on real music: a dense track with a constant texture may spread its onset energy
 # more than these synthetic ones and be wrongly reported as pulseless. That fails safe (no beat
 # grid) but must be checked on the demo track (task #7).
@@ -441,7 +442,8 @@ def analyze(samples: np.ndarray, sample_rate: int) -> Analysis:
     for f in _pick_peaks(snare_flux, hop_s, min_gap_s=0.12):
         if _peak_max(body_rise, f) < SNARE_MIN_BODY_TO_NOISE * _peak_max(noise_rise, f):
             continue                                      # top end without a body: a hi-hat
-        if any(abs(f - k) <= 2 for k in kick_frames)                 and _peak_max(body_rise, f) < SNARE_MIN_BODY_TO_LOW_WITH_KICK * _peak_max(low_rise, f):
+        if (any(abs(f - k) <= 2 for k in kick_frames)
+                and _peak_max(body_rise, f) < SNARE_MIN_BODY_TO_LOW_WITH_KICK * _peak_max(low_rise, f)):
             continue                                      # a kick (plus hat, plus its own leakage), not a snare
         snare_frames.append(f)
 
