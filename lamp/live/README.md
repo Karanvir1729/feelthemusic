@@ -12,6 +12,7 @@ measure against and pick from. It is not a merge candidate as it stands: see "Ru
 | `spatial.py` | Forward kinematics, IK (`look_at`), pose checks, on the vendor description and the lamp's own calibration (read at runtime, never copied). |
 | `sdk.py` | Client for the vendor SDK gateway (token read from the lamp's environment, never printed). |
 | `ftm_discover.py` | Finds the conductor over mDNS/DNS-SD with the standard library (no zeroconf/avahi); caches the last answer. `lamp_show.py` re-discovers after 15 s of silence. |
+| `follow_game.py` | The lamp's side of the follow-the-lamp phone game ([docs/follow-game.md](../../docs/follow-game.md)): publishes each accepted clip's head path to the conductor (`lpath` telemetry, the lamp's own frame, never mirrored, stamped with the instant the head physically starts) and shows the room's `followStatus` on the panel as a colour that glides and cannot flash. Moves nothing. Hooked into `lamp_show.py` only when `FOLLOW_GAME=1` (default off). |
 | `install_clips.py` | Puts generated clips into the runtime's animation pack atomically (tmp → fsync → replace → sync → md5) and checks the runtime lists them. |
 | `mode.sh`, `run_show.sh`, `run_face.sh`, `hold.py` | Operator launchers. |
 | `analysis/` | The measurement scripts behind the numbers below (ZMP per clip, the shoulder/elbow pair rule, servo and clip-route probes, the on-arm beat tracer). |
