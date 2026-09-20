@@ -48,16 +48,23 @@ class Hall:
         self.canvas = canvas.astype(np.float32)
         self.rng = np.random.default_rng(seed + 1)
 
-    def frame(self, offset=(0, 0), *, torches=(), gain=1.0, patch=None, tint=None, noise=2.0):
+    def frame(self, offset=(0, 0), *, torches=(), gain=1.0, patch=None, tint=None, noise=2.0, glints=(), roll=0.0):
         """torches: (x, y, level) in frame pixels, level 1.0 clips a 2-3 px core with a halo; patch: a white
-        rectangle (x, y, w, h) at 250; tint: colour of the torch light (B, G, R factors); gain: exposure."""
+        rectangle (x, y, w, h) at 250; tint: colour of the torch light (B, G, R factors); gain: exposure;
+        glints: (x, y, r) clipped discs that are always on (a watch face, glasses); roll: degrees the whole
+        picture is turned about its centre (wrist_roll)."""
         ox, oy = int(round(offset[0])), int(round(offset[1]))
         img = self.canvas[PAD - oy:PAD - oy + H, PAD - ox:PAD - ox + W].copy()
         if patch is not None:
             x, y, w, h = patch
             img[max(0, y):y + h, max(0, x):x + w] = 250
+        for (gx, gy, gr) in glints:
+            cv2.circle(img, (int(round(gx)), int(round(gy))), int(gr), (255, 255, 255), -1)
         for (tx, ty, level) in torches:
             self.stamp_torch(img, tx, ty, level, tint)
+        if roll:
+            img = cv2.warpAffine(img, cv2.getRotationMatrix2D((W / 2, H / 2), roll, 1.0), (W, H),
+                                 borderMode=cv2.BORDER_REPLICATE)
         img *= gain
         if noise:
             img += self.rng.normal(0, noise, img.shape).astype(np.float32)
@@ -274,11 +281,139 @@ def test_two_phones_flashing_together_keep_the_first_locked_even_when_the_other_
     assert sorted(round(t.x * W) for t in tracker.tracks) == [200, 450]
 
 
+def test_two_phones_an_arm_apart_stay_separate_even_when_one_waits_a_second_between_flashes():
+    """The gate grows while a track waits (GATE_RATE), but never past GATE_MAX: a second phone 140 px away
+    (0.22 widths, about half a metre at 2 m) is not swallowed by a track that has waited 0.6 s. The phone
+    that reaches two blinks first (B, at call 5) is the incumbent and stays it."""
+    hall = Hall(28)
+    frames = []
+    for i in range(30):
+        torches = []
+        if i % 6 == 1:
+            torches.append((200.0, 240.0, 1.0))           # A, every 0.6 s
+        if i % 3 == 1:
+            torches.append((340.0, 240.0, 1.0))           # B, every 0.3 s, 140 px from A
+        frames.append(hall.frame(torches=torches))
+    tracker = T.TorchTracker()
+    results = run(tracker, frames)
+    by_x = {round(t.x * W): t.hits for t in tracker.tracks}
+    assert by_x == {200: 5, 340: 10}                       # every flash went to its own phone's track
+    reported = [r for r in results if r is not None]
+    assert len(reported) == 9 and all(abs(r[0] * W - 340) < 1.0 for r in reported)
+
+
 def test_excluded_picture_zone_is_never_reported():
     hall = Hall(26)
     frames, _ = flashing(hall, 12, (320.0, 400.0))
     assert run(T.TorchTracker(exclude=[(0.0, 0.7, 1.0, 1.0)]), frames) == [None] * 12
     assert sum(r is not None for r in run(T.TorchTracker(), frames)) == 3
+
+
+# ---- things that move but do not blink; a head that rolls; a hand that moves -------------------------------
+@pytest.mark.parametrize("speed,r", [(8, 1), (12, 2), (20, 1), (30, 2)])
+def test_a_bright_point_carried_across_the_picture_is_not_a_torch(speed, r):
+    """A watch face, glasses or a screen reflection moving with a person is absent from the aligned neighbours
+    AT THE SPOT it now occupies, exactly like a blink; what gives it away is the clipped point that vanished
+    next to it. Before that check the detector reported it on every frame."""
+    hall = Hall(40 + speed)
+    frames = [hall.frame(glints=[(100 + speed * i, 240 + 0.3 * speed * i, r)]) for i in range(16)]
+    tracker = T.TorchTracker()
+    assert run(tracker, frames) == [None] * 16
+    assert tracker.tracks == []
+
+
+def test_a_torch_is_still_reported_while_a_glint_moves_elsewhere():
+    hall = Hall(41)
+    frames, truth = [], []
+    for i in range(15):
+        on = i % 3 == 1
+        frames.append(hall.frame(torches=[(450.0, 120.0, 1.0)] if on else [], glints=[(100 + 12 * i, 300, 1)]))
+        truth.append((450.0, 120.0) if on else None)
+    results = run(T.TorchTracker(), frames)
+    assert [i for i, r in enumerate(results) if r is not None] == [5, 8, 11, 14]
+    assert max(errors_px(results, truth)) < 1.0
+
+
+@pytest.mark.parametrize("deg", [1.0, 2.0])
+def test_head_roll_makes_no_torch_out_of_static_lights(deg):
+    """wrist_roll turns the picture about its centre; a translation cannot align the edges, where every strip
+    and glint then looks new. The references showing clipped points the candidate does not refuses the frame.
+    Before that check, 2 deg per frame produced a false torch at the picture's edge on 12 of 15 frames."""
+    hall = Hall(42)
+    tracker = T.TorchTracker()
+    assert run(tracker, [hall.frame(roll=deg * i) for i in range(15)]) == [None] * 15
+    assert tracker.tracks == []
+    frames = [hall.frame(torches=[(250.0, 200.0, 1.0)] if i % 3 == 1 else [], roll=deg * i) for i in range(15)]
+    assert sum(r is not None for r in run(T.TorchTracker(), frames)) >= 3    # a real torch is still found
+
+
+def test_hand_held_torch_that_moves_between_flashes_is_followed():
+    """A hand moves between beats: 45 px per 0.3 s here (about 0.5 m/s at 2 m). With a fixed 38 px gate
+    every flash opened a new one-hit track and nothing was ever reported; the gate now grows with the wait."""
+    hall = Hall(43)
+    frames, truth = [], []
+    for i in range(24):
+        on, k = i % 3 == 1, i // 3
+        at = (150.0 + 45 * k, 240.0 + 9 * k)
+        frames.append(hall.frame(torches=[(*at, 1.0)] if on else []))
+        truth.append(at if on else None)
+    tracker = T.TorchTracker()
+    results = run(tracker, frames)
+    assert [i for i, r in enumerate(results) if r is not None] == [5, 8, 11, 14, 17, 20, 23]
+    assert max(errors_px(results, truth)) < 1.0
+    assert len(tracker.tracks) == 1 and tracker.tracks[0].hits == 8
+
+
+def test_one_stray_glint_does_not_hold_the_place_against_the_torch():
+    """A glint that blinks once at frame 1 is a one-hit track; the torch starts flashing at frame 4. A one-hit
+    track must not be the incumbent for TRACK_S: the torch is reported from its second flash (call 8), not
+    after the glint expires (call 38 before this fix)."""
+    hall = Hall(44)
+    frames = []
+    for i in range(40):
+        torches = [(520.0, 120.0, 0.5)] if i == 1 else []
+        if i >= 4 and i % 3 == 1:
+            torches.append((200.0, 260.0, 1.0))
+        frames.append(hall.frame(torches=torches))
+    results = run(T.TorchTracker(), frames)
+    reported = [i for i, r in enumerate(results) if r is not None]
+    assert reported[0] == 8 and all(abs(results[i][0] * W - 200) < 1.0 for i in reported)
+
+
+def test_torch_into_the_lens_is_nothing_rather_than_a_target():
+    """A torch 30 cm from the lens blooms over thousands of pixels: too big to be a point and too much newly
+    clipped area to trust the frame. Nothing is reported, so nothing is chased."""
+    hall = Hall(45)
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    r2 = (xx - 320) ** 2 + (yy - 240) ** 2
+    bloom = (3000.0 * np.exp(-r2 / (2 * 25.0 ** 2)) + 400.0 * (1 + r2 / 900.0) ** -1.0)[:, :, None]
+    frames = []
+    for i in range(12):
+        img = hall.frame()
+        if i % 3 == 1:
+            img = np.clip(img.astype(np.float32) + bloom, 0, 255).astype(np.uint8)
+        frames.append(img)
+    tracker = T.TorchTracker()
+    assert run(tracker, frames) == [None] * 12
+    assert tracker.tracks == []
+
+
+def test_without_a_schedule_any_compact_white_blinker_is_a_torch_KNOWN_LIMIT():
+    """follow.py passes no flash schedule. A blinking status LED, a bike light, or a steady distant light
+    uncovered for one frame at a time by a moving head is then indistinguishable from the torch: this test
+    records that both ARE reported. Only a schedule from the process that has the EventPackets can refuse
+    them, and a head bobbing on the beat would pass even that."""
+    hall = Hall(46)
+    blinker = [hall.frame(torches=[(500.0, 150.0, 0.6)] if i % 4 == 1 else []) for i in range(20)]
+    assert sum(r is not None for r in run(T.TorchTracker(), blinker)) >= 2
+    plain = Hall(47, clutter=False)
+    frames = []
+    for i in range(15):
+        img = plain.frame(glints=[(400.0, 150.0, 2)])       # a steady 2 px light...
+        if i % 3 != 1:
+            img[130:175, 370:430] = 40                        # ...behind a head, except every third frame
+        frames.append(img)
+    assert sum(r is not None for r in run(T.TorchTracker(), frames)) >= 2
 
 
 # ---- the beat schedule --------------------------------------------------------------------------------

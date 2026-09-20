@@ -10,15 +10,22 @@ brightness or shape alone:
 
   transient   the candidate frame minus the (aligned, dilated) maximum of the analysed frames before and after
               it; only a compact, clipped, white, round brightening that neither neighbour shows survives
+  not moved   a clipped point that a reference shows near the candidate blob but the candidate does not show
+              anywhere close is a bright thing that MOVED (a watch face, glasses, a reflection carried across the
+              picture), not one that blinked: the blob is refused. The same test over the whole frame refuses a
+              frame whose references no longer line up (a head roll, which translation cannot align)
   aligned     the head moves (live steps, the search sweep, the vendor's idle animation): each reference is
               shifted onto the candidate by phase correlation first (verified against the unshifted residual),
               a shift too large to trust returns nothing, and a frame whose bright content the references do not
               cover (misalignment, an exposure jump, a light switched on) returns nothing
   in time     when the flash schedule is supplied (instants on the Pi's monotonic clock), a candidate whose stamp
               is not inside a flash window gets confidence 0. The window is wide (camera-stamp latency is 8-141 ms
-              ASSUMED, never measured) until three flashes have taught the tracker the latency; then it tightens
-  persistent  a place must flash MIN_HITS times before it is reported, and an incumbent inside its gate is kept
-              over anything brighter elsewhere: the head does not jump to another phone or a one-off glint
+              ASSUMED, never measured) until three flashes have taught the tracker the latency; then it tightens.
+              WITHOUT a schedule (follow.py passes none) any compact white blinker is a torch to this detector: a
+              blinking status LED, a bike light, a distant light uncovered for one frame by a moving head
+  persistent  a place must flash MIN_HITS times before it is reported; the association gate grows with the time
+              since the last flash (a hand moves between beats), and once a track has MIN_HITS it is the incumbent
+              and is kept over anything brighter elsewhere: the head does not jump to another phone or a glint
 
 The follower's contract is kept: `TorchTracker.locate(bgr) -> (x, y, size) | None`, the same as every other
 tracker. Because the candidate is the PREVIOUS analysed frame, the returned position is moved by the measured
@@ -54,13 +61,17 @@ ROUND_FROM = 30           # px: from this area on, a blob must not fill its own 
 FILL_MAX = 0.9            # area / (rotated bounding rectangle); a disc is 0.79, a lit rectangle 1.0
 SATURATED = 240           # the candidate's core must clip (a torch is 14x..50 000x over saturation, ASSUMED)
 NEW_SATURATED_MAX = 300   # px at 640x480 clipped in the candidate but not in the references: more = do not trust
+MOVED_PX = 48             # a bright point in a reference within this of the blob, gone from the candidate: it moved
+BRIGHT = 200              # 'bright' for that test: a small light rides across the clip line as it moves (238 -> 253)
 MAX_BLINKS = 2            # more compact blinks than this in one frame: the picture moved, not the lights (nothing)
 WHITE_RATIO = 0.6         # min / max colour channel of the unclipped flash light: white LED, not the panel's colour
 WHITE_MIN_SUM = 200       # below this much unclipped flash light the colour cannot be judged (accepted)
 DILATE_PX = 13            # a reference light within 6 px cancels the candidate (sub-pixel motion, stamp jitter)
 SHIFT_MAX_PX = 16.0       # scene shift between analysed frames above this: alignment not trusted, nothing returned
 REF_GAP_MAX_S = 0.6       # a reference further from the candidate than this does not prove the light was off
-GATE = 0.06               # picture widths: association radius, TargetLock's floor (about 4 deg here)
+GATE = 0.06               # picture widths: association radius right after a flash, TargetLock's floor (about 4 deg)
+GATE_RATE = 0.15          # widths per second the gate grows by while a track waits for its next flash (a hand moves)
+GATE_MAX = 0.2            # widths: the gate never exceeds this (about 12 deg; two phones an arm apart stay separate)
 TRACK_S = 3.5             # a track unseen this long expires (the follower's sighting window for non-frame kinds)
 MIN_HITS = 2              # flashes at one place before it is reported
 MIN_CONFIDENCE = 0.5
@@ -164,6 +175,17 @@ def uncovered_saturation(on: np.ndarray, ref: np.ndarray) -> int:
     return int(cv2.countNonZero(cv2.bitwise_and((on >= SATURATED).view(np.uint8), (ref < SATURATED).view(np.uint8))))
 
 
+def vanished(on: np.ndarray, raw_ref: np.ndarray, level: int) -> np.ndarray:
+    """Mask (uint8 0/1) of pixels at or above `level` in the undilated reference maximum that are not within
+    6 px of such a pixel in `on`: bright things the references show that the candidate does not. A blink adds
+    none; a bright point carried across the picture leaves one where it was; a roll or a failed alignment
+    leaves them at every light near the picture's edge. At SATURATED it is the mirror of
+    uncovered_saturation (a whole-frame trust test); at BRIGHT it catches a small moving light whose peak
+    rides across the clip line from frame to frame (the blob test)."""
+    covered = cv2.dilate((on >= level).view(np.uint8), _DILATE)
+    return cv2.bitwise_and((raw_ref >= level).view(np.uint8), (covered == 0).view(np.uint8))
+
+
 def flash_candidates(on: np.ndarray, refs: Sequence[np.ndarray], *, max_candidates: int = MAX_BLINKS,
                      peak_min: float = PEAK_MIN) -> list[Blob]:
     """Compact, clipped, round brightenings of `on` (grey) that no reference (grey, already aligned onto `on`)
@@ -171,18 +193,26 @@ def flash_candidates(on: np.ndarray, refs: Sequence[np.ndarray], *, max_candidat
 
     Pure: no state, no clock. Returns the strongest first, at most `max_candidates`. A brightening that is
     large (a lit wall, the panel's reflection on a glossy table), a streak (motion blur), a filled rectangle
-    (a screen going white), or not clipped (a screen at 200 nits, a torch pointing well away) is not a
-    candidate. A frame whose clipped content the references do not cover, or with MORE than `max_candidates`
-    blinks in it (a misaligned reference turns every small static light into a blink), yields none at all.
+    (a screen going white), not clipped (a screen at 200 nits, a torch pointing well away), or next to a
+    clipped point that a reference shows and the candidate does not (a bright point that moved here, not one
+    that blinked here) is not a candidate. A frame whose clipped content the references do not cover, whose
+    references show clipped content the candidate does not (either way: a misaligned reference turns every
+    small static light into a blink), or with MORE than `max_candidates` blinks in it, yields none at all.
     """
     if not refs:
         return []
     h, w = on.shape[:2]
     scale = (w * h) / REF_PIXELS
-    ref = reference(refs)
+    raw = refs[0]
+    for r in refs[1:]:
+        raw = cv2.max(raw, r)
+    ref = cv2.dilate(raw, _DILATE)
     d = cv2.subtract(on, ref)
     if cv2.minMaxLoc(d)[1] < DIFF_MIN or uncovered_saturation(on, ref) > NEW_SATURATED_MAX * scale:
         return []
+    if cv2.countNonZero(vanished(on, raw, SATURATED)) > NEW_SATURATED_MAX * scale:
+        return []                            # the references do not line up with the candidate (a roll, a jump)
+    moved = vanished(on, raw, BRIGHT)
     # difference of Gaussians: a point stands out against its own neighbourhood, a lit region does not
     narrow = cv2.GaussianBlur(d, (0, 0), 1.5)
     wide = cv2.resize(cv2.GaussianBlur(cv2.resize(d, (max(8, w // 4), max(8, h // 4)), interpolation=cv2.INTER_AREA),
@@ -218,8 +248,12 @@ def flash_candidates(on: np.ndarray, refs: Sequence[np.ndarray], *, max_candidat
         if core < SATURATED:
             continue
         weights = win[ys, xs].astype(np.float32)
-        out.append(Blob(float(x0 + (weights * xs).sum() / weights.sum()), float(y0 + (weights * ys).sum() / weights.sum()),
-                        area, float(peak), core))
+        bx_c, by_c = float(x0 + (weights * xs).sum() / weights.sum()), float(y0 + (weights * ys).sum() / weights.sum())
+        cx, cy = int(round(bx_c)), int(round(by_c))
+        if cv2.countNonZero(moved[max(0, cy - MOVED_PX):cy + MOVED_PX + 1,
+                                  max(0, cx - MOVED_PX):cx + MOVED_PX + 1]) >= MIN_AREA:
+            continue                         # a bright point was near here a frame ago and is gone: it moved
+        out.append(Blob(bx_c, by_c, area, float(peak), core))
         if len(out) > max_candidates:
             return []                        # a third (fourth...) blink at once: the picture moved, not the lights
     return out
@@ -376,12 +410,18 @@ class TorchTracker:
         aspect = h / w
         dx, dy = after.shift
         updated: list[Track] = []
+
+        def gap(t: Track, x: float, y: float) -> float:
+            """Distance in picture widths relative to the gate this track has earned by waiting: a hand
+            moves between beats, so a track that last flashed a second ago is allowed further than one
+            that flashed 100 ms ago."""
+            return math.hypot(t.x - x, (t.y - y) * aspect) / min(GATE_MAX, GATE + GATE_RATE * max(0.0, now - t.last))
+
         for b in blobs:                                    # strongest first; a track takes at most one blob
             x, y = (b.x + dx) / w, (b.y + dy) / h
-            near = [t for t in self.tracks if t not in updated
-                    and math.hypot(t.x - x, (t.y - y) * aspect) <= GATE]
+            near = [t for t in self.tracks if t not in updated and gap(t, x, y) <= 1.0]
             if near:
-                t = min(near, key=lambda t: math.hypot(t.x - x, (t.y - y) * aspect))
+                t = min(near, key=lambda t: gap(t, x, y))
                 t.x, t.y, t.hits, t.last, t.peak = x, y, t.hits + 1, now, max(t.peak, b.peak)
             else:
                 t = Track(x, y, now, b.peak)
@@ -389,8 +429,10 @@ class TorchTracker:
             updated.append(t)
         if offset is not None:
             self._offsets.append(offset)
-        # the incumbent is kept while it lives; a brighter or nearer flash elsewhere does not replace it
-        if self.incumbent is None or self.incumbent not in self.tracks:
+        # a track that has reached min_hits is the incumbent and is kept while it lives: a brighter or nearer
+        # flash elsewhere does not replace it. Until one has, the best track so far holds the place only
+        # provisionally, so one stray glint cannot block the torch for TRACK_S
+        if self.incumbent is None or self.incumbent not in self.tracks or self.incumbent.hits < self.min_hits:
             self.incumbent = max(self.tracks, key=lambda t: (t.hits, t.last, t.peak))
         t = self.incumbent
         if t not in updated:
