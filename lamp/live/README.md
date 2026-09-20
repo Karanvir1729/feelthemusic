@@ -37,6 +37,49 @@ measure against and pick from. It is not a merge candidate as it stands: see "Ru
 
 ## Expressive gestures and explicit pink-screen tracking
 
+### Calibrated dance presets (offline candidate)
+
+The existing show launcher accepts `--pattern auto|sweep|rise|diagonal|wiggle`.
+`auto` retains music-driven tiers and variant rotation.
+The other choices pin one existing choreography: hype a, hype b, hype c, or build b respectively.
+They keep the same eight-beat clock, start/end pose, generator, calibration validator and speed ceiling.
+The `--bold 0..1` startup setting and existing dashboard Bolder moves slider control size.
+Sizing now happens after computing the full pattern's speed budget, so speed-limited yaw responds to the slider too.
+A changed size or pattern cannot substitute an already prepared clip with the old settings.
+Pre-generated library clips are full-sized, so a smaller requested size waits for a matching live-generated clip instead of silently playing larger movements.
+Pinned patterns also wait rather than substitute another pattern if the exact library variant is missing.
+The largest sweep takes eight beats rather than reversing each beat; fast wrist wiggles remain smaller.
+Higher tempos reduce travel to keep the same speed ceiling.
+
+This is calibrated workspace use, not a command to reach every mechanical end stop.
+The validator requires a real servo calibration with finite positive scales for all five joints, never the approximate joint-map fallback.
+It checks every sampled commanded frame against joint margins, table/base clearance, the existing stability criterion and the 140-unit/s ceiling.
+Those limits, gains and torque settings have not been raised.
+The regenerated choreography intentionally differs from the previously generated library; old CSVs and the example manifest are not evidence for these new paths.
+
+The native dashboard source is absent from this repository.
+The startup selector is implemented, but a dashboard pattern picker is not yet wired; no unused `lamp.pattern` wire field or second UI has been introduced.
+The inherited raw-route transport and outstanding safety-audit findings still block live activation under the SDK-only repository rule.
+No candidate files, clips or processes have been installed or started on the lamp.
+
+Read-only validation against the lamp's own calibration covered 252 trajectories: all twelve tier/variant combinations at 40, 80, 127.3, 132, 180, 214 and 300 BPM, with bold 0, 0.5 and 1.
+All passed the current sampled command gates: minimum head-y 0.02076 m, minimum y-ZMP -0.00231 m and maximum speed 138.593 units/s.
+At 132 BPM and full size, modeled wide-sweep lateral head travel is about 16.7 cm versus 5.9 cm in the previous generator; rise and diagonal vertical travel are about 10.5 and 10.7 cm versus 7.5 and 7.7 cm.
+These are model predictions, not measured physical travel or hardware acceptance.
+
+Verification for this candidate:
+
+- `python -m pytest lamp/live/tests -q`: 267 passed and 18 private-asset skips on Python 3.11 and 3.12.
+- `python -m pytest -q`: the nine root tests require private model assets and skip locally.
+- `ruff check --select F,E9` on the four changed Python files: passed.
+- Full Ruff on `beat_clips.py` and mypy on that generator and its tests: passed.
+- Full Ruff on the show and its tests still reports 224 pre-existing findings; scoped show mypy still reports 42 existing errors, with no new diagnostic messages versus the base revision.
+- Three rise/diagonal regressions and the all-variant size regression also passed with the lamp's real geometry and calibration, executing public candidate code in memory with network calls disabled.
+- Independent review checked 1,296 serialized trajectories for finite values, joint envelope, endpoints and speed; maximum speed was 138.597 units/s.
+- `lamp_show.py --help` and `git diff --check`: passed without starting the show.
+
+Physical movement and the dashboard end-to-end flow were not tested.
+
 The new choreography and detector are offline-tested candidates, not a claim of deployment or physical acceptance.
 The hardware measurements above describe the earlier event build, not these changes.
 No gain, torque, collision, joint-envelope or speed limit is raised for expressiveness.

@@ -9,20 +9,21 @@ ClipScheduler triggers so the pattern's beats fall on the music's beats.
 
 Shape of every clip (FPS 30), unchanged from v1 because the scheduler depends on it:
     0.6 s hold at START  |  8 beats of pattern, poses landing ON k*60/bpm after the hold  |  0.6 s hold at START
-Between two beats the arm holds 30 % of the beat, then a cosine-eased move takes the last 70 %, so it
-arrives exactly on the next beat instant. Starting and ending at START (a neutral-ish pose) means a
+Between two beats the arm normally holds 30 % of the beat, then moves for the last 70 %.
+The large hype phrases use the whole beat for a cosine-eased move, buying travel without raising speed.
+Starting and ending at START (a neutral-ish pose) means a
 re-trigger blends nothing: the runtime skips its blend-in when the first frames equal the current pose.
 
 v2 -- what changed and why (the v1 dance was timid on the arm: at 132 bpm it gave base_yaw +-12..18):
 * THREE variants per tier and bpm, beat_<tier>_<bpm>_<a|b|c>, that differ in choreography, not just
-  amplitude (groove: sway+bob / figure-eight / nod-led; hype: wide sway with elbow pump / bottom-up /
+  amplitude (groove: sway+bob / figure-eight / nod-led; hype: eight-beat wide sweep / bottom-up /
   crossing diagonals; drop: spring + sweep, then the matching hype; build: a progressive crouch with shivers on a
   different joint). The scheduler rotates a -> b -> c so the audience never sees the same 8 beats twice
   in a row. The unsuffixed v1 names stay as ALIASES (an identical copy of variant a, listed in the
   manifest with "alias_of") so a v4 scheduler that only knows beat_<tier>_<bpm> keeps working.
 * Bar accents: beat 1 of each bar (beats 1 and 5) moves x1.3; beat 5 adds a head flick (wrist_pitch up,
   wrist_roll). The drop's beat 1 is the spring itself (the spec's pose, exactly) so it carries no x1.3,
-  and the build's crouch is a progressive ramp that carries neither the accent nor the flick.
+  and the build's crouch and hype's large phrases carry neither the accent nor the flick.
 * Amplitude per JOINT, not one A for all: every pattern is written at its nominal (envelope-sized)
   size and each joint's excursion from START is then scaled by the largest s_j <= 1 whose commanded
   (post-gain) trajectory keeps that joint <= 140 units/s -- the vendor simulation limit and the design
@@ -56,8 +57,9 @@ CSV in the runtime's animations dir blocks the whole runtime at boot.
 LIVE generation (the operator's "Bolder moves" slider): lamp_show's ClipScheduler calls make_clip() on the
 lamp itself, at the tracker's exact bpm and the slider's `bold`, and writes the result into the runtime's
 pack with write_clip_atomic(). bold maps to an amplitude multiplier m = 0.35 + 0.65 * bold on every joint's
-excursion from START, applied BEFORE the per-joint speed-budget scale, so bold 1.0 is exactly the library
-(byte-identical files when the bpm equals a bucket) and 0.0 is about a third of it; the budget, the gains,
+excursion from START, applied AFTER choosing the full pattern's per-joint speed-budget scale.
+Thus a speed-limited joint still responds to the slider instead of every setting hitting the same ceiling.
+bold 1.0 is exactly the current generator's library and 0.0 is about a third of it; the budget, the gains,
 the envelope clamp and the validation are the same code. Validator.for_lamp() builds the model from the
 lamp's own vendor checkout and servo calibration (10 ms; a 145-frame validation takes ~57 ms on the Pi 5).
 
@@ -106,6 +108,13 @@ BEATS = 8
 MOVE_FRAC = 0.7                      # the last 70 % of each beat is the move; the first 30 % a hold
 TIERS = ("groove", "hype", "drop", "build")
 VARIANTS = ("a", "b", "c")
+DANCE_PATTERNS: dict[str, tuple[str, str] | None] = {
+    "auto": None,
+    "sweep": ("hype", "a"),
+    "rise": ("hype", "b"),
+    "diagonal": ("hype", "c"),
+    "wiggle": ("build", "b"),
+}
 ALIAS_VARIANT = "a"                  # the unsuffixed v1 name is a copy of this variant
 BPMS = tuple(range(80, 181, 4))
 CSV_HEADER = "timestamp," + ",".join(f"{j}.pos" for j in JOINTS)
@@ -258,26 +267,31 @@ FOLD = dict(bp=-8.0, el=-20.0, wp=-10.0)   # deeper: elbow -46 commanded lets ba
 
 
 def hype_excursions(variant: str) -> list[np.ndarray]:
-    """Hype beats 1..7 as excursions from START (nominal size, no accents yet)."""
-    s4 = [math.sin(k * math.pi / 2) for k in range(8)]                  # 4-beat sine: 0 +1 0 -1 ...
-    if variant == "a":      # wide sway (4-beat sine) with the elbow pumping every beat
-        return [_pose(yaw=1.2 * Y * s4[k], roll=-0.35, **(UP if k % 2 else FOLD)) for k in range(1, 8)]
+    """Large hype phrases at beats 1..7, without one-beat accents that shrink the entire sweep."""
+    up = dict(bp=12.0, el=22.0, wp=18.0)
+    down = dict(bp=-10.0, el=-32.0, wp=-18.0)
+    if variant == "a":      # eight-beat sweep: two beats out, four across, two home
+        yaws = [0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5]
+        heights = [0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5]
+        return [_pose(yaw=52.0 * yaw, bp=8.0 * max(height, 0),
+                      el=18.0 * height, wp=12.0 * height, roll=-0.35)
+                for yaw, height in zip(yaws, heights)]
     if variant == "b":      # bottom-up phrases on each side, spread over two beats per rise
-        return [_pose(yaw=-0.5 * Y, **DOWN),           # 1 lower-left
+        return [_pose(yaw=-0.5 * Y, **down),           # 1 lower-left
                 _pose(yaw=-0.5 * Y, bp=1.0),          # 2 halfway up
-                _pose(yaw=-0.5 * Y, **UP),            # 3 upper-left
+                _pose(yaw=-0.5 * Y, **up),            # 3 upper-left
                 _pose(),                              # 4 centre before changing sides
-                _pose(yaw=0.5 * Y, **DOWN),           # 5 lower-right
+                _pose(yaw=0.5 * Y, **down),           # 5 lower-right
                 _pose(yaw=0.5 * Y, bp=1.0),           # 6 halfway up
-                _pose(yaw=0.5 * Y, **UP)]             # 7 upper-right
+                _pose(yaw=0.5 * Y, **up)]             # 7 upper-right
     if variant == "c":      # crossing diagonals: each stroke passes through centre, never a one-beat reversal
-        return [_pose(yaw=Y, roll=0.3, **DOWN),        # 1 lower-right
+        return [_pose(yaw=Y, roll=0.3, **down),        # 1 lower-right
                 _pose(),                              # 2 centre of the first diagonal
-                _pose(yaw=-Y, roll=0.3, **UP),        # 3 upper-left
+                _pose(yaw=-Y, roll=0.3, **up),        # 3 upper-left
                 _pose(yaw=-Y, bp=1.0, roll=0.3),      # 4 lower on the same side
-                _pose(yaw=-Y, roll=0.3, **DOWN),      # 5 lower-left
+                _pose(yaw=-Y, roll=0.3, **down),      # 5 lower-left
                 _pose(),                              # 6 centre of the second diagonal
-                _pose(yaw=Y, roll=0.3, **UP)]          # 7 upper-right
+                _pose(yaw=Y, roll=0.3, **up)]          # 7 upper-right
     raise ValueError(f"unknown variant {variant!r}")
 
 
@@ -314,11 +328,11 @@ def drop_excursions(variant: str) -> list[np.ndarray]:
     """Drop: beat 1 the spring (the spec's pose); beats 2-4 a wide sweep that crosses the centre on beat 3
     (the spring's recoil) so no single beat carries more than Y of yaw (+Y -> -Y in one beat bound the
     yaw scale at half the size); beats 5-7 the matching hype, the sweep's direction chosen so the hype's
-    first beat continues it. a sweeps left first and lands in hype a; b sweeps right first and plays
+    first beat continues it. a sweeps right first and lands in hype a; b sweeps right first and plays
     hype b mirrored (the bottom-up phrase changes sides); c sweeps right in a fold then crosses diagonally."""
     hype = hype_excursions(variant)
     if variant == "a":
-        sign, roll, sweep, tail = -1.0, -0.4, UP, hype[4:7]
+        sign, roll, sweep, tail = 1.0, -0.4, UP, hype[4:7]
     elif variant == "b":
         sign, roll, sweep, tail = 1.0, 0.3, UP, [e * MIRROR for e in hype[4:7]]
     elif variant == "c":
@@ -353,9 +367,9 @@ def build_excursions(variant: str) -> list[np.ndarray]:
 
 def keyframes(tier: str, variant: str = "a") -> np.ndarray:
     """(BEATS+1, 5) RAW poses, pose k landing on beat instant k. Pose 0 and pose BEATS are START.
-    Bar accents (x1.3 on beats 1 and 5) and the beat-5 head flick are applied here, except on the
-    drop's spring (already the accent, and the spec's exact pose) and the build tier, whose crouch is a
-    progressive ramp and carries neither the accent nor the flick (a flick on beat 5 made it stutter)."""
+    Groove/drop carry bar accents and a beat-5 head flick, except the drop's already-accented spring.
+    Build and hype use unaccented phrases: a short extra jump would restrict the whole trajectory's size.
+    """
     if tier not in TIERS:
         raise ValueError(f"unknown tier {tier!r}")
     if variant not in VARIANTS:
@@ -365,9 +379,9 @@ def keyframes(tier: str, variant: str = "a") -> np.ndarray:
     K = np.tile(START, (BEATS + 1, 1))
     for k, e in enumerate(exc, start=1):
         e = np.array(e, dtype=float)
-        if tier not in ("build",) and k in ACCENT_BEATS and not (tier == "drop" and k == 1):
+        if tier not in ("build", "hype") and k in ACCENT_BEATS and not (tier == "drop" and k == 1):
             e = e * ACCENT
-        if k == FLICK_BEAT and tier != "build":
+        if k == FLICK_BEAT and tier not in ("build", "hype"):
             e = e + FLICK
         K[k] = START + e
     return K
@@ -417,7 +431,7 @@ def trajectory(keys: np.ndarray, bpm: float, fps: float = FPS, hold_s: float = H
 
 def raw_trajectory(tier: str, bpm: float, variant: str = "a") -> np.ndarray:
     """The nominal-size pattern sampled at fps: keyframe path plus the build's shiver overlay."""
-    U = trajectory(keyframes(tier, variant), bpm)
+    U = trajectory(keyframes(tier, variant), bpm, move_frac=1.0 if tier == "hype" else MOVE_FRAC)
     t = np.arange(len(U)) / FPS
     return U + shiver_overlay(tier, variant, bpm, t)
 
@@ -438,32 +452,24 @@ def scaled(raw: np.ndarray, scales: np.ndarray, start: np.ndarray = START) -> np
     return start + np.asarray(scales, dtype=float) * (np.asarray(raw, dtype=float) - start)
 
 
-def bold_trajectory(tier: str, bpm: float, variant: str = "a", bold: float = 1.0) -> np.ndarray:
-    """The nominal pattern with the slider's multiplier on every joint's excursion from START. Applied
-    BEFORE the speed budget (joint_scales), so a bold clip is scaled down by the budget where it must be
-    and a timid one is simply smaller. At bold 1.0 the multiplier is 1.0 and the raw trajectory is
-    returned untouched -- not even a float round trip -- so the library stays byte-identical."""
-    raw = raw_trajectory(tier, bpm, variant)
-    m = bold_multiplier(bold)
-    return raw if m == 1.0 else scaled(raw, m)
-
-
 def commanded(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
               scales: np.ndarray | None = None, bold: float = 1.0) -> np.ndarray:
-    """The trajectory as the runtime will be asked to play it: bold, per-joint scale, gain, then the
-    clamp. scales=None chooses them against the speed budget."""
-    raw = bold_trajectory(tier, bpm, variant, bold)
+    """Budget the full authored motion, then size it with bold before the envelope clamp.
+
+    Choosing scales before bold keeps the size control effective even on speed-limited joints.
+    """
+    raw = raw_trajectory(tier, bpm, variant)
     if scales is None:
         scales = joint_scales(raw, bpm, gain)
-    return clamp_envelope(apply_gain(scaled(raw, scales), gain))
+    return clamp_envelope(apply_gain(scaled(raw, scales * bold_multiplier(bold)), gain))
 
 
 def build_clip(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
                bold: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
     """(scales, commanded trajectory). The batch library is bold 1.0; the live path passes the slider."""
-    raw = bold_trajectory(tier, bpm, variant, bold)
+    raw = raw_trajectory(tier, bpm, variant)
     scales = joint_scales(raw, bpm, gain)
-    return scales, clamp_envelope(apply_gain(scaled(raw, scales), gain))
+    return scales, commanded(tier, bpm, variant, gain, scales, bold)
 
 
 # ----------------------------------------------------------------------------- validation
@@ -481,6 +487,10 @@ class Validator:
             robotdesc = Path(robotdesc)
             self.robot = robotdesc / "pi5_feetech_r1"
             self.model = LampModel(self.robot, calibration=robotdesc / "lelamp-calibration.json")
+        if not self.model.scale_source.startswith("servo calibration ") or any(
+                not math.isfinite(self.model._scale[j]) or not 0 < self.model._scale[j] <= math.pi / 100
+                for j in JOINTS):
+            raise ValueError("dance validation requires finite positive servo calibration for all five joints")
         root = ET.parse(self.robot / "robot.urdf").getroot()
         self.inertials = []
         for link in root.findall("link"):
@@ -501,7 +511,11 @@ class Validator:
         and the lamp's own servo calibration (the calibrated span IS the physical span). Loads in ~10 ms."""
         from spatial import DEFAULT_ROBOT_DIR
         robot_dir = Path(robot_dir if robot_dir is not None else DEFAULT_ROBOT_DIR)
-        return cls(model=LampModel(robot_dir, calibration=Path(calibration)), robot_dir=robot_dir)
+        calibration = Path(calibration)
+        model = LampModel(robot_dir, calibration=calibration)
+        if model.scale_source != f"servo calibration {calibration}":
+            raise ValueError("dance validation could not load the requested lamp calibration")
+        return cls(model=model, robot_dir=robot_dir)
 
     def com_and_head(self, u) -> tuple[np.ndarray, np.ndarray]:
         model = self.model
@@ -711,8 +725,8 @@ def generate(out: Path, tiers=TIERS, bpms=BPMS, robotdesc: Path = DEFAULT_ROBOTD
                      "range": {j: [round(float(lo), 4), round(float(hi), 4)]
                                for j, lo, hi in zip(JOINTS, U.min(axis=0), U.max(axis=0))},
                      "first_beat_s": HOLD_S + beat_period(bpm), "beats": BEATS,
-                     "accent_beats": [] if tier == "build" else ([5] if tier == "drop" else list(ACCENT_BEATS)),
-                     "flick_beat": None if tier == "build" else FLICK_BEAT,
+                     "accent_beats": [] if tier in ("build", "hype") else ([5] if tier == "drop" else list(ACCENT_BEATS)),
+                     "flick_beat": None if tier in ("build", "hype") else FLICK_BEAT,
                      "head_y_min": round(v["head_y_min"], 4), "zmp_y_min": round(v["zmp_y_min"], 4),
                      "peak_speed": {j: round(float(sp), 1) for j, sp in zip(JOINTS, v["peak_speed"])}}
                 if tier == "build":

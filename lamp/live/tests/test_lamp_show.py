@@ -441,7 +441,7 @@ def test_scheduler_posts_once_per_boundary_without_network():
     for k in ks: tr.feed(k)
     s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
                         status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                        start_latency_ns=350_000_000, log=lambda *_: None)
+                        start_latency_ns=350_000_000, log=lambda *_: None, bold=1.0)
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
     s.tick(post_at - 1_000, True, tr, 0.3)
@@ -619,6 +619,7 @@ def test_leaving_dance_with_a_post_in_flight_still_homes_exactly_once(monkeypatc
     posts, gate = [], _th.Event()
     show = bare_show(monkeypatch, posts, mode="light")
     s = show.scheduler
+    s.set_bold(1.0)                                         # this test explicitly requests full-amplitude library clips
     def slow_post(name):
         posts.append(name)
         if name != "home": gate.wait(1.0)                      # the clip POST is still on the wire
@@ -682,7 +683,7 @@ def test_base_of_and_manifest_loading():
 
 
 def test_variants_rotate_a_b_c_per_tier_and_never_repeat():
-    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, manifest=manifest_v2())
+    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, manifest=manifest_v2(), bold=1.0)
     picks = [s.pick("groove", 121.0) for _ in range(7)]
     assert picks == ["beat_groove_120_a", "beat_groove_120_b", "beat_groove_120_c",
                      "beat_groove_120_a", "beat_groove_120_b", "beat_groove_120_c", "beat_groove_120_a"]
@@ -703,19 +704,19 @@ def test_variants_rotate_a_b_c_per_tier_and_never_repeat():
 def test_variants_respect_the_runtime_listing_and_fall_back_to_aliases():
     # only a and c of groove 120 made it onto the lamp: rotate between those two
     lib = {"beat_groove_120_a", "beat_groove_120_c", "beat_groove_120", "beat_hype_120", "home"}
-    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, manifest=manifest_v2(), available=lib)
+    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, manifest=manifest_v2(), available=lib, bold=1.0)
     assert [s.pick("groove", 120) for _ in range(4)] == ["beat_groove_120_a", "beat_groove_120_c"] * 2
     # hype has only its alias on the lamp: the alias (v1 name) is what gets posted
     assert s.pick("hype", 120) == "beat_hype_120" and s.pick("hype", 120) == "beat_hype_120"
     # no manifest at all, variants on the lamp: rotate from the listing
-    s2 = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {},
+    s2 = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, bold=1.0,
                          available={"beat_groove_120_a", "beat_groove_120_b", "beat_groove_120"})
     assert [s2.pick("groove", 120) for _ in range(3)] == ["beat_groove_120_a", "beat_groove_120_b", "beat_groove_120_a"]
     # v1 library, no manifest: exactly v4's behaviour
-    s3 = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, available={"beat_groove_120", "beat_hype_124"})
+    s3 = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, available={"beat_groove_120", "beat_hype_124"}, bold=1.0)
     assert s3.pick("groove", 120) == "beat_groove_120" and s3.pick("drop", 121) == "beat_hype_124"
     assert s3.pick("groove", 170) is None
-    s4 = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {})
+    s4 = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, bold=1.0)
     assert s4.pick("hype", 127.0) == "beat_hype_128"
 
 
@@ -740,7 +741,7 @@ def test_scheduler_posts_build_during_a_build_then_drop_then_rotates(monkeypatch
     for k in ks: tr.feed(k)
     s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
                         status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)))
+                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)), bold=1.0)
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
     s.note_build(now, 6000)                                    # a 6 s BUILD spans the next clip
@@ -766,7 +767,7 @@ def test_scheduler_posts_build_during_a_build_then_drop_then_rotates(monkeypatch
     assert posts[-2:] == ["beat_groove_120_a", "beat_groove_120_b"]
     # an expired build is ignored, and a build with no build clips in the library falls back by excite
     s.note_build(t3 - 10_000_000_000, 1000)
-    s2 = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {},
+    s2 = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {}, bold=1.0,
                          start_latency_ns=350_000_000, log=lambda *_: None,
                          manifest=manifest_v2(tiers=("groove", "hype"), bpms=(120,)))
     s2.note_build(now, 6000)
@@ -786,7 +787,7 @@ def test_build_needs_to_outlast_half_the_clip(monkeypatch):
     for k in ks: tr.feed(k)
     def fresh():
         return L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {},
-                               start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)))
+                               start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)), bold=1.0)
     now = ks[-1]
     s = fresh()
     post_at, beat, period = s.plan(now, tr)
@@ -886,7 +887,7 @@ def test_show_bold_from_cli_and_control(monkeypatch, capsys):
 
 
 def test_next_letter_matches_pick_rotation():
-    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, manifest=manifest_v2(bpms=(120,)))
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, manifest=manifest_v2(bpms=(120,)), bold=1.0)
     for _ in range(4):
         want = s.next_letter("groove")
         got = s.pick("groove", 120).rsplit("_", 1)[1]
@@ -894,6 +895,120 @@ def test_next_letter_matches_pick_rotation():
     assert s.next_letter("hype") == "a"
     s.last_variant["hype"] = "c"
     assert s.next_letter("hype") == "a"
+
+
+@pytest.mark.parametrize("pattern,tier,variant", [("sweep", "hype", "a"), ("rise", "hype", "b"),
+                                                ("diagonal", "hype", "c"), ("wiggle", "build", "b")])
+def test_forced_dance_patterns_choose_only_the_requested_library_variant(pattern, tier, variant):
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, manifest=manifest_v2(), pattern=pattern, bold=1.0)
+    assert s.pattern == pattern
+    for music_tier in ("groove", "hype", "drop", "build", "groove"):
+        assert s.pick(music_tier, 120) == f"beat_{tier}_120_{variant}"
+    assert not s.set_pattern(pattern)
+    assert s.set_pattern("auto")
+    assert s.pick("drop", 120).startswith("beat_drop_120_")
+
+
+@pytest.mark.parametrize("pattern", ["unknown", "", None, 3, []])
+def test_invalid_dance_pattern_is_rejected_without_changing_selection(pattern):
+    with pytest.raises(ValueError, match="pattern"):
+        L.ClipScheduler(post=lambda n: {}, status=lambda: {}, pattern=pattern)
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, pattern="rise")
+    with pytest.raises(ValueError, match="pattern"):
+        s.set_pattern(pattern)
+    assert s.pattern == "rise"
+
+
+def test_forced_pattern_library_fails_closed_when_exact_variant_is_unavailable():
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, manifest=manifest_v2(), pattern="diagonal", bold=1.0,
+                        available={"beat_hype_120", "beat_hype_120_a", "beat_groove_120_c", "beat_hype_140_c"})
+    assert s.pick("groove", 120) is None
+    s.available.add("beat_hype_124_c")
+    assert s.pick("drop", 120) == "beat_hype_124_c"
+    s.available = None
+    s.variants = {}
+    assert s.pick("hype", 120) is None
+
+
+@pytest.mark.parametrize("pattern,tier,variant", [("sweep", "hype", "a"), ("rise", "hype", "b"),
+                                                ("diagonal", "hype", "c"), ("wiggle", "build", "b")])
+def test_forced_dance_patterns_prepare_and_take_matching_live_clip(tmp_path, pattern, tier, variant):
+    calls = []
+    lv, _ = live_for(tmp_path, calls)
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, live=lv, pattern=pattern, bold=0.8)
+    now = L.time.monotonic_ns()
+    s.prepare("drop", 120.0, now + 5_000_000_000, now)
+    assert wait_for(lambda: lv.peek() is not None, 3.0)
+    assert calls == [(tier, variant, 120.0, 0.8)]
+    clip = s.take_live("groove", 120.0)
+    assert clip is not None and (clip.tier, clip.variant, clip.bold) == (tier, variant, 0.8)
+
+
+@pytest.mark.parametrize("wrong", [("groove", "b", 120, 0.6), ("hype", "a", 120, 0.6),
+                                  ("hype", "b", 120, 0.9), ("hype", "b", 123, 0.6)])
+def test_forced_pattern_rejects_old_ready_clip_on_every_selection_dimension(tmp_path, wrong):
+    lv, _ = live_for(tmp_path)
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, live=lv, pattern="rise")
+    lv.ready = L.LiveClip(*wrong, "live_0", "offline", {})
+    assert s.take_live("drop", 120) is None
+    assert lv.inflight is None
+    lv.ready = L.LiveClip("hype", "b", 121.9, 0.6, "live_1", "offline", {})
+    assert s.take_live("groove", 120).name == "live_1"
+
+
+def test_pattern_and_bold_changes_discard_ready_and_reject_late_old_generation(tmp_path):
+    lv, _ = live_for(tmp_path)
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, live=lv, pattern="sweep")
+    old = L.LiveClip("hype", "a", 120, 0.6, "live_0", "offline", {})
+    lv.ready = old
+    lv.wanted = ("hype", "a", 120, 0.6, 10**12)
+    assert s.set_pattern("diagonal")
+    assert lv.peek() is None and lv.wanted is None
+    lv.ready = old                                       # an old worker finishes after the change
+    assert s.take_live("groove", 120) is None
+    lv.ready = L.LiveClip("hype", "c", 120, 0.6, "live_1", "offline", {})
+    assert s.set_bold(0.2)
+    assert lv.peek() is None
+    lv.ready = L.LiveClip("hype", "c", 120, 0.6, "live_1", "offline", {})
+    assert s.take_live("groove", 120) is None
+
+
+def test_show_pattern_is_selected_by_cli_not_an_unpaired_control_field(monkeypatch):
+    show = bare_show(monkeypatch, [])
+    assert show.scheduler.pattern == "auto"
+    explicit = L.Show("127.0.0.1", "light", False, pattern="diagonal", live_clips=False)
+    assert explicit.scheduler.pattern == "diagonal"
+    assert L.parse_control(b'\x0d{"lamp":{"pattern":"wiggle"}}')["lamp"].get("pattern") is None
+
+
+@pytest.mark.parametrize("pattern", ["auto", "sweep", "rise", "diagonal", "wiggle"])
+def test_low_bold_never_substitutes_a_full_amplitude_library_clip(pattern):
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, manifest=manifest_v2(), pattern=pattern, bold=0.2)
+    assert s.pick("hype", 120) is None
+    assert s.set_bold(1.0)
+    assert s.pick("hype", 120) is not None
+
+
+def test_auto_live_selection_rejects_old_tier_variant_and_bold(tmp_path):
+    lv, _ = live_for(tmp_path)
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, live=lv)
+    for tier, letter, bold in (("groove", "a", 0.6), ("hype", "b", 0.6), ("hype", "a", 1.0)):
+        lv.ready = L.LiveClip(tier, letter, 120, bold, "live_0", "offline", {})
+        assert s.take_live("hype", 120) is None
+    lv.ready = L.LiveClip("hype", "a", 120, 0.6, "live_1", "offline", {})
+    assert s.take_live("hype", 120).name == "live_1"
+
+
+def test_pattern_cli_help_and_invalid_arguments_do_not_start_the_show():
+    import subprocess
+    help_result = subprocess.run([sys.executable, L.__file__, "--help"], capture_output=True, text=True, timeout=10)
+    assert help_result.returncode == 0
+    assert "--pattern {auto,sweep,rise,diagonal,wiggle}" in help_result.stdout
+    bad = subprocess.run([sys.executable, L.__file__, "--pattern", "unknown"], capture_output=True, text=True, timeout=10)
+    assert bad.returncode == 2 and "invalid choice" in bad.stderr
+    conflict = subprocess.run([sys.executable, L.__file__, "--vendor-clips", "--pattern", "rise"],
+                              capture_output=True, text=True, timeout=10)
+    assert conflict.returncode == 2 and "--pattern requires beat-locked clips" in conflict.stderr
 
 
 def fake_make(calls=None, ok=True, frames=149):
@@ -984,7 +1099,7 @@ def test_live_generation_failure_falls_back_to_library_and_disables_for_60s(tmp_
     for k in ks: tr.feed(k)
     s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
                         status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)), live=lv)
+                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)), live=lv, bold=1.0)
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
     s.not_before_ns = now + 2_000_000_000                          # the hold behind home: the first clip is prepared ...
@@ -1059,13 +1174,15 @@ def test_scheduler_posts_live_clips_with_the_library_timing(tmp_path):
     assert wait_for(lambda: lv.peek() is not None, 3.0)
     assert calls[-1][:2] == ("groove", "b") and lv.peek().name not in ("live_1",)
     t2 = next_post()
-    s.tick(t2 - 100_000_000, True, tr, 0.9)                          # tier flips to hype with NO time left: post what is ready
+    s.tick(t2 - 100_000_000, True, tr, 0.9)                          # tier flips to hype with no generation time left
     _t.sleep(0.02)
     assert calls[-1][:2] == ("groove", "b")
     s.tick(t2 + 2_000_000, True, tr, 0.9)
     _t.sleep(0.05)
-    assert posts[-1] == lv.playing and posts[-1] != "live_1" and s.last_variant["groove"] == "b"
-    # a DROP with no time left: the library's drop clip, not the ready hype one
+    assert posts == ["live_1"] and s.last_variant["groove"] == "a" and s.refused == 1
+    # No stale groove clip and no full-amplitude fallback while bold is 0.9. Explicit full bold
+    # permits the library again; a DROP with no generation time uses its exact-tier clip.
+    s.set_bold(1.0)
     s.tick(t2 + 10_000_000, True, tr, 0.9)
     assert wait_for(lambda: lv.peek() is not None and lv.peek().tier == "hype", 3.0)
     t3 = next_post()
@@ -1267,7 +1384,7 @@ def test_track_change_restarts_the_follower_on_the_new_target(monkeypatch, tmp_p
     assert "track face -> phone" in out and "track phone -> face" in out and "follow: restarting on face" in out
     assert "started run_face.sh --target phone" in out and "started run_face.sh --target face" in out
     show2 = bare_show(monkeypatch, [], mode="light")
-    assert L.Show.__init__.__defaults__[-1] == "face" and show2.track == "face"
+    assert __import__("inspect").signature(L.Show).parameters["track"].default == "face" and show2.track == "face"
 
 
 class _Lamp:
