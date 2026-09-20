@@ -18,5 +18,8 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt
+      - run: python -m ruff check .
+      # Spatial-model typing gaps are documented in QUALITY_AUDIT.md, not suppressed.
+      - run: python -m mypy lamp/sdk.py
       - run: python -m pytest
       - run: python -m pytest lamp/live/tests
