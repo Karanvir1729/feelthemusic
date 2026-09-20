@@ -8,7 +8,8 @@ measure against and pick from. It is not a merge candidate as it stands: see "Ru
 |---|---|
 | `lamp_show.py` | The lamp as a show peer: joins the conductor (hello `role:lamp, audio:true`), shared-clock scheduling of events, bass and Opus audio (played on the reSpeaker), colour from the decoded audio (chroma on a circle-of-fifths wheel, loudness AGC, excitement), DROP burst, BUILD ramp, the conductor's `lamp` control key (off / light / follow / dance, lights, bold), `{"t":"lamp"}` status, BeatTracker (median IOI + PLL) and ClipScheduler (beat-locked clips, variant rotation, build/drop tiers). |
 | `beat_clips.py` | Offline generator + validator for the beat-locked clips: 8 beats, 0.6 s head/tail hold at a START pose, three variants per tier (groove/hype/drop/build) per tempo, per-joint amplitude scaled to a 140 units/s budget, command gains for the runtime's under-delivery, validated against the envelope, `LampModel.problems()` and a zero-moment-point criterion on the URDF. |
-| `follow.py` | Face/hand or explicit pink-screen follower. Default path: the SDK planner (`motion.move`, ≥ 2 s moves). `--live`: closed-loop head tracking through the runtime's tracking route from the measured pose, 10-unit steps, envelope + stall guard + settle, search sweep after 3 s without a target. |
+| `follow.py` | Face/hand or explicit pink-screen follower; `--target torch` (explicit, offline-tested only) takes its target from `torch_target.py`. Default path: the SDK planner (`motion.move`, ≥ 2 s moves). `--live`: closed-loop head tracking through the runtime's tracking route from the measured pose, 10-unit steps, envelope + stall guard + settle, search sweep after 3 s without a target. |
+| `torch_target.py` | A phone torch flashing on the beat as a follower target: on/off difference against aligned neighbour frames, compact clipped white round blob, two blinks at one place before a report, incumbent kept, optional flash-schedule gate. Synthetic tests only; see "Torch target" below. |
 | `spatial.py` | Forward kinematics, IK (`look_at`), pose checks, on the vendor description and the lamp's own calibration (read at runtime, never copied). |
 | `sdk.py` | Client for the vendor SDK gateway (token read from the lamp's environment, never printed). |
 | `ftm_discover.py` | Finds the conductor over mDNS/DNS-SD with the standard library (no zeroconf/avahi); caches the last answer. `lamp_show.py` re-discovers after 15 s of silence. |
@@ -68,6 +69,78 @@ The wider product direction requires additional app-side work, not new lamp-side
 The public repository does not contain the native phone UI or authoritative gameplay scorer.
 Its existing FTM target index is a session peer index, not a hand label, and must not be repurposed silently.
 The native FTM client, `LampApp` and SDK dispatcher remain the integration owners; this patch adds no second transport or scorer.
+
+## Torch target: `--target torch` (offline-tested candidate, 2026-09-19)
+
+`torch_target.py` finds a phone torch that flashes on the beat (the app flashes it 70 ms per haptic hit, 220 ms on a
+DROP, at most three a second) and feeds it to the existing follower as a new explicit target kind. It is off unless
+asked for, never part of `auto`, adds no motion path and changes nothing in the admission, envelope or planner code:
+`follow.py --target torch --dry-run` (add `--no-search` with `--live`, because a quiet passage has no flashes and the
+sweep would start). Six real frames of the hall with no torch in them held 51-57 clipped blobs each (ceiling strips,
+glare on glossy objects, distant lights), so brightness and shape alone cannot find a torch there; the detector
+therefore requires a blink: a compact, clipped, white, round brightening in one analysed frame that the frames just
+before and just after (aligned onto it by phase correlation, verified against the unshifted residual) do not show,
+and next to which nothing bright has gone missing (a bright point the references show within 48 px that the candidate
+does not is a watch face, glasses or a reflection that MOVED here, not one that blinked here; the same test over the
+whole frame refuses a frame whose references no longer line up, as after a head roll, which a translation cannot
+align). A place must blink twice before it is reported; the association gate is 0.06 picture widths right after a
+flash and grows 0.15 widths per second of waiting, to 0.2 at most (a hand moves between beats; two phones half a metre
+apart at 2 m stay separate). The track that reaches two blinks first is the incumbent and is kept over anything
+brighter elsewhere; a one-blink glint holds the place only provisionally. When a flash schedule (instants on the Pi's
+monotonic clock) is supplied, a blink outside a flash window has confidence 0; the window is 350 ms wide until three
+flashes have taught the tracker the camera's stamp latency, then 190 ms, so at three hits a second it rejects little
+until then, and it learns that latency from whatever blinked inside the window. `follow.py` has no FTM client and
+passes no schedule; supplying one is a handoff for `lamp_show.py`'s owners to decide, not something this patch adds.
+
+**Without a schedule, any compact white blinker is a torch to this detector**: a blinking status LED, a bike light, a
+steady distant light that a moving head uncovers for one frame at a time (a crowd bobbing on the beat), and a phone's
+flicker-aliased distant lamp if the sensor's exposure is short. `tests/test_torch_target.py` records this as a known
+limit rather than hiding it. The lamp's own panel flashes on the same events, so even a schedule does not refuse its
+reflections; only their colour and size do.
+
+Measured on synthetic frames only (`tests/test_torch_target.py`, a rendered hall with strips, glare, glints, a laptop
+screen and a poster, JPEG round-tripped, on this Mac): 0 reports in 240 frames of the hall alone; a torch at level 1.0
+or 0.3 reported at 47 of 48 flashes (the first flash at any place is a hit, not a report), median position error
+0.02 px; the same with the follower's idle frame gap of 0.25 s, with the exposure swinging 3 % per frame between 0.85
+and 1.15, and with the picture panning 4 or 12 px per frame (median error 0.34 px, the reported position moved by the
+measured shift into the newest frame); a pan of 20 px per frame returns nothing by design. No false report in any
+scenario: a moving bright rectangle, a horizontal or vertical streak, a blinking screen-sized white rectangle (8x18 to
+40x80 px), a magenta-tinted flash of the torch's own shape, a light switched on and left on, an exposure step or
+auto-exposure hunting by 4-15 % every frame, a torch that does not clip, a torch 30 cm from the lens (a bloom of
+thousands of pixels: nothing, so nothing is chased), a clipped point carried across the picture at 6-40 px per frame
+(a watch, glasses, a reflection: before that check it was reported on every frame), a head roll of 1-3 deg per frame
+with no torch (before the whole-frame check, 2 deg per frame gave 12 false reports in 15 frames). A hand-held torch
+moving 45 px per 0.3 s (about 0.5 m/s at 2 m) is followed (with the old fixed gate it was never reported); 70 px per
+0.3 s is lost. One stray glint before the torch no longer delays the first report by 3.5 s (call 8, not call 38). Two
+phones flashing together keep the first confirmed one locked, also through a 2 s pause of that phone. Cost 0.7-1.3 ms
+per analysed frame here; about 3.5-6.5 ms on the Pi 5 by the pink detector's measured 4.9x ratio (an estimate, not a
+measurement). Against the follower's fakes the torch kind confirms after its third report (the fourth flash at 10
+analysed frames a second), a dry run posts nothing, and the live loop steps toward it through the unchanged
+`step_towards` path.
+
+Frame sampling, from the follower's own cadence (timing arithmetic, not a camera measurement: the stream keeps only the
+newest frame, the loop analyses one frame per 100 ms while it has sightings and per 250 ms otherwise): a 70 ms flash
+is a one-frame blink in 71-91 % of cases at the 100 ms gap (exposure 5-33 ms) and lands in two consecutive analysed
+frames, where the after-reference cancels it, in 0-3 %; a 120 ms flash is cancelled in 22-46 % of cases at that gap,
+so lengthening the flash would HURT this detector, not help it. At the idle 250 ms gap only 30-42 % of 70 ms flashes
+are seen at all, so acquisition (two blinks for the tracker, then three reports for the follower) is slow until the
+first report switches the loop to 100 ms; a 220 ms DROP flash is cancelled at the 100 ms gap (90-94 %) and seen at the
+250 ms gap (80 %).
+
+What only the real camera can answer, in a read-only dry run with the operator present: the blob size and halo of a
+real torch at 1-5 m and whether level 0.3 still clips this sensor; the camera's white balance (the white test passes a
+warm torch down to a blue/red ratio of 0.65 and refuses 0.55); whether static distant lights hold a steady peak from
+frame to frame (a light whose peak rides across the clip line while the head moves is what the moved-not-blinked test
+is for; six real frames 1 s apart held 18 one-frame blobs); the exposure-to-stamp latency of the SDK stream (8-141 ms
+is an assumption; the follower's stamps are local receipt times); whether the lamp's own panel, which flashes on the
+same events, produces a point-like specular reflection in a phone or laptop screen (its diffuse reflections on the
+table are rejected by size, its colour by the white test, a white DROP burst by neither, only by timing: it peaks
+about 100 ms after the event and decays over 300 ms); and whether the camera's near-field parallax (glare on the table
+30 cm away shifts more than the ceiling when the arm moves) trips the whole-frame checks often enough to matter. Known
+limits: all phones flash at the same instants, so which phone is found is geometric incumbency, not identity; a torch
+in front of a bright screen or light has no contrast to blink with; the reported position is one analysed frame late
+(moved by the measured scene shift into the current frame); a torch flash within 48 px of a bright thing that moved
+(someone in a white shirt walking behind) is refused for that frame.
 
 ### Verification snapshot, 2026-09-19
 
