@@ -34,6 +34,7 @@ import numpy as np
 
 from sdk import LampSDK, SDKError, read_token
 from spatial import DEFAULT_ROBOT_DIR, JOINTS, LampModel
+from torch_target import TorchTracker
 
 PALM_WIDTH_M = 0.08      # index knuckle to little-finger knuckle, adult
 PALM_LENGTH_M = 0.10     # wrist to middle knuckle
@@ -861,9 +862,11 @@ def describe(model: LampModel, units: dict) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--target", choices=["auto", "face", "hand", "object", "phone"], default=None,
+    ap.add_argument("--target", choices=["auto", "face", "hand", "object", "phone", "torch"], default=None,
                     help="auto = a face if one is in view, otherwise a hand, otherwise a person or a thing "
-                         "(default: auto; face with --live); phone = bright pink screen, selected explicitly")
+                         "(default: auto; face with --live); phone = bright pink screen, selected explicitly; "
+                         "torch = a phone torch flashing on the beat (torch_target.py, offline-tested only), "
+                         "selected explicitly, never part of auto")
     ap.add_argument("--dry-run", action="store_true", help="see, locate and decide, but never move")
     ap.add_argument("--seconds", type=float, default=0, help="stop after this long (0 = until Ctrl-C)")
     ap.add_argument("--deadband-deg", type=float, default=None,
@@ -922,11 +925,14 @@ def main() -> None:
           flush=True)
     cam = Camera(sdk, args.fps)
     cam.start()
-    trackers: list[tuple[str, FaceTracker | HandTracker | ObjectTracker | PhoneTracker]] = [
+    trackers: list[tuple[str, FaceTracker | HandTracker | ObjectTracker | PhoneTracker | TorchTracker]] = [
                 (name, cls()) for name, cls in (("face", FaceTracker), ("hand", HandTracker))
                 if args.target in ("auto", name)]
     if args.target == "phone":
         trackers.append(("phone", PhoneTracker()))
+    if args.target == "torch":                    # explicit only; a non-frame kind: 3.5 s sighting window
+        TorchTracker.NOMINAL = model.fx / TorchTracker.NOMINAL_DISTANCE_M   # no size cue: "about 2 m away"
+        trackers.append(("torch", TorchTracker()))
     if args.target in ("auto", "object"):
         if ObjectTracker.MODEL.exists():
             ObjectTracker.NOMINAL = model.fx / 1.0                # a cut-off box is treated as about 1 m away
@@ -937,7 +943,8 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     watching = {"auto": "a face, then a hand, then a person or a thing", "face": "a face", "hand": "a hand",
-                "object": "a person or a thing", "phone": "a bright pink phone screen"}[args.target]
+                "object": "a person or a thing", "phone": "a bright pink phone screen",
+                "torch": "a phone torch flashing on the beat"}[args.target]
     print(f"watching for {watching}{' (dry run: will not move)' if args.dry_run else ''}. Ctrl-C to stop.", flush=True)
     idle_was = idle_off(sdk.base) if args.live and not (args.dry_run or args.keep_idle) else None
 
@@ -1004,7 +1011,7 @@ def main() -> None:
             if args.target in FRAME_TARGETS or (sightings and sightings[-1][4] in FRAME_TARGETS):
                 sightings.clear()
             if now - last_note > 2:
-                print(f"no {args.target} in view" if args.target in ("hand", "phone") else "nobody in view", flush=True)
+                print(f"no {args.target} in view" if args.target in ("hand", "phone", "torch") else "nobody in view", flush=True)
                 last_note = now
             continue
         sightings.append((stamp if kind == "phone" else now, *seen, kind))
