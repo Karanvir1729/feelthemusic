@@ -36,9 +36,11 @@ LAMP = "http://lelamp-bfc5eta0.local:8081"
 SONG = "/Users/meharkhanna/Downloads/DJ_Casper_-_Cha_Cha_Slide_Original_(mp3.pm).mp3"
 # The cha clips start and end with the head turned +35 (cha_moves.CENTRE: base_yaw cannot go left of
 # -4.5 on this lamp, so left and right are 35 either side of +35); the dance library's home is yaw 0.
-HOME = {"base_yaw": 35.0, "base_pitch": -49.0, "elbow_pitch": -22.0, "wrist_roll": 0.0, "wrist_pitch": 30.0}
+import os
+HOME = {"base_yaw": 35.0, "base_pitch": -49.0, "elbow_pitch": float(os.environ.get("CHA_HOME_ELBOW", -22.0)),
+        "wrist_roll": 0.0, "wrist_pitch": 30.0}   # CHA_HOME_ELBOW: see cha_moves.HOME_ELBOW (the elbow sags)
 DANCE_HOME = dict(HOME, base_yaw=0.0)
-HOME_TOL = 1.5              # the runtime's skip rule needs 2.0; the arm rests up to 1.5 off (measured)
+HOME_TOL = 2.0              # the runtime's own skip-rule threshold (threshold_deg); the arm rests 1-2.6 off
 
 
 def post(name, timeout=4.0):
@@ -54,17 +56,32 @@ def positions():
         return {k: float(v) for k, v in json.load(r)["positions"].items()}
 
 
-def walk(home, label):
-    """Slow tracking move (2.5 s) to `home`, then read back: True when every joint is within HOME_TOL."""
-    body = json.dumps({"positions": home, "duration_ms": 2500}).encode()
-    urllib.request.urlopen(urllib.request.Request(LAMP + "/api/motors/positions", data=body,
-                           headers={"Content-Type": "application/json"}), timeout=6).read()
-    time.sleep(3.2)
-    p = positions()
-    far = max(abs(p[j] - home[j]) for j in home)
-    print(f"arm at {label} (max {far:.1f} units off)" if far <= HOME_TOL
-          else f"arm still {far:.1f} units from {label} after the walk")
-    return far <= HOME_TOL
+def walk(home, label, tries=3):
+    """Slow tracking moves to `home` until every joint is within HOME_TOL, or `tries` are used up.
+    One walk lands about 96 % of a long move on this lamp (measured: +38.6 of +40), so a 35-unit walk
+    stops 1-4 units short; the second walk is a small move and lands. Each is 2.5 s, then a read."""
+    for n in range(tries):
+        # The elbow lands short when it has to rise (measured: 7-9 units) and close when it descends
+        # (1-3), so when it sits below home the walk goes 12 units ABOVE home first, then down onto it.
+        p = positions()
+        if p["elbow_pitch"] < home["elbow_pitch"] - HOME_TOL:
+            above = dict(home, elbow_pitch=home["elbow_pitch"] + 12.0)
+            body = json.dumps({"positions": above, "duration_ms": 2500}).encode()
+            urllib.request.urlopen(urllib.request.Request(LAMP + "/api/motors/positions", data=body,
+                                   headers={"Content-Type": "application/json"}), timeout=6).read()
+            time.sleep(3.0)
+        body = json.dumps({"positions": home, "duration_ms": 1500}).encode()
+        urllib.request.urlopen(urllib.request.Request(LAMP + "/api/motors/positions", data=body,
+                               headers={"Content-Type": "application/json"}), timeout=6).read()
+        time.sleep(2.0)
+        p = positions()
+        far = max(abs(p[j] - home[j]) for j in home)
+        worst = max(home, key=lambda j: abs(p[j] - home[j]))
+        if far <= HOME_TOL:
+            print(f"arm at {label} (max {far:.1f} units off, walk {n + 1})")
+            return True
+        print(f"walk {n + 1}: {worst} still {far:.1f} units from {label}")
+    return False
 
 
 def preflight():
@@ -122,7 +139,7 @@ def main():
 
     if not preflight():
         return 2
-    net = rtt()
+    net = min(rtt(), 0.25)   # one slow Wi-Fi sample (1.2 s seen) must not shift every cue by a bar
     lead = args.lead_beats * PERIOD + START_LATENCY_S + net
     print(f"lead {lead * 1000:.0f} ms = {args.lead_beats:g} beat + {START_LATENCY_S*1000:.0f} ms runtime "
           f"+ {net*1000:.0f} ms network")
@@ -133,14 +150,19 @@ def main():
         song = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{seek:.3f}", "-i", SONG, "-c", "copy", song], check=True)
         print(f"starting at beat {args.start} = {seek:.2f} s into the song")
-    t0 = time.monotonic() - seek          # so that BEAT0 + b * PERIOD stays the song clock
+    # The song starts `lead` after this point, so the first cue -- due `lead` before its beat -- can be
+    # posted on time even when the run starts on it (--from): t0 is the song clock's zero.
+    t0 = time.monotonic() + lead - seek
     play_s = (BEAT0 + (args.stop + 8) * PERIOD - seek) if args.stop < BEATS else None   # two bars after the last cue
-    player = subprocess.Popen(["afplay", song] + (["-t", f"{play_s:.1f}"] if play_s else []))
+    player = None
     late = []
     for b, clip, note in cues:
         due = t0 + BEAT0 + b * PERIOD - lead
         while True:
-            dt = due - time.monotonic()
+            now = time.monotonic()
+            if player is None and now >= t0 + seek:
+                player = subprocess.Popen(["afplay", song] + (["-t", f"{play_s:.1f}"] if play_s else []))
+            dt = due - now
             if dt <= 0:
                 break
             time.sleep(min(dt, 0.02))
@@ -154,6 +176,8 @@ def main():
         err = (sent - due) * 1000
         late.append(err)
         print(f"  beat {b:4d} {clip:18s} {'ok' if ok else r} {err:+6.0f} ms  {note}", flush=True)
+    if player is None:
+        player = subprocess.Popen(["afplay", song] + (["-t", f"{play_s:.1f}"] if play_s else []))
     player.wait()
     walk(DANCE_HOME, "the dance home (yaw 0)")   # leave the arm where the dance library expects it
     if late:

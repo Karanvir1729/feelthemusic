@@ -67,7 +67,7 @@ CALLS: list[tuple[str, str, int]] = [
 # "now it's time to get funky" comes 2 beats before "to the right now".
 SKIP = re.compile(r"\b(time to get funky|funky funky)\b")
 WINDOW = 8                                  # words of look-ahead when matching a phrase
-MAX_DELAY = 2                               # beats a colliding call may slip; more and it reads as the wrong move
+MAX_DELAY = 4                               # beats a colliding call may slip (2 s): late beats never, since the loud moves are the point
 # Shorter versions of a move, by length in beats, for when the next call comes sooner than the full
 # move lasts. DJ Casper's calls are NOT all one length: in the basic step "to the left" and "take it
 # back now y'all" are two beats apart, "slide to the left / slide to the right" likewise, while the
@@ -193,7 +193,11 @@ def build(words: list[tuple[float, str]]) -> tuple[list[tuple[int, str, str]], l
                 notes.append(f"{clip} at {beat} shortened to {name}: next call {nxt - beat} beats later")
                 clip, beats = name, n
         cues.append((beat, clip, said))
-        busy_until = beat + beats - 1
+        # A clip owns its beats PLUS one: the runtime starts it 250-450 ms after the POST (measured), so
+        # a 2-beat clip is still playing when the call 2 beats later lands, and a clip posted while
+        # another plays at the same priority is refused (2026-09-20 04:26: "take it back" and a
+        # "cha cha" never played).
+        busy_until = beat + beats
         last_clip = clip
     return cues, notes
 

@@ -78,6 +78,15 @@ GLIDE_RAMP = 0.22                       # of a glide spent getting up to speed (
 # its own home at yaw 0; cha_run.py walks the arm between the two.
 CENTRE = 35.0
 YAW_REACH = 35.0       # the most a look, a slide, a sweep or a flick may turn from CENTRE
+# The elbow servo sags under the arm's weight once it has held it for hours (2026-09-20 04:20: commanded
+# -22, it settled at -27, -28.5, -29.9 on three successive walks -- overload protection cutting its
+# holding torque). The runtime's skip rule needs frame 0 within 2.0 units of where the arm ACTUALLY
+# rests, so the home elbow can be set to the measured rest for a session: CHA_HOME_ELBOW=-30. Every
+# elbow value in every clip shifts by the same amount, so the moves keep their shape relative to home;
+# the Validator still checks the shifted clip against the table and the tipping bounds.
+HOME_ELBOW = float(os.environ.get("CHA_HOME_ELBOW", bc.START[2]))
+ELBOW_OVERSHOOT = 8.0  # units above home a rising return goes before settling (see Call.home)
+ELBOW_SHIFT = HOME_ELBOW - float(bc.START[2])
 
 # ----------------------------------------------------------------------------- the runtime's rules
 # The vendor runtime plays a clip whole ONLY when its first three frames are stationary at the pose the
@@ -86,7 +95,7 @@ YAW_REACH = 35.0       # the most a look, a slide, a sweep or a flick may turn f
 # stillness at home. The runtime also stretches time wherever a joint moves faster than 297 units/s
 # after its 5-frame moving average (limit_motion_velocity), which would push every later call off the
 # bar -- so the ceiling here is 290, checked on the smoothed clip, and it is a FAIL, not a warning.
-LEAD_BEATS = 0.2       # 0.098 s: frames 0, 1, 2 at home (the third at 0.067 s); frame 3 moves
+LEAD_BEATS = float(os.environ.get("CHA_LEAD_BEATS", 0.2))   # 0.098 s: frames 0-2 at home; frame 3 moves. CHA_LEAD_BEATS=1.3 tests the library's 0.63 s
 CHA_SPEED_LIMIT = 290.0
 
 LOOK_YAW = YAW_REACH   # a look: 35 units is 26 deg on this calibration, 52 deg between left and right
@@ -187,7 +196,7 @@ def _glide(u: np.ndarray, ramp: float = GLIDE_RAMP) -> np.ndarray:
 
 
 PROFILES = {"ease": bc.ease, "glide": _glide, "hold": lambda u: np.zeros_like(np.asarray(u, float))}
-START = np.array(_at(bc.START, base_yaw=CENTRE), dtype=float)   # where every cha clip starts and ends
+START = np.array(_at(bc.START, base_yaw=CENTRE, elbow_pitch=HOME_ELBOW), dtype=float)   # where every cha clip starts and ends
 
 
 class Call:
@@ -223,6 +232,18 @@ class Call:
         return self.to(self.here, beats, "hold")
 
     def home(self, beats: float, style: str = "ease") -> "Call":
+        """Back to START -- from ABOVE when the elbow is below it. Measured 2026-09-20 04:25: the elbow
+        lands within 1-3 units of a target it descends to, but 7-9 units short of one it has to RISE to
+        (gravity plus stick-slip under P 24). The next clip only plays whole if the arm rests within
+        2.0 units of home, so a return that would rise goes ELBOW_OVERSHOOT above home first and
+        settles down onto it: a small bob, and the difference between the next call playing and not.
+        The from-above return spends 6/11 of `beats` rising and 5/11 settling (it was 0.6/0.4): a caller
+        that keeps its rise time asks for 1.1 x and pays the tenth from its trailing hold."""
+        elbow = JOINTS.index("elbow_pitch")
+        if self.here[elbow] < bc.START[elbow] - 1e-9 and beats >= 0.3:
+            above = _at(bc.START, elbow_pitch=float(bc.START[elbow]) + ELBOW_OVERSHOOT)
+            # settle 0.4 -> 0.5 of the old return (+25 %): operator, "when it goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"
+            return self.to(above, beats * 6 / 11, style).to(bc.START, beats * 5 / 11, "ease")
         return self.to(bc.START, beats, style)
 
     def rows(self) -> np.ndarray:
@@ -252,6 +273,7 @@ class Call:
             where = (t >= t0 - 1e-12) & (t <= t1 + 1e-12)
             U[where] = a + (b - a) * PROFILES[style]((t[where] - t0) / span)[:, None]
         U[:, JOINTS.index("base_yaw")] += CENTRE      # designed about 0, danced about CENTRE
+        U[:, JOINTS.index("elbow_pitch")] += ELBOW_SHIFT   # designed about -22, danced about the rest
         V = bc.clamp_envelope(U)
         self.bite = float(np.abs(V - U).max())      # > 0 means a pose above was written unsafely and
         V[0] = START                                # the envelope had to argue with it: a design bug,
@@ -317,21 +339,27 @@ def cha_take_it_back() -> Call:
     head_y hits its 0.020 floor, so the retreat borrows the vertical to make its point) and tips its
     nose up on the way. Against cha_lean_forward it differs in direction, in height, in nose angle and
     in rhythm -- four cues, because forward and back are the pair a follower most needs to get right."""
+    # descent home 1.5 -> 1.875 (+25 %): operator, "when it goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"
+    # paid by the trailing hold (0.5 -> 0.2, LEAD_BEATS) and 0.0375 from each punctuation hold (0.25 -> 0.2125)
     return (Call(4, says="take it back now y'all")
-            .to(BACK_HALF, 0.75).hold(0.25)
-            .to(BACK, 0.75).hold(0.25)
-            .home(1.5)
-            .hold(0.5))
+            .to(BACK_HALF, 0.75).hold(0.2125)
+            .to(BACK, 0.75).hold(0.2125)
+            .home(1.875)
+            .hold(0.2))
 
 
-def _hop(call: Call, top, land, rise: float = 0.55, fall: float = 0.6, recover: float = 0.4) -> Call:
+def _hop(call: Call, top, land, rise: float = 0.5, fall: float = 0.75, recover: float = 0.55) -> Call:
     """One hop into a 2-beat call: up fast, down past home into a squash, recover, then stand still.
     Whatever is left of the two beats is the stillness -- and the stillness is what makes the eye call
-    the hop sharp, so the default leaves 0.75 beat of it."""
-    still = 2.0 - (rise + fall + recover)
-    if still <= 0:
-        raise ValueError(f"a hop of {rise + fall + recover:g} beats leaves no stillness in a 2-beat call")
-    return call.to(top, rise).to(land, fall).home(recover).hold(still)
+    the hop sharp, so the default leaves 0.2 beat of it (LEAD_BEATS, so the lead-in costs the move nothing)."""
+    # fall 0.6 -> 0.75 (+25 %): operator, "when it goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"
+    # recover 0.5 -> 0.55: a from-above return (Call.home) whose rise keeps 0.3 and whose settle is 0.25 (+25 %); 0.5 + 0.75 + 0.55 leaves 0.2
+    t0 = call.keys[-1][0]
+    call.to(top, rise).to(land, fall).home(recover)
+    still = 2.0 - (call.keys[-1][0] - t0)
+    if still < LEAD_BEATS - 1e-9:
+        raise ValueError(f"a hop of {call.keys[-1][0] - t0:g} beats leaves under {LEAD_BEATS:g} beat of stillness in a 2-beat call")
+    return call.hold(still)
 
 
 def cha_hop() -> Call:
@@ -352,33 +380,36 @@ def cha_hop_two() -> Call:
 
 def cha_stomp_right() -> Call:
     """"right foot let's stomp" -- a human drives one foot into the floor and lifts it again.
-    The lamp jabs the head 0.113 m DOWN in 0.55 beat and back up in 0.55, then stands dead still for
+    The lamp jabs the head 0.113 m DOWN in 0.69 beat and back up in 0.88, then stands dead still for
     the rest (0.4 each way was simulated at 44 % delivery on the elbow; 0.55 is what the servo can follow). Fast down, fast up, then nothing: the stillness either side is what makes it
     a stamp and not a bob. The +16 units of yaw say WHICH foot -- small on purpose, because a bigger
     turn would read as "to the right" instead."""
+    # jab down 0.55 -> 0.6875 (+25 %) and home 0.8 -> 0.88 (rise 0.48 as before, settle 0.32 -> 0.4, +25 %): operator, "when it
+    # goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"; the hold pays (0.65 -> 0.4325)
     return (Call(2, says="right foot let's stomp")
-            .to(_at(STOMP, base_yaw=STOMP_YAW), 0.55)
-            .home(0.55)
-            .hold(0.9))
+            .to(_at(STOMP, base_yaw=STOMP_YAW), 0.6875)
+            .home(0.88)
+            .hold(0.4325))
 
 
 def cha_stomp_left() -> Call:
     """"left foot let's stomp" -- the mirror, yaw -16."""
+    # same numbers as cha_stomp_right, same reason (operator: descents 20 % slower, "the head is heavy")
     return (Call(2, says="left foot let's stomp")
-            .to(_at(STOMP, base_yaw=-STOMP_YAW), 0.55)
-            .home(0.55)
-            .hold(0.9))
+            .to(_at(STOMP, base_yaw=-STOMP_YAW), 0.6875)
+            .home(0.88)
+            .hold(0.4325))
+
+
+NOD = _at(bc.START, elbow_pitch=float(bc.START[2]) + 6.0, wrist_pitch=55.0)   # the bob: nose down 30 -> 55, elbow up 6
 
 
 def cha_cha() -> Call:
-    """"cha cha real smooth" -- a human does three small quick steps in place, weight forward and back.
-    The lamp rocks the head about 0.055 m out and home three times, one rock a beat, every segment
-    eased so the three rocks join into one continuous swell (an eased pair out-and-back IS a raised
-    cosine). Small and smooth is the instruction: this call exists to say "keep dancing, nothing new",
-    and it is deliberately the quietest move in the set so the loud ones stay loud."""
+    """"cha cha real smooth" -- a bob, because the operator asked for one ("for cha cha just bob, simple"):
+    three nods, one a beat, shade nose-down while the elbow lifts 6, eased down and home; the 4th beat still."""
     call = Call(4, says="cha cha real smooth")
     for _ in range(3):
-        call.to(ROCK, 0.5).home(0.5)
+        call.to(NOD, 0.5).home(0.5)
     return call.hold(1.0)
 
 
@@ -501,7 +532,8 @@ def cha_reverse() -> Call:
     of the base, and the sharp version measured -0.041 against the -0.030 bound. Slowing the leap by a
     quarter buys it back (-0.025) with the travel intact; shrinking the travel instead would have cost
     the only thing the move is for."""
-    return _hop(Call(2, says="reverse"), REV_TOP, REV_LAND, rise=0.55, fall=0.6, recover=0.4)
+    # fall 0.6 -> 0.75 (+25 %): operator, "when it goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"
+    return _hop(Call(2, says="reverse"), REV_TOP, REV_LAND, rise=0.5, fall=0.75, recover=0.55)
 
 
 # ----------------------------------------------------------------------------- the short versions
@@ -520,7 +552,8 @@ def cha_look_left_2() -> Call:
 
 def cha_take_it_back_2() -> Call:
     """"take it back now y'all", two beats: one step back instead of two."""
-    return Call(2, says="take it back now y'all").to(BACK, 0.8).hold(0.4).home(0.6).hold(0.2)
+    # descent home 0.6 -> 0.75 (+25 %): operator, "when it goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"; the BACK hold pays (0.4 -> 0.25)
+    return Call(2, says="take it back now y'all").to(BACK, 0.8).hold(0.25).home(0.75).hold(0.2)
 
 
 def cha_slide_left_2() -> Call:
@@ -599,7 +632,14 @@ def measure(name: str, model: LampModel, validator: bc.Validator) -> dict:
     call = MOVES[name]()
     U = call.rows()
     heads = np.array([model.head(dict(zip(JOINTS, u)))["position"] for u in U])
-    report = validator.validate(U)
+    # The Validator's first/last-frame check compares against beat_clips.START; the cha home differs
+    # from it by the session's elbow shift, so it is told the shifted home for the length of the check.
+    saved = bc.START
+    bc.START = np.array(_at(saved, elbow_pitch=HOME_ELBOW), dtype=float)
+    try:
+        report = validator.validate(U)
+    finally:
+        bc.START = saved
     ok, reasons = report["ok"], list(report["reasons"])
     rt = runtime_peak_speed(U)
     if rt > CHA_SPEED_LIMIT:
