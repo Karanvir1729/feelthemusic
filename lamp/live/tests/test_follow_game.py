@@ -31,7 +31,7 @@ def test_lpath_messages_follow_the_contract():
     assert len(msgs) == 3
     for k, m in enumerate(msgs):
         assert set(m) == {"t", "seq", "t0", "dt", "x", "y", "clip"}
-        assert m["t"] == "lpath" and m["seq"] == 17 + k and m["dt"] == 50 and m["clip"] == "beat_hype_120_a"
+        assert m["t"] == "lpath" and m["seq"] == 17 + k and m["dt"] == fg.DT_MS and m["clip"] == "beat_hype_120_a"
         assert isinstance(m["t0"], int) and len(m["x"]) == len(m["y"]) and 2 <= len(m["x"]) <= 80
         assert all(isinstance(v, int) and -1000 <= v <= 1000 for v in m["x"] + m["y"])
         d = fg.encode_telemetry(m)
@@ -44,7 +44,7 @@ def test_lpath_messages_follow_the_contract():
 
 
 def test_the_worst_case_datagram_fits_even_with_the_keys_the_mac_adds():
-    m = fg.lpath_messages(0xFFFFFFF0, 2**63 - 1 - 80 * 50_000_000, [-1.0] * 80, [-1.0] * 80, clip="c" * 200)[0]
+    m = fg.lpath_messages(0xFFFFFFF0, 2**63 - 1 - 80 * 250_000_000, [-1.0] * 80, [-1.0] * 80, clip="c" * 200, dt_ms=250)[0]
     assert len(m["x"]) == 80 and len(m["clip"]) == fg.CLIP_NAME_MAX
     assert len(fg.encode_telemetry(m)) <= 1200
     assert len(fg.encode_telemetry({**m, "v": 1, "lamp": 255})) <= 1200           # the type-14 relay of the same JSON
@@ -60,7 +60,7 @@ def test_a_long_path_becomes_consecutive_messages_that_share_their_boundary_poin
     msgs = fg.lpath_messages(7, t0, x, y)
     assert [len(m["x"]) for m in msgs] == [80, 80, 42]
     assert [m["seq"] for m in msgs] == [7, 8, 9]
-    assert [m["t0"] for m in msgs] == [t0, t0 + 79 * 50_000_000, t0 + 158 * 50_000_000]
+    assert [m["t0"] for m in msgs] == [t0, t0 + 79 * fg.DT_MS * 1_000_000, t0 + 158 * fg.DT_MS * 1_000_000]
     for a, b in zip(msgs, msgs[1:]):
         assert a["t0"] + (len(a["x"]) - 1) * a["dt"] * 1_000_000 == b["t0"]          # b starts when a ends ...
         assert (a["x"][-1], a["y"][-1]) == (b["x"][0], b["y"][0])                     # ... and where it ends
@@ -85,18 +85,34 @@ def test_without_fk_a_yaw_toward_the_lamps_right_is_positive_x_and_nothing_is_mi
 def test_without_fk_up_is_positive_y_and_wrist_joints_are_ignored():
     up, crouch = row(base_pitch=5 * 1.15, elbow_pitch=14 * 1.2, wrist_pitch=12 * 1.1), row(base_pitch=-11 * 1.15, elbow_pitch=-33 * 1.2)
     x, y = fg.head_path([0, 1, 2, 3], [row(), up, crouch, row(wrist_pitch=25.0, wrist_roll=20.0)])
-    assert y[1] == pytest.approx(19 / fg.Y_RANGE_UNITS) and y[2] == pytest.approx(-1.0)
+    assert y[1] == pytest.approx((14 - 5) / fg.Y_RANGE_UNITS) and y[2] == pytest.approx(-22 / fg.Y_RANGE_UNITS)
     assert (x[3], y[3]) == (0.0, 0.0) and x[1] == 0.0
+
+
+def test_without_fk_the_two_pitch_joints_move_the_head_in_opposite_directions():
+    """The sign that inverted the drop until 2026-09-19. Pinned against both kinematic models: through the
+    vendor description (and an independent MuJoCo twin) +10 units of base_pitch move the head DOWN 2.27 cm
+    and +10 of elbow_pitch UP 2.47 cm, so the fallback must SUBTRACT base_pitch, not add it."""
+    def yy(**exc):
+        return fg.head_path([0, 1], [row(), row(**exc)], delivery={})[1][1]
+    assert yy(base_pitch=10.0) < 0 and yy(elbow_pitch=10.0) > 0                                 # opposite directions
+    assert yy(base_pitch=10.0) == pytest.approx(-yy(elbow_pitch=10.0))
+    assert yy(base_pitch=10.0, elbow_pitch=10.0) == pytest.approx(0.0)                          # the shoulder cancels the elbow
+    # the library's own design poses (beat_clips, raw units from START): the drop's spring rises, the build's crouch drops
+    assert yy(base_pitch=13.0, elbow_pitch=24.0) == pytest.approx(11 / fg.Y_RANGE_UNITS) and 11 / fg.Y_RANGE_UNITS > 0.4
+    assert yy(base_pitch=-11.0, elbow_pitch=-33.0) == pytest.approx(-22 / fg.Y_RANGE_UNITS) and 22 / fg.Y_RANGE_UNITS > 0.8
+    # SPRING itself (bp -36, el +2 raw, i.e. +13 / +24 from START) must be ABOVE centre, not below it
+    assert yy(**{j: v - START[j] for j, v in zip(fg.JOINTS, [0.0, -36.0, 2.0, 0.0, 50.0])}) > 0.4
 
 
 def test_commanded_values_are_scaled_to_what_the_arm_delivers_and_clamped():
     x, _ = fg.head_path([0, 1, 2], [row(), row(base_yaw=1.8 * fg.X_RANGE_UNITS), row(base_yaw=94.0)])
     assert x[1] == pytest.approx(1.0) and x[2] == 1.0
-    x, _ = fg.head_path([0, 1], [row(), row(base_yaw=14.0)], delivery={})                  # already physical: no scaling
+    x, _ = fg.head_path([0, 1], [row(), row(base_yaw=fg.X_RANGE_UNITS / 2)], delivery={})   # already physical: no scaling
     assert x[1] == pytest.approx(0.5)
     x, y = fg.head_path([0, 1], [row(), [float("nan")] * 5])                              # a bad number is no excursion
     assert (x[1], y[1]) == (0.0, 0.0)
-    assert fg.head_path([0, 1], [dict(START), {"base_yaw": 1.8 * 7.0}])[0][1] == pytest.approx(0.25)   # dict rows, joints missing
+    assert fg.head_path([0, 1], [dict(START), {"base_yaw": 1.8 * fg.X_RANGE_UNITS / 4}])[0][1] == pytest.approx(0.25)   # dict rows
 
 
 def test_head_path_checks_its_inputs():
@@ -108,7 +124,8 @@ def test_head_path_checks_its_inputs():
 class ToyArm:
     """A toy in spatial.py's base frame (metres, z up, forward = +y at neutral yaw, so the lamp's right = +x).
     +base_yaw turns the head toward +x, as measured on the real lamp; the head pivot is R in front of the yaw
-    axis and rises with base_pitch + elbow_pitch. `flip` builds the opposite servo direction."""
+    axis, rises with elbow_pitch and drops with base_pitch (the real chain's signs, see the module docstring).
+    `flip` builds the opposite servo direction."""
     R, H, RAD, RISE = 0.08, 0.30, math.radians(0.9), 0.002
 
     def __init__(self, flip=False, broken=False):
@@ -119,26 +136,29 @@ class ToyArm:
         if self.broken:
             raise RuntimeError("no model")
         th = self.sign * (u["base_yaw"] - START["base_yaw"]) * self.RAD
-        z = self.H + self.RISE * ((u["base_pitch"] - START["base_pitch"]) + (u["elbow_pitch"] - START["elbow_pitch"]))
+        z = self.H + self.RISE * ((u["elbow_pitch"] - START["elbow_pitch"]) - (u["base_pitch"] - START["base_pitch"]))
         return {"position": (self.R * math.sin(th), self.R * math.cos(th), z), "forward": (math.sin(th), math.cos(th), 0.0)}
 
 
 def test_with_fk_x_is_the_base_frames_x_and_y_its_z():
-    arm = ToyArm()
+    arm, XU = ToyArm(), fg.X_RANGE_UNITS
     frames = [row(), row(base_yaw=1.8 * 14.0), row(base_yaw=-1.8 * 14.0), row(base_pitch=1.15 * 13, elbow_pitch=1.2 * 24)]
     x, y = fg.head_path([0, 1, 2, 3], frames, arm)
     assert x[1] > 0.3 and x[2] == pytest.approx(-x[1]) and abs(y[1]) < 1e-9
-    assert x[1] == pytest.approx(math.sin(14 * arm.RAD) / math.sin(28 * arm.RAD))      # +-1 is X_RANGE_UNITS through the model
-    assert y[3] == pytest.approx(37 / 44) and abs(x[3]) < 1e-9                          # the spring, against the crouch's range
+    assert x[1] == pytest.approx(math.sin(14 * arm.RAD) / math.sin(XU * arm.RAD))       # +-1 is X_RANGE_UNITS through the model
+    # the spring (24 - 13 = 11 units of lift) against the crouch's 22, widened by Y_HEADROOM
+    assert y[3] == pytest.approx(11 / (22 * fg.Y_HEADROOM)) and y[3] > 0 and abs(x[3]) < 1e-9
     xr, yr = fg.workspace_m(arm)
-    assert xr == pytest.approx((arm.R + fg.LOOK_M) * math.sin(28 * arm.RAD)) and yr == pytest.approx(44 * arm.RISE)
+    assert xr == pytest.approx((arm.R + fg.LOOK_M) * math.sin(XU * arm.RAD))
+    assert yr == pytest.approx(22 * arm.RISE * fg.Y_HEADROOM)                           # headroom: the real crouch goes deeper
     # explicit ranges in metres win over the defaults
     assert fg.head_path([0, 1], frames[:2], arm, x_range_m=1.0, y_range_m=1.0)[0][1] == pytest.approx((arm.R + fg.LOOK_M) * math.sin(14 * arm.RAD))
+    assert fg.head_path([0, 1], frames[:2], arm)[0][1] == pytest.approx(math.sin(14 * arm.RAD) / math.sin(XU * arm.RAD))
     # with a model the MODEL decides the sign, not yaw_sign: a lamp whose servo runs the other way comes out negative
     assert fg.head_path([0, 1], frames[:2], ToyArm(flip=True))[0][1] < -0.3
     # a callable that only returns a position works too (no face offset then)
     pos = fg.head_path([0, 1], frames[:2], lambda u: arm.head(u)["position"])[0][1]
-    assert pos == pytest.approx(math.sin(14 * arm.RAD) / math.sin(28 * arm.RAD))
+    assert pos == pytest.approx(math.sin(14 * arm.RAD) / math.sin(XU * arm.RAD))
 
 
 def test_a_model_that_fails_falls_back_to_joint_units():
@@ -147,22 +167,51 @@ def test_a_model_that_fails_falls_back_to_joint_units():
     assert fg.head_path([0, 1], frames, lambda u: (float("nan"), 0.0, 0.0)) == fg.head_path([0, 1], frames)
 
 
-def test_resample_puts_30_fps_frames_on_the_50_ms_grid():
+def test_resample_puts_30_fps_frames_on_the_transmitted_grid():
     times = [i / 30 for i in range(31)]                                                  # 1 s of clip
     x, y = fg.resample(times, [t * 0.5 for t in times], [-t for t in times])
-    assert len(x) == 21 and x[0] == 0.0
-    assert all(a == pytest.approx(0.5 * 0.05 * i) for i, a in enumerate(x)) and y[20] == pytest.approx(-1.0)
+    step = fg.DT_MS / 1000.0
+    assert len(x) == int(1.0 / step) + 1 and x[0] == 0.0
+    assert all(a == pytest.approx(0.5 * step * i) for i, a in enumerate(x)) and y[-1] == pytest.approx(-(len(x) - 1) * step)
     assert fg.resample([0.0], [0.3], [0.1]) == ([0.3], [0.1])
     with pytest.raises(ValueError): fg.resample([0, 1], [0], [0, 1])
 
 
+def test_dt_is_read_at_call_time_so_the_grid_and_the_timestamps_can_never_disagree(monkeypatch):
+    """DT_MS used to be bound into these defaults at import while PathPublisher's t0 read the global, so
+    setting follow_game.DT_MS = 33 built a 50 ms path and stamped it as a 33 ms one (out by i0 x 17 ms)."""
+    times = [i / 30 for i in range(61)]
+    monkeypatch.setattr(fg, "DT_MS", 20)
+    assert len(fg.resample(times, times, times)[0]) == 101
+    assert fg.lpath_messages(0, 0, [0.0] * 3, [0.0] * 3)[0]["dt"] == 20
+    assert fg.trim_still([0.0] * 5 + [0.5] * 5, [0.0] * 10)[0] == 0                       # lead-in is 0.25 s = 12 points at dt 20
+
+
 def test_trim_still_keeps_a_short_lead_in_and_one_point_after_the_last_move():
+    lead = int(round(fg.LEAD_IN_S * 1000.0 / fg.DT_MS))
     x = [0.0] * 12 + [0.1, 0.2, 0.3] + [0.3] * 10
     i0, tx, ty = fg.trim_still(x, [0.0] * len(x))
-    assert i0 == 6 and tx == [0.0] * 6 + [0.1, 0.2, 0.3, 0.3] and len(ty) == len(tx)       # 5 lead-in points + the last still one
+    assert i0 == 11 - lead and tx == [0.0] * (lead + 1) + [0.1, 0.2, 0.3, 0.3] and len(ty) == len(tx)
     assert fg.trim_still(x, [0.0] * len(x), lead_in_s=0.0)[0] == 11
     assert fg.trim_still([0.0] * 3 + [0.5], [0.0] * 4)[0] == 0                             # never before the start
     assert fg.trim_still([0.2] * 30, [0.1] * 30) == (0, [], [])                            # nothing moves: nothing to follow
+
+
+@pytest.mark.parametrize("dt", (20, 33, 40, 50))
+def test_trim_still_trims_at_a_speed_not_a_step_so_dt_cannot_change_what_counts_as_movement(dt):
+    """STILL_SPEED is the scorer's own floor (0.08 units/s). As a per-step distance it meant 0.08 units/s
+    at dt 50 by coincidence, 0.12 at dt 33 and 0.05 at dt 80: changing dt silently retimed every path."""
+    seconds = 6.0
+    n = int(seconds * 1000 / dt) + 1
+    def value(i):                                                                          # still, a slow drift, still
+        t = i * dt / 1000.0
+        return 0.0 if t < 2.0 else (0.3 * (t - 2.0) if t < 4.0 else 0.6)
+    i0, tx, _ = fg.trim_still([value(i) for i in range(n)], [0.0] * n, dt_ms=dt)
+    assert i0 * dt / 1000.0 == pytest.approx(2.0 - fg.LEAD_IN_S, abs=2 * dt / 1000.0)         # same wall clock at every dt
+    assert (len(tx) - 1) * dt / 1000.0 == pytest.approx(2.0 + fg.LEAD_IN_S, abs=3 * dt / 1000.0)
+    # a drift of 0.05 units/s is under the scorer's floor at every dt: it is not movement
+    slow = [0.05 * i * dt / 1000.0 for i in range(n)]
+    assert fg.trim_still(slow, [0.0] * n, dt_ms=dt) == (0, [], [])
 
 
 # ---- the room's status ---------------------------------------------------------------------------------------
@@ -316,17 +365,20 @@ def test_publisher_stamps_the_instant_the_head_starts_moving_on_the_mac_clock(tm
     pub = publisher(tmp_path, sent)
     beat_ns = fg.time.monotonic_ns() + 950_000_000                                          # the scheduler's beat instant, lamp clock
     msgs = pub.clip_posted("beat_test_120", beat_ns)
-    assert len(msgs) == 1 and len(sent) == 2 and sent[0] == sent[1]                          # sent twice; de-duplicated by seq
+    i0 = pub.path_for("beat_test_120")[0]
+    assert len(msgs) == 2 and len(sent) == 4 and sent[:2] == sent[2:]                        # clip + rest, each sent twice
     m = json.loads(sent[0][1:])
     assert sent[0][0] == 4 and m["t"] == "lpath" and m["seq"] == 500 and m["clip"] == "beat_test_120"
-    # first frame at beat - hold; the clip is still for 0.6 s; 0.25 s of that is kept as the lead-in -> grid index 7;
+    # first frame at beat - hold; the clip is still for 0.6 s, of which LEAD_IN_S is kept -> grid index i0;
     # + the servo lag; + offset_ns puts it on the Mac clock
-    assert m["t0"] == beat_ns - 600_000_000 + 7 * 50_000_000 + fg.SERVO_LAG_NS + 7_000_000_000
+    assert i0 * fg.DT_MS / 1000.0 == pytest.approx(0.6 - fg.LEAD_IN_S, abs=fg.DT_MS / 1000.0)
+    assert m["t0"] == beat_ns - 600_000_000 + i0 * fg.DT_MS * 1_000_000 + fg.SERVO_LAG_NS + 7_000_000_000
+    assert m["dt"] == fg.DT_MS
     assert m["x"][:6] == [0] * 6 and max(m["x"]) == pytest.approx(1000 * 20 / fg.X_RANGE_UNITS, abs=2) and min(m["x"]) >= 0
     assert set(m["y"]) == {0}
-    assert pub.seq == 501 and pub.sent == 1
-    pub.clip_posted("beat_test_120", beat_ns + 4_000_000_000)                                # cached; the next seq
-    assert json.loads(sent[-1][1:])["seq"] == 501
+    assert pub.seq == 502 and pub.sent == 2
+    pub.clip_posted("beat_test_120", beat_ns + 4_000_000_000)                                # cached; the next seqs
+    assert json.loads(sent[-2][1:])["seq"] == 502
 
 
 def test_publisher_adds_the_measured_first_frame_error_clamped(tmp_path):
@@ -350,20 +402,50 @@ def test_publisher_sends_nothing_it_cannot_stand_behind(tmp_path):
     assert fg.PathPublisher(boom, lambda: 0, dirs=[str(tmp_path)], fk=None, sync=True, log=lambda *_: None).clip_posted("c", 1) is None
 
 
-def test_stop_ends_a_running_path_with_a_still_one(tmp_path):
+def end_of(m):
+    return m["t0"] + (len(m["x"]) - 1) * m["dt"] * 1_000_000
+
+
+def test_stop_covers_the_whole_remainder_of_the_path_it_cancels(tmp_path):
+    """The phone gives the ball to the newest path that has STARTED and never hands it back (PathTimeline
+    .entry), so a home that ends before the clip it cancelled takes the ball off the screen with it."""
     write_clip(tmp_path / "c.csv", sway)
     sent = []
     pub = publisher(tmp_path, sent)
     assert pub.stop() is None and sent == []                                                 # nothing running: nothing to end
-    pub.clip_posted("c", fg.time.monotonic_ns() + 950_000_000)
+    msgs = pub.clip_posted("c", fg.time.monotonic_ns() + 950_000_000)
+    was_end = pub.end_mac_ns
+    assert was_end == end_of(msgs[-1])
     del sent[:]
-    m = pub.stop()[0]
+    home = pub.stop()
     now_mac = fg.time.monotonic_ns() + 7_000_000_000
-    assert (m["x"], m["y"], m["clip"], m["seq"]) == ([0, 0], [0, 0], "home", 501) and 0 < m["t0"] - now_mac + 5_000_000 <= 105_000_000
-    assert pub.stop() is None                                                                # once
+    assert [m["clip"] for m in home] == ["home"] and home[0]["seq"] == 502
+    assert set(home[0]["x"]) == {0} and set(home[0]["y"]) == {0}                              # the ball is at centre already
+    assert 0 < home[0]["t0"] - now_mac + 5_000_000 <= 105_000_000                             # starts ~HOME_LEAD_S ahead
+    assert end_of(home[-1]) >= was_end                                                        # ... and outlives what it cancelled
+    assert pub.stop() is None                                                                 # once
     # sent home while a clip's path was still being worked out: that path is for a cancelled clip
     pub.offset = lambda: (pub.stop(), 7_000_000_000)[1]
-    assert pub.clip_posted("c", fg.time.monotonic_ns() + 950_000_000) is None and sent[-1][1:] == fg.encode_telemetry(m)[1:]
+    assert pub.clip_posted("c", fg.time.monotonic_ns() + 950_000_000) is None
+
+
+def test_stop_glides_the_ball_to_the_centre_instead_of_teleporting_it(tmp_path):
+    """The arm reaches home over a second or so through the runtime's own path; a 2-point still path at
+    (0, 0) would jump the ball there in one frame from wherever the clip had got to."""
+    write_clip(tmp_path / "c.csv", sway)
+    sent = []
+    pub = publisher(tmp_path, sent)
+    beat_ns = fg.time.monotonic_ns() - 1_000_000_000                                          # a clip already half-way through
+    pub.clip_posted("c", beat_ns)
+    x0, y0 = pub.position_at(fg.time.monotonic_ns() + 7_000_000_000 + int(fg.HOME_LEAD_S * 1e9))
+    assert abs(x0) > 0.2                                                                      # the head is off centre right now
+    home = pub.stop()
+    ramp = home[0]
+    assert ramp["clip"] == "home" and ramp["dt"] == fg.DT_MS
+    assert ramp["x"][0] == pytest.approx(fg.thousandths(x0), abs=2) and ramp["x"][-1] == 0
+    assert (len(ramp["x"]) - 1) * ramp["dt"] / 1000.0 == pytest.approx(fg.HOME_RAMP_S, abs=fg.DT_MS / 1000.0)
+    assert all(abs(b - a) <= 120 for a, b in zip(ramp["x"], ramp["x"][1:]))                   # no step bigger than the ramp's own
+    assert set(home[-1]["x"]) == {0} and home[-1]["t0"] == end_of(ramp)                       # then still at centre, no gap
 
 
 def test_generate_clip_is_the_fallback_for_library_names():
@@ -373,15 +455,101 @@ def test_generate_clip_is_the_fallback_for_library_names():
     assert fg.generate_clip("beat_hype_120") == (times, rows)                               # the v1 alias is variant a
     assert fg.generate_clip("dance_fwd") is None and fg.generate_clip("beat_nope_120_a") is None
     x, y = fg.head_path(times, rows)
-    assert max(x) > 0.4 and min(x) < -0.3 and max(y) > 0.3 and min(y) < -0.3                # the dance fills a good part of the range
+    assert max(x) > 0.4 and min(x) < -0.3 and max(y) > 0.2 and min(y) < -0.3                # the dance fills a good part of the range
+
+
+def test_clip_bpm_reads_the_library_naming():
+    assert fg.clip_bpm("beat_hype_120_a") == 120 and fg.clip_bpm("beat_groove_88") == 88
+    assert fg.clip_bpm("home") is None and fg.clip_bpm("beat_hype_nope_a") is None and fg.clip_bpm("beat_hype_5000_a") is None
+
+
+@pytest.mark.parametrize("tier", ("groove", "hype", "drop", "build"))
+def test_the_library_fills_the_range_without_ever_clipping(tier):
+    """Amplitude. +-1 is the edge of the CHOREOGRAPHY's range: a typical clip must fill a good half of it
+    and the boldest must reach the edge without being clamped -- the build used to spend up to a third of
+    every clip welded to y = -1.000, a dead horizontal line along the bottom of the screen. Checked here on
+    the joint-unit mapping (no vendor description in CI); the same sweep over all 312 clips through the
+    vendor model gives 0 clipped points and the per-tier figures in follow_game's RANGES."""
+    pytest.importorskip("numpy")
+    peaks = []
+    for bpm in (80, 120, 180):
+        for v in ("a", "b", "c"):
+            times, rows = fg.generate_clip(f"beat_{tier}_{bpm}_{v}")
+            x, y = fg.head_path(times, rows)
+            assert max(map(abs, x)) < 1.0 and max(map(abs, y)) < 1.0                        # nothing is clamped
+            peaks.append(max(math.hypot(a, b) for a, b in zip(x, y)))
+    assert 0.35 < min(peaks) and max(peaks) > 0.55                                          # and the range is actually used
+
+
+# ---- continuity: the ball must never leave the screen between clips ----------------------------------------------
+class FakeTracker:
+    """Beats at a steady tempo, the way BeatTracker reports them to ClipScheduler.plan()."""
+    def __init__(self, bpm, first_ns):
+        self.bpm, self.period, self.first = float(bpm), 60.0 / float(bpm), int(first_ns)
+
+    def next_beats(self, now_ns, count):
+        p = int(self.period * 1e9)
+        k = max(0, (int(now_ns) - self.first) // p + 1)
+        return [self.first + (k + i) * p for i in range(count)]
+
+
+@pytest.mark.parametrize("bpm", (80, 88, 100, 120, 132, 152, 180))
+def test_consecutive_clips_paths_meet_so_the_ball_never_leaves_the_screen(tmp_path, bpm):
+    """The scheduler rests 1-3 beats between clips and every clip holds START for 0.6 s at each end, so the
+    head is really still for 0.5-1.4 s every 8 beats. Publishing only the movement left all of that with no
+    path: the phone holds the last point for 0.4 s (PathTimeline.holdNs) and then shows nothing, so the
+    trail collapsed to a dot, vanished and popped back at centre 13 times a minute. Every clip's path is now
+    followed by a rest path, and here the whole chain is walked with the scheduler's OWN next-clip rule."""
+    pytest.importorskip("numpy")
+    import lamp_show as L
+
+    sent = []
+    pub = fg.PathPublisher(sent.append, lambda: 7_000_000_000, hold_ns=L.HOLD_NS, fk=None, sync=True,
+                           seq0=1, log=lambda *_: None, clip_beats=L.CLIP_BEATS)
+    sched = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None)
+    name = f"beat_hype_{bpm}_a"
+    period_ns = int(60.0 / bpm * 1e9)
+    beat_ns = 50_000_000_000
+    covered_to = None
+    for cycle in range(4):
+        msgs = pub.clip_posted(name, beat_ns)
+        assert msgs, "the clip published nothing"
+        clip = [m for m in msgs if m["clip"] == name]
+        rest = [m for m in msgs if m["clip"] == "rest"]
+        assert rest, "no rest path: the gap between clips would be uncovered"
+        for a, b in zip(msgs, msgs[1:]):                                                     # every message abuts the next
+            assert end_of(a) == b["t0"] and (a["x"][-1], a["y"][-1]) == (b["x"][0], b["y"][0])
+        assert abs(clip[-1]["x"][-1]) <= 30 and abs(clip[-1]["y"][-1]) <= 30                 # a clip ends back at START
+        if covered_to is not None:                                                           # ... and the previous cycle reaches this one
+            assert clip[0]["t0"] <= covered_to, (
+                f"{(clip[0]['t0'] - covered_to) / 1e6:.0f} ms with no path at {bpm} bpm")
+        covered_to = end_of(msgs[-1])
+        # the scheduler's own rule for when the next clip's first beat may be
+        sched.boundary_ns = beat_ns + L.CLIP_BEATS * period_ns
+        plan = sched.plan(sched.boundary_ns, FakeTracker(bpm, beat_ns))
+        assert plan is not None
+        beat_ns = plan[1]
+    assert pub.sent <= 4 * 4                                                                 # and it stays cheap: <= 4 messages a clip
+
+
+def test_the_rest_path_is_still_and_cheap(tmp_path):
+    pytest.importorskip("numpy")
+    sent = []
+    pub = fg.PathPublisher(sent.append, lambda: 0, fk=None, sync=True, seq0=1, log=lambda *_: None)
+    msgs = pub.clip_posted("beat_groove_120_a", 50_000_000_000)
+    rest = [m for m in msgs if m["clip"] == "rest"]
+    assert len(rest) == 1 and rest[0]["dt"] == fg.REST_DT_MS
+    assert len(set(rest[0]["x"])) == 1 and len(set(rest[0]["y"])) == 1                       # the head is parked, not drifting
+    assert fg.REST_MIN_S <= (len(rest[0]["x"]) - 1) * fg.REST_DT_MS / 1000.0 <= fg.REST_MAX_S
+    assert len(fg.encode_telemetry(rest[0])) < 200                                           # a couple of hundred bytes an 8-beat clip
 
 
 # ---- attach(): the hook ------------------------------------------------------------------------------------------
 class FakeScheduler:
-    hold_ns, phase_ms = 600_000_000, []
+    hold_ns = 600_000_000
 
-    def __init__(self, answer):
-        self.answer, self.posted = answer, []
+    def __init__(self, answer, measured_ms=None):
+        self.answer, self.posted, self.phase_ms, self.measured_ms = answer, [], [], measured_ms
         self.post_fn = self.runtime
 
     def runtime(self, name):
@@ -390,6 +558,14 @@ class FakeScheduler:
 
     def _post(self, name, beat_ns, late_ns):
         self.result = self.post_fn(name)
+        if self.answer.get("status") == "started":
+            self._measure(name, beat_ns, 0)
+
+    def _measure(self, name, beat_ns, t0):
+        """The real one polls the runtime and, when it reports the clip running, appends the first frame's
+        error against the plan to phase_ms. Nothing is appended when the runtime never answers."""
+        if self.measured_ms is not None:
+            self.phase_ms = (self.phase_ms + [self.measured_ms])[-50:]
 
 
 class FakePanel:
@@ -411,7 +587,9 @@ def test_attach_publishes_only_after_the_runtime_accepted_and_changes_nothing_el
     beat_ns = fg.time.monotonic_ns() + 950_000_000
     show.scheduler._post("c", beat_ns, 0)
     assert show.scheduler.posted == ["c"] and show.scheduler.result == {"status": "started"}   # the post itself is untouched
-    assert len(sent) == 2 and json.loads(sent[0][1:])["t0"] == beat_ns - 600_000_000 + 7 * 50_000_000 + fg.SERVO_LAG_NS + 7_000_000_000
+    i0 = pub.path_for("c")[0]
+    assert len(sent) == 4 and json.loads(sent[0][1:])["t0"] == beat_ns - 600_000_000 + i0 * fg.DT_MS * 1_000_000 + fg.SERVO_LAG_NS + 7_000_000_000
+    assert [json.loads(d[1:])["clip"] for d in sent[:2]] == ["c", "rest"]                    # the rest between clips is published too
     show.scheduler.post_fn("home")                                                          # dance stop: the path ends on the phones
     assert json.loads(sent[-1][1:])["clip"] == "home"
     # refused by the runtime: nothing is published
@@ -425,6 +603,46 @@ def test_attach_publishes_only_after_the_runtime_accepted_and_changes_nothing_el
     pub3.clip_posted = lambda *a: 1 / 0
     show3.scheduler._post("c", 1, 0)
     assert show3.scheduler.result == {"status": "started"}
+
+
+def test_the_measured_start_corrects_t0_and_only_when_it_is_worth_a_packet(tmp_path):
+    """The POST can only guess when the runtime will start the clip (250-450 ms, README), which is +-90 ms
+    on the ball. _measure knows the truth 300-500 ms later, while point 0 is still 400-700 ms away."""
+    write_clip(tmp_path / "c.csv", sway)
+    sent = []
+    pub = publisher(tmp_path, sent)
+    beat_ns = fg.time.monotonic_ns() + 1_200_000_000
+    guess = pub.clip_posted("c", beat_ns)[0]
+    del sent[:]
+    real_first = beat_ns - pub.hold_ns + 80_000_000                                          # the clip really started 80 ms late
+    fixed = pub.clip_started("c", beat_ns, real_first)
+    assert fixed and fixed[0]["t0"] == guess["t0"] + 80_000_000 and fixed[0]["seq"] > guess["seq"]
+    assert fixed[0]["x"] == guess["x"] and fixed[0]["clip"] == "c"                           # the same path, a better t0
+    assert pub.corrected == 1 and [m["clip"] for m in fixed] == ["c", "rest"]                # the rest moves with it
+    # a few ms is not worth a packet, and neither is a clip we did not publish
+    assert pub.clip_started("c", beat_ns, beat_ns - pub.hold_ns + 90_000_000) is None
+    assert pub.clip_started("other", beat_ns, real_first) is None and pub.corrected == 1
+    # too late to matter: the ball is already rolling
+    late = fg.time.monotonic_ns() - 3_000_000_000
+    pub.clip_posted("c", late)
+    assert pub.clip_started("c", late, late - pub.hold_ns + 150_000_000) is None
+
+
+def test_attach_corrects_t0_from_the_schedulers_own_measurement(tmp_path):
+    write_clip(tmp_path / "c.csv", sway)
+    show, sent, _ = fake_show({"status": "started"})
+    show.scheduler.measured_ms = 70.0                                                        # the runtime started 70 ms late
+    pub, _ = fg.attach(show, log=lambda *_: None, dirs=[str(tmp_path)], fk=None, sync=True)
+    beat_ns = fg.time.monotonic_ns() + 1_200_000_000
+    show.scheduler._post("c", beat_ns, 0)
+    clips = [json.loads(d[1:]) for d in sent if json.loads(d[1:])["clip"] == "c"]
+    assert pub.corrected == 1 and len(set(m["seq"] for m in clips)) == 2                     # the guess, then the correction
+    assert max(m["t0"] for m in clips) - min(m["t0"] for m in clips) == 70_000_000
+    # the runtime never reported it running: the guess stands, and nothing extra goes out
+    show2, sent2, _ = fake_show({"status": "started"})
+    pub2, _ = fg.attach(show2, log=lambda *_: None, dirs=[str(tmp_path)], fk=None, sync=True)
+    show2.scheduler._post("c", beat_ns, 0)
+    assert pub2.corrected == 0 and pub2.sent == 2
 
 
 def test_attach_looks_for_clips_where_the_live_generator_writes_them(tmp_path):
