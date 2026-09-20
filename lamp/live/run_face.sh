@@ -5,6 +5,9 @@
 # 0.25 s (120 units/s commanded; the runtime refuses above 300 and follow.py clamps at 140).
 cd /home/lelamp/feelthemusic-lamp || exit 1
 # shellcheck disable=SC2086  # FOLLOW_ARGS is meant to split into several options
-HOME=/home/lelamp exec .venv/bin/python follow.py --live --target "${FOLLOW_TARGET:-face}" ${FOLLOW_ARGS:-}
+# Feetech servos stick-slip when a goal is replaced every quarter second: one longer, larger move
+# per cycle looks smooth where four short ones judder. Measured on this lamp 2026-09-19.
+HOME=/home/lelamp exec .venv/bin/python follow.py --live --target "${FOLLOW_TARGET:-face}" \
+  ${FOLLOW_ARGS:---live-step 40 --live-ms 400 --live-period 0.4 --deadband-deg 5}
 # locked-on live head tracking (closed loop on the measured pose through the runtime's tracking route):
 # HOME=/home/lelamp exec .venv/bin/python follow.py --live

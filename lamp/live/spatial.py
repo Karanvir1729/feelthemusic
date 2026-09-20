@@ -69,8 +69,8 @@ def _calibration_candidates(robot_dir: Path, explicit: Path | None) -> list[Path
 
 class LampModel:
     def __init__(self, robot_dir: Path = DEFAULT_ROBOT_DIR, *, calibration: Path | None = None,
-                 hfov_deg: float = 61.0, vfov_deg: float = 44.0,
-                 table_margin: float = 0.06, base_margin: float = 0.02, limit_margin: float = 6.0):
+                 hfov_deg: float = 61.0, vfov_deg: float = 44.0, camera_pitch_deg: float = 0.0,
+                 table_margin: float = 0.03, base_margin: float = 0.02, limit_margin: float = 2.0):
         robot_dir = Path(robot_dir)
         self.robot_dir = robot_dir                           # beat_clips reads the URDF inertials from here
         mapping = json.loads((robot_dir / "joint_mapping.yaml").read_text())   # the file holds JSON
@@ -104,6 +104,12 @@ class LampModel:
         self.table_margin, self.base_margin = table_margin, base_margin
         self.fx = 0.5 / math.tan(math.radians(hfov_deg) / 2)  # focal length in picture widths
         self.fy = 0.5 / math.tan(math.radians(vfov_deg) / 2)  # focal length in picture heights
+        # How far the real camera looks ABOVE the shade axis the URDF gives us. The camera is a separate
+        # part bolted to the shade, so its optical axis is not the axis the robot description models;
+        # measured on this lamp, not assumed (follow.py --camera-pitch, the settle test in its help).
+        # Positive tilts the modelled view up. It turns the camera axes only: `position` and `shade`,
+        # which the safety geometry and the clip validator use, are untouched.
+        self.camera_pitch = math.radians(float(camera_pitch_deg))
 
     @staticmethod
     def _read_safety(path: Path) -> tuple[dict, dict]:
@@ -129,6 +135,9 @@ class LampModel:
         for motor, offset, origin in self._chain:
             m = m @ origin @ _rot_z((float(units[motor]) - self.neutral[motor]) * self._scale[motor] + offset)
         forward, down = m[:3, 0], m[:3, 1]
+        if self.camera_pitch:
+            c, s = math.cos(self.camera_pitch), math.sin(self.camera_pitch)
+            forward, down = c * forward - s * down, s * forward + c * down
         a = (m @ [*self.shade["start"], 1.0])[:3]
         b = (m @ [*self.shade["end"], 1.0])[:3]
         return {"position": m[:3, 3], "forward": forward, "down": down, "right": np.cross(down, forward),

@@ -710,3 +710,164 @@ def test_one_cli_writes_a_validated_clip_at_the_exact_bpm(tmp_path, capsys):
     assert "PASS" in capsys.readouterr().out
     assert bc.main(["--one", "waltz", "a", "128", "0.5", "--out", str(out), "--robotdesc", str(ROBOTDESC)]) == 2
     assert bc.one_name("hype", "c", 128.0, 1.0) == "live_hype_c_128_1p00"
+
+
+# ----------------------------------------------------------------------------- live path: facing
+FACING_OK = 20.0        # measured 2026-09-19: every tier/variant/tempo validates out to +-25 units, the
+                        # first failure being drop c at 80 bpm at +30 (head_y 0.017 m vs the 0.020 m floor)
+
+
+def _yaw_room(tier, bpm, variant, bold=1.0):
+    """(lowest, highest) facing the joint box leaves this clip, computed the long way from the commanded
+    pre-clamp trajectory -- the same quantity facing_limit derives, arrived at independently."""
+    raw = bc.bold_trajectory(tier, bpm, variant, bold)
+    U = bc.apply_gain(bc.scaled(raw, bc.joint_scales(raw, bpm)))
+    return -bc.JOINT_MAX - U[:, bc.YAW].min(), bc.JOINT_MAX - U[:, bc.YAW].max()
+
+
+def test_facing_zero_is_todays_clip_byte_for_byte():
+    # the default and an explicit 0.0 are the same call, and neither is a float round trip: face_trajectory
+    # hands the array straight back, the way bold_trajectory does at bold 1.0
+    U = np.array([[1.0, 2.0, 3.0, 4.0, 5.0], [-0.0, 2.0, 3.0, 4.0, 5.0]])
+    assert bc.face_trajectory(U, 0.0) is U
+    assert bc.face_trajectory(U, -0.0) is U
+    assert bc.facing_limit(U, 0.0) == 0.0 and bc.facing_limit(U, float("nan")) == 0.0
+    for tier, variant in COMBOS:
+        for bpm in (80, 127.3, 128, 180):
+            s0, U0 = bc.build_clip(tier, bpm, variant)
+            sf, Uf = bc.build_clip(tier, bpm, variant, bold=1.0, facing=0.0)
+            assert np.array_equal(s0, sf)
+            assert bc.csv_text(U0) == bc.csv_text(Uf), (tier, variant, bpm)
+            assert np.array_equal(bc.commanded(tier, bpm, variant), bc.commanded(tier, bpm, variant, facing=0.0))
+            for bold in (0.0, 0.6, 1.0):
+                r0, m0 = bc.make_clip(tier, variant, bpm, bold)
+                rf, mf = bc.make_clip(tier, variant, bpm, bold, facing=0.0)
+                assert hashlib.md5(bc.csv_text(r0).encode()).hexdigest() \
+                       == hashlib.md5(bc.csv_text(rf).encode()).hexdigest(), (tier, variant, bpm, bold)
+                assert m0["facing"] == 0.0 and mf["facing"] == 0.0
+                assert m0["amplitude"] == mf["amplitude"]
+
+
+@pytest.mark.parametrize("facing", [+FACING_OK, -FACING_OK, +7.5, -31.0])
+def test_facing_shifts_every_frame_of_base_yaw_and_nothing_else(facing):
+    for tier, variant in COMBOS:
+        for bpm in (80, 128, 180):
+            _, U0 = bc.build_clip(tier, bpm, variant)
+            _, Uf = bc.build_clip(tier, bpm, variant, facing=facing)
+            lo, hi = _yaw_room(tier, bpm, variant)
+            applied = min(hi, max(lo, facing))
+            assert bc.facing_limit(bc.apply_gain(bc.scaled(bc.raw_trajectory(tier, bpm, variant),
+                                                           bc.joint_scales(bc.raw_trajectory(tier, bpm, variant), bpm))),
+                                   facing) == pytest.approx(applied)
+            # exactly, not approximately: nothing is clamped, so the turn is one addition per frame
+            assert np.array_equal(Uf[:, bc.YAW], U0[:, bc.YAW] + applied), (tier, variant, bpm)
+            rest = [j for j in range(5) if j != bc.YAW]
+            assert np.array_equal(Uf[:, rest], U0[:, rest]), (tier, variant, bpm)
+            # the whole phrase turned: the first and last frames sit at the facing, and the ends still match
+            assert Uf[0, bc.YAW] == pytest.approx(applied) and Uf[-1, bc.YAW] == pytest.approx(applied)
+            assert Uf[0, bc.YAW] == Uf[-1, bc.YAW]
+            assert np.allclose(Uf[0, rest], bc.START[rest]) and np.allclose(Uf[-1, rest], bc.START[rest])
+            rows, meta = bc.make_clip(tier, variant, bpm, 1.0, facing=facing)
+            assert meta["facing"] == pytest.approx(applied)                  # reported, next to bold
+            assert meta["bold"] == 1.0
+            # the amplitude meta still measures the dance, not the turn
+            assert meta["amplitude"] == pytest.approx(round(float(np.abs(U0[:, bc.YAW]).max()), 2), abs=0.02)
+
+
+def test_facing_is_limited_by_the_joint_box_and_turns_rather_than_flattens():
+    for tier, variant in COMBOS:
+        for bpm in (80, 128, 180):
+            _, U0 = bc.build_clip(tier, bpm, variant)
+            lo, hi = _yaw_room(tier, bpm, variant)
+            assert lo < 0 < hi                                   # every clip has room to turn either way
+            for want, edge in ((500.0, hi), (-500.0, lo)):
+                _, Uf = bc.build_clip(tier, bpm, variant, facing=want)
+                _, meta = bc.make_clip(tier, variant, bpm, 1.0, facing=want)
+                assert meta["facing"] == pytest.approx(edge)     # reduced, and the caller can see it was
+                assert abs(meta["facing"]) < abs(want)
+                assert np.abs(Uf[:, bc.YAW]).max() <= bc.JOINT_MAX + 1e-9, (tier, variant, bpm, want)
+                assert not bc.envelope_violations(Uf)
+                # right up against the box, and the choreography is rotated, not squashed against it
+                assert np.abs(Uf[:, bc.YAW]).max() == pytest.approx(bc.JOINT_MAX)
+                assert np.ptp(Uf[:, bc.YAW]) == pytest.approx(np.ptp(U0[:, bc.YAW]))
+    # a clip that already fills the box on both sides has no room at all, so it is left where it is
+    full = np.tile(bc.START, (10, 1))
+    full[3, bc.YAW], full[6, bc.YAW] = 2 * bc.JOINT_MAX, -2 * bc.JOINT_MAX
+    assert bc.facing_limit(full, 30.0) == 0.0
+
+
+def test_facing_cannot_change_any_joints_peak_speed():
+    # A constant on one column leaves every frame-to-frame difference the difference it was, which is why
+    # the speed budget (joint_scales) is not redone for a turn. The joints the turn does not touch come
+    # out bit-identical; base_yaw's own differences can move by the last bit of the subtraction, since
+    # (a+f)-(b+f) need not round to exactly a-b -- far below the budget's 1 % margin, and never upward
+    # past the limit, which is the property that matters.
+    rest = [j for j in range(5) if j != bc.YAW]
+    for tier, variant in COMBOS:
+        for bpm in (80, 127.3, 132, 180):
+            _, U0 = bc.build_clip(tier, bpm, variant)
+            s0 = bc.peak_speed(U0)
+            for facing in (+FACING_OK, -FACING_OK, 500.0):
+                _, Uf = bc.build_clip(tier, bpm, variant, facing=facing)
+                sf = bc.peak_speed(Uf)
+                assert np.array_equal(sf[rest], s0[rest]), (tier, variant, bpm, facing)
+                assert sf[bc.YAW] == pytest.approx(s0[bc.YAW], rel=1e-12), (tier, variant, bpm, facing)
+                assert sf.max() <= bc.SPEED_LIMIT
+                assert sf.max() <= s0.max() * (1 + 1e-12)          # a turn never buys speed back
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+@pytest.mark.parametrize("bpm", [80, 127.3, 132, 180])
+def test_a_turned_clip_still_passes_the_validator(bpm):
+    v = bc.Validator(ROBOTDESC)
+    for tier, variant in COMBOS:
+        for facing in (0.0, +FACING_OK, -FACING_OK):
+            rows, meta = bc.make_clip(tier, variant, bpm, 1.0, model=v, facing=facing)
+            assert meta["ok"] is True, (tier, variant, bpm, facing, meta["reasons"])
+            U = np.array(rows)
+            assert meta["report"]["head_y_min"] >= bc.HEAD_Y_MIN and meta["report"]["zmp_y_min"] >= bc.ZMP_Y_MIN
+            assert U[0, bc.YAW] == pytest.approx(meta["facing"]) and U[-1, bc.YAW] == pytest.approx(meta["facing"])
+            # the validator accepts the turned ends, and still refuses ends that point different ways
+            bad = U.copy()
+            bad[0, bc.YAW] += 3.0
+            assert any("START" in r for r in v.validate(bad)["reasons"]), (tier, variant, bpm, facing)
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_a_turn_the_model_refuses_is_reported_not_shipped():
+    # the joint box is not the only limit: turning the arm swings the head sideways over the table, and
+    # past the measured +-25 units some clips lose the base clearance. make_clip must say so, so the live
+    # path falls back to the library rather than playing it (measured 2026-09-19 on this calibration).
+    v = bc.Validator(ROBOTDESC)
+    rows, meta = bc.make_clip("drop", "c", 80, 1.0, model=v, facing=500.0)
+    assert meta["facing"] > 25.0 and meta["ok"] is False
+    assert any("head_y" in r for r in meta["reasons"]), meta["reasons"]
+    assert not bc.envelope_violations(np.array(rows))            # the joint box alone would have let it through
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_facing_cli_renders_a_turned_clip_beside_the_home_facing_one(tmp_path, capsys):
+    out = tmp_path / "one"
+    common = ["--one", "groove", "a", "128", "1.00", "--out", str(out), "--robotdesc", str(ROBOTDESC)]
+    assert bc.main(common) == 0
+    assert bc.main(common + ["--facing", "20"]) == 0
+    assert sorted(p.name for p in out.iterdir()) == ["live_groove_a_128_1p00.csv", "live_groove_a_128_1p00_f20.csv"]
+    rows, meta = bc.make_clip("groove", "a", 128.0, 1.0, facing=20.0)
+    assert (out / "live_groove_a_128_1p00_f20.csv").read_text() == bc.csv_text(rows)
+    assert meta["facing"] == pytest.approx(20.0)
+    home = (out / "live_groove_a_128_1p00.csv").read_text()
+    assert home == bc.csv_text(bc.make_clip("groove", "a", 128.0, 1.0)[0]) and home != bc.csv_text(rows)
+    assert "PASS" in capsys.readouterr().out
+    assert bc.one_name("groove", "a", 128.0, 1.0) == "live_groove_a_128_1p00"
+    assert bc.one_name("groove", "a", 128.0, 1.0, 20.0) == "live_groove_a_128_1p00_f20"
+    assert bc.one_name("groove", "a", 128.0, 1.0, -12.5) == "live_groove_a_128_1p00_f-12p5"
+    # a turn the box cannot give is reduced, and the run says so rather than pretending it turned that far.
+    # groove a at 128 has +-54 of box room, but the model refuses the head clearance out there, so the run
+    # fails and writes nothing: the box clamp is a convenience, the validator is the verdict.
+    assert bc.main(common + ["--facing", "500"]) == 1
+    said = capsys.readouterr().out
+    assert "reduced to +54" in said and "FAIL" in said and "head_y" in said
+    assert sorted(p.name for p in out.iterdir()) == ["live_groove_a_128_1p00.csv", "live_groove_a_128_1p00_f20.csv"]
+    # --facing is a --one option: the batch library is the home-facing one
+    assert bc.main(["--out", str(out), "--tier", "groove", "--bpm", "128", "--facing", "20",
+                    "--robotdesc", str(ROBOTDESC)]) == 2

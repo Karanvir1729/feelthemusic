@@ -34,15 +34,16 @@ Wire facts, from a byte capture of the real conductor:
   Anchor     09 | u32 seqBase | u64 pts | u16 frames | u32 sampleRate | u8 codec (0 pcm, 1 aac-eld, 2 opus)
   Compact    08 | u16 seq16 | u16 sendLag100us | opus/aac payload (one 10 ms access unit, 480 frames)
   Control    0d + JSON; the new conductor adds "lamp": {"mode": off|light|follow|dance, "lights": bool, "gen": int,
-             "bold": 0..1 (the operator's "Bolder moves" slider), "track": face|phone (what follow mode looks for;
+             "bold": 0..1 (the operator's "Bolder moves" slider), "track": face|phone|flashlight (what follow mode looks for;
              missing keeps the current one, default face; a change while following restarts the follower:
              stop, wait for the old one to leave (FOLLOW_EXIT_S + RESTART_WAIT_S, then SIGKILL), start; a
              newer restart supersedes a pending one, and one that still finds the old follower alive gives
              up loudly and forgets the running track so the next Control with a lamp key retries)}
   Telemetry we send: hello, `cs` and `lamp` (once a second; 5 times a second while the follower sees its
-             target). `lamp` carries "target": {kind, seen, center 0..1, aim_deg, age_s} read from follow.py's
-             target.json (TargetReport), so the conductor can vibrate the phone harder the nearer the middle
-             of the lamp's view it is. Never `au`.
+             target). `lamp` carries "target": {kind, seen, center 0..1, aim_deg, yaw, age_s} read from
+             follow.py's target.json (TargetReport), so the conductor can vibrate the phone harder the nearer
+             the middle of the lamp's view it is, and "green" (bool), the latched "a phone is in the middle
+             of the lamp's view" state the panel is showing (see PhoneGreen). Never `au`.
 
   python3 lamp_show.py --conductor <conductor-ip>                 # light only, safe with follow.py
   python3 lamp_show.py --conductor <conductor-ip> --dance --audio # + beat-locked clips + the show on the speaker
@@ -58,22 +59,50 @@ one-in-flight rule, the tail-hold re-post and the home on stop are the library's
 live clip is not ready (generation, validation or write failed, no model, no time) the pre-generated
 library is posted exactly as before (nearest bucket, a/b/c rotation).
   python3 lamp_show.py --burst-test                             # 5 white bursts, prints the 5 V rail (Pi only)
+
+v4.2: the dance FACES the person. Dance and follow used to be exclusive -- entering dance killed follow.py,
+so the lamp always danced at its home heading. Now the dance keeps a WATCH-ONLY follower (run_face.sh with
+--dry-run: it sees and reports but never posts a pose, so it can never fight the clip for the arm) on the
+dashboard's track, and the base_yaw it reports as facing the target (target.json "yaw") is handed to
+beat_clips.make_clip as `facing`, so the clip swings around the person instead of around home. See
+FACING_MARGIN / FACING_HOLD_S for when the dance re-aims and when it lets go. With a beat_clips whose
+make_clip has no `facing`, the dance plays on the home heading exactly as v4.1 did (LiveClips._takes_facing).
+
+v4.3: the dance NEVER STOPS, and a centred phone turns the lamp GREEN. Dance mode used to post a clip only
+while the show had music and the tracker had locked, so in a quiet room -- or on a track the tracker cannot
+follow -- the arm just sat there. Now dance mode alone is the gate: with a lock the clips land on the beat
+exactly as v4.2 posted them, and without one they run on a grid of this process's own (ClipScheduler.
+free_beats) at the last locked tempo, or FREE_RUN_BPM. Nothing else moves the arm: only dance and follow
+mode ever reach the scheduler. And when the follower reports a PHONE seen and centred past PhoneGreen.ON,
+the panel's hue becomes GREEN_HUE (value, saturation, the flashes and the DROP burst are untouched) until
+the centre falls back under PhoneGreen.OFF; `lamp` telemetry carries that state as "green", which is what
+the conductor vibrates every phone harder from.
 """
 from __future__ import annotations
 
-import argparse, atexit, colorsys, heapq, json, math, os, signal, socket, struct, subprocess, sys, threading, time, urllib.request
+import argparse, atexit, colorsys, heapq, inspect, json, math, os, random, signal, socket, struct, subprocess, sys, threading, time, urllib.request
 
 LAMP = "http://127.0.0.1:8081"
 KINDS = {0: "CLICK", 1: "KICK", 2: "SNARE", 3: "BASS", 4: "BUILD", 5: "DROP"}
 CLIPS = [("dance_fwd", 12.4), ("robot_dance_fwd", 10.8)]   # vendor fallback, forward-levelled: base_pitch floor -65
-PIXELS, PIN, HW_BRIGHTNESS = 93, "D10", 0.6   # full white ~2.0 A of a 3.0 A rating
-PEAK_BRIGHTNESS = 0.75                        # DROP burst only, <= 400 ms; still to be verified on the rail (--burst-test)
+PIXELS, PIN, HW_BRIGHTNESS = 93, "D10", 0.7   # full white ~2.35 A of a 3.0 A rating (0.6 measured at
+                                              # ~2.0 A on 5.12-5.14 V; raised for a brighter room, still
+                                              # a fifth of the rating in hand for the Pi and the servos)
+PEAK_BRIGHTNESS = 0.85                        # DROP burst only, <= PEAK_MAX_S (400 ms), so the ~2.85 A it
+                                              # implies is never sustained; verify on the rail (--burst-test)
 PEAK_MAX_S = 0.4                              # the panel is never above HW_BRIGHTNESS for longer than this
 NOTE_NAMES = ["C", "G", "D", "A", "E", "B", "F#", "C#", "G#", "D#", "A#", "F"]   # by circle-of-fifths index
+GREEN_HUE = 1.0 / 3.0                         # pure green on the HSV wheel colorsys uses (0 red, 1/3 green, 2/3 blue)
 MODES = ("off", "light", "follow", "dance")
 SDK = "lamp_show v4"
 HOLD_NS = 600_000_000                         # the 0.6 s hold at the head (and tail) of every generated clip
 CLIP_BEATS = 8
+# The tempo the dance free-runs at when the tracker has never locked (a quiet room, a track it cannot
+# follow). 128 is beat_clips.DEFAULT_BPM -- the tempo its keyframes() use when asked for none, so the clip
+# is the one the generator was tuned on -- and it is exactly one of ClipScheduler.BUCKETS (80..180 by 4),
+# so the pre-generated library has a clip at it too and nothing is rounded. Not imported from beat_clips:
+# that module pulls in numpy and is only ever loaded on the generator thread, on the lamp.
+FREE_RUN_BPM = 128.0
 # beat_clips.py v2 writes MANIFEST.json next to the staged clips: ~/feelthemusic-lamp/beat_clips/ on the
 # lamp, the STAGE dir of lamp-tools/install_clips.py, which copies the CSVs (not the manifest) into the
 # runtime's animation pack (see lamp-tools/README.md). The manifest lists the a/b/c variants of every
@@ -95,8 +124,41 @@ DEFAULT_BOLD = 0.6                            # the dashboard slider's default
 LIVE_BPM_TOL = 2.0
 # follow.py --live (run_face.sh) writes what it sees here every cycle; see TargetFile.
 TARGET_FILE = os.path.expanduser("~/feelthemusic-lamp/target.json")
-TRACKS = ("face", "phone")                    # Control lamp.track: what follow mode looks for
+TRACKS = ("face", "phone", "flashlight")      # Control lamp.track: what follow mode looks for
 FOLLOW_LOG = "/tmp/follow-face.log"
+# v4.2: the dance FACES whoever is holding the phone or the torch. While a clip owns the arm the
+# follower runs watch-only (--dry-run: it sees, locates and reports, but never posts a pose -- the two
+# must never both command the arm), and its target.json carries "yaw", the base_yaw that would face
+# what it sees. That yaw becomes beat_clips.make_clip(facing=...): the clip swings around the person
+# instead of around the lamp's home heading.
+# The margin under which the facing is left alone. follow.py's own deadband on this lamp is 5 deg
+# (run_face.sh) -- below that it calls itself on target and stops correcting -- and base_yaw is 0.744
+# deg of bearing per unit here (spatial.LampModel at neutral, from the servo calibration), so 5 deg is
+# 6.7 units; rounded up to 7. Under that the lamp is already facing them as closely as the follower
+# itself would bother to, and a change costs a regenerated clip (~120 ms on the Pi 5).
+FACING_MARGIN = 7.0
+# spatial.LampModel clips base_yaw to +-94 units (+-100 less its 6-unit limit_margin), so a yaw from a
+# live follower is in range already; clamped again here so a corrupt or hand-edited target.json can
+# never hand the generator a facing outside the joint.
+FACING_LIMIT = 94.0
+# Nothing seen: hold the last facing this long before the dance goes back to the home heading. Short
+# losses are normal -- follow.py holds still for 3 s before it decides the target is gone and starts
+# sweeping (Search.HOLD_S), then wants three confirming sightings to re-lock -- so someone who looks
+# away or is walked in front of is back well inside this. One clip at the slowest bucket (80 bpm, 8
+# beats) is 6 s, so at most one further clip plays at the old facing before the lamp faces home again.
+FACING_HOLD_S = 8.0
+# v4.4, "keep damn moving": with nothing to face, the dance must not stand on one heading repeating the
+# same three phrases. WANDER_UNITS is how far either side of home it may wander when it has no target
+# (well inside the yaw box, so a wandered clip still has its full swing), and WANDER_EVERY_S how often
+# it picks a new heading: long enough that a clip finishes where it started, short enough that the
+# dance visibly travels. SURPRISE_TIER is how often the tier ignores the loudness and jumps somewhere
+# else, which is what stops a quiet room looking like one long groove.
+# 20 units, not more: MEASURED on the model 2026-09-20, every tier and variant still clears the
+# head_y and ZMP tipping margins when the whole clip is rotated 20 units off home, while at 25 the
+# drop's crossing diagonal breaches them and at 45 most of hype does. A facing the generator then
+# rejects costs a wasted ~100 ms clip build and drops the dance back to the library, so the wander
+# stays inside what every clip can take.
+WANDER_UNITS, WANDER_EVERY_S, SURPRISE_TIER = 20.0, 7.0, 0.25
 # Restarting the follower on a track change: the outgoing follow.py settles the arm and restores the
 # runtime's idle on its way out (poster.wait_idle up to 5 s, a settle POST, idle_restore), so it is given
 # FOLLOW_EXIT_S after SIGTERM before the start is queued, the start polls another RESTART_WAIT_S for it to
@@ -153,9 +215,9 @@ def flash_target_for(kind: str, intensity: float, excite: float) -> float:
     """How bright a hit wants to flash. Scales with the conductor's intensity and, for kicks, with how
     excited the last two seconds were, so a crazy section flashes harder than a verse."""
     if kind == "KICK":
-        return min(1.0, 0.45 + 0.45 * intensity + (0.1 if excite > 0.6 else 0.0))
+        return min(1.0, 0.62 + 0.38 * intensity + (0.1 if excite > 0.6 else 0.0))
     if kind == "SNARE":
-        return 0.35 + 0.30 * intensity
+        return min(1.0, 0.50 + 0.50 * intensity)
     if kind == "DROP":
         return 1.0
     return 0.0
@@ -241,6 +303,41 @@ class Chroma:
         return (idx, conf, loud, tonal)
 
 
+class PhoneGreen:
+    """Can the lamp SEE a phone at all? One TargetFile reading in, one
+    latched bool out; Show.tick feeds it at 20 Hz and hands the answer to the panel (ColourModel.green)
+    and to the conductor (`lamp` telemetry "green"), so what the conductor makes the phones do and what
+    the panel shows are the same state.
+
+    ANYWHERE IN THE PICTURE COUNTS (operator's call, 2026-09-20): a phone the camera can see at all
+    scores, not only one held in the middle. The thresholds are therefore 0.0, which every reading
+    clears, and the state reduces to "a fresh sighting whose kind is phone". They stay as parameters
+    rather than being deleted so a middle-only game can be had back by constructing PhoneGreen(on, off)
+    with the old 0.74 / 0.56 -- the middle third to latch on, the middle half to let go, two values
+    because one threshold strobed the panel at 20 Hz when a phone rested on the boundary.
+
+    No hysteresis is needed now: `seen` already carries the target file's freshness, so a follower that
+    died or a phone carried out of shot drops the green at once rather than leaving the conductor
+    buzzing every phone in the room. follow.py's `center` is still reported and still used for how far
+    the lamp turns; it just no longer decides whether the game approves."""
+    ON, OFF = 0.0, 0.0
+
+    def __init__(self, on: float = ON, off: float = OFF):
+        self.on_at, self.off_at, self.green = float(on), float(off), False
+
+    def update(self, target: dict) -> bool:
+        """`target` is a TargetFile reading: {kind, seen, center, ...}."""
+        if target.get("kind") != "phone" or not target.get("seen"):
+            self.green = False
+            return False
+        try:
+            centre = clamp(float(target.get("center") or 0.0))
+        except (TypeError, ValueError):                   # TargetFile filters these out; belt and braces
+            centre = 0.0
+        self.green = centre >= (self.off_at if self.green else self.on_at)
+        return self.green
+
+
 class ColourModel:
     """The panel's colour, one step per 50 fps frame. Pure: the caller feeds audio analysis, bass,
     excitement and events; step() returns (hue, sat, value, brightness) BEFORE the final clamp.
@@ -256,6 +353,7 @@ class ColourModel:
         self.hue, self.bass, self.flash, self.flash_target = 0.62, 0.0, 0.0, 0.0
         self.note, self.cand, self.cand_frames, self.note_changed_at, self.note_flash = -1, -1, 0, -1e9, 0.0
         self.loud, self.tonal, self.conf, self.excite, self.music = 0.0, 1.0, 0.0, 0.0, False
+        self.green = False                    # PhoneGreen's latch: a phone is centred (see step)
         self.audio, self.audio_at = None, -1e9
         self.build_start, self.build_end = None, None
         self.drop_at, self.peak_since = None, None
@@ -332,7 +430,10 @@ class ColourModel:
             self.build, self.build_start, self.build_end = 0.0, None, None
         b2 = self.build * self.build
         build_scale = 1.0 - 0.5 * b2
-        base = 0.06 + 0.30 * self.loud + 0.14 * self.bass + 0.25 * self.excite + 0.35 * b2
+        # The floor between hits is deliberately LOW so the hits read as hits: at full tilt this sits
+        # near 0.35 rather than the 0.55 it used to, which is most of the drama -- a flash onto a
+        # bright panel barely shows, the same flash out of a dim one is the whole effect.
+        base = 0.04 + 0.18 * self.loud + 0.10 * self.bass + 0.15 * self.excite + 0.35 * b2
         value = min(1.0, base + self.flash + self.note_flash)
         sat = (0.55 + 0.45 * self.tonal) * (1.0 - 0.6 * self.flash) * build_scale
         brightness = HW_BRIGHTNESS
@@ -363,7 +464,11 @@ class ColourModel:
             self.flash_target = 0.0
             self.flash *= 0.78
             if self.flash < 0.02: self.flash = 0.0
-        return self.hue, sat, value, brightness
+        # A phone held in the middle of the lamp's view (PhoneGreen) replaces the HUE and nothing else:
+        # value, saturation, the flash envelope and the DROP burst are whatever the music just made
+        # them, so the panel goes on flashing on the beat -- in green. self.hue keeps following the
+        # melody underneath, so the moment the phone leaves, the colour is the one the music is on now.
+        return (GREEN_HUE if self.green else self.hue), sat, value, brightness
 
 
 class BeatTracker:
@@ -451,10 +556,15 @@ class BeatTracker:
 
 
 class ClipScheduler:
-    """Beat-locked dance. When the music is on and the tracker is stable it posts the generated clip
-    of the right tier and bpm bucket so that the clip's first beat pose (HOLD after the first frame
-    reaches the servos, itself START_LATENCY after the POST) lands on a predicted beat, then re-posts
-    every 8 beats. Posts run on their own thread; never two in flight.
+    """Beat-locked dance that never stops. While `active` (dance mode: see Show.schedule) it posts the
+    generated clip of the right tier and bpm bucket so that the clip's first beat pose (HOLD after the
+    first frame reaches the servos, itself START_LATENCY after the POST) lands on a predicted beat, then
+    re-posts every 8 beats. Posts run on their own thread; never two in flight.
+
+    The beats come from the tracker while it is locked and from a free-running grid of our own otherwise
+    (free_beats): music or not, lock or not, dance mode keeps posting clips back to back. Which grid is
+    used is decided once per post, never inside a clip, so a lock that arrives while a clip is playing is
+    joined at that clip's boundary instead of jerking the arm mid-pattern.
 
     Re-post timing: the clip's pattern ends back at START exactly on the boundary beat (beat + 8 P)
     and the arm then holds START for HOLD. The next clip's first frame reaches the servos HOLD before
@@ -477,6 +587,8 @@ class ClipScheduler:
         self.start_latency_ns, self.hold_ns, self.log = int(start_latency_ns), int(hold_ns), log
         self.available = available
         self.live, self.bold = live, clamp(float(bold))
+        self.facing = 0.0                          # base_yaw the live clips are built around; 0 = the home heading
+        self.rng = random.Random()                 # variant, tier surprise and the idle wander; seedable in tests
         self.live_posts = 0                        # clips posted from the live generator (the rest: the library)
         self.variants: dict[str, list[str]] = {}   # beat_<tier>_<bpm> -> its a/b/c clip names (v2 manifest)
         self.last_variant: dict[str, str] = {}     # tier -> the variant letter played last (rotation state)
@@ -484,6 +596,10 @@ class ClipScheduler:
         if manifest:
             self.load_manifest(manifest)
         self.boundary_ns, self.inflight, self.playing, self.drop_pending = None, False, False, False
+        # The free-running grid, used whenever the tracker is not locked: the instant it is anchored at
+        # and the tempo latched for that stretch (both None until one is needed, and dropped again by
+        # plan() the moment the tracker locks, so the next free stretch re-anchors on what is true then).
+        self.free_grid_ns, self.free_bpm = None, None
         self.pending_home = None           # (hold_ns, after) asked for while a post was in flight
         self.not_before_ns = 0             # no clip posts before this (the pre-move to home settles)
         self.moves, self.refused = 0, 0
@@ -499,9 +615,19 @@ class ClipScheduler:
     def bucket(bpm: float) -> int:
         return min(ClipScheduler.BUCKETS, key=lambda b: abs(b - bpm))
 
-    @staticmethod
-    def tier_for(excite: float, drop: bool, build: bool = False) -> str:
-        return "drop" if drop else ("build" if build else ("groove" if excite < 0.55 else "hype"))
+    def tier_for(self, excite: float, drop: bool, build: bool = False) -> str:
+        """A DROP and a BUILD are events and always win. Otherwise the loudness picks groove or hype,
+        except SURPRISE_TIER of the time, when it takes the other one anyway. Without that the lamp
+        plays one tier for a whole quiet song, which reads as a machine repeating itself rather than
+        as dancing. The surprise never reaches for drop or build: those mean something."""
+        if drop:
+            return "drop"
+        if build:
+            return "build"
+        plain = "groove" if excite < 0.55 else "hype"
+        if self.rng.random() < SURPRISE_TIER:
+            return "hype" if plain == "groove" else "groove"
+        return plain
 
     @staticmethod
     def base_of(name: str) -> str:
@@ -537,33 +663,57 @@ class ClipScheduler:
         self.bold = b
         return True
 
+    def set_facing(self, facing: float) -> bool:
+        """Where the dance points: the base_yaw the live clips are generated around, in joint units,
+        0 being the lamp's home heading. Fed by Show.update_facing from the yaw follow.py reports
+        while it watches; the hysteresis (FACING_MARGIN) and the hold when the target is lost live
+        there, so this is a plain setter like set_bold. Returns whether it changed; the clip being
+        prepared is regenerated by the next tick if there is time, else posted as it is."""
+        f = float(facing)
+        if not math.isfinite(f):                         # TargetFile filters these out; belt and braces
+            return False
+        f = round(min(FACING_LIMIT, max(-FACING_LIMIT, f)), 1)
+        if f == self.facing:
+            return False
+        self.log(f"{time.strftime('%H:%M:%S')} facing {self.facing:+.1f} -> {f:+.1f} units")
+        self.facing = f
+        return True
+
     def next_letter(self, tier: str) -> str:
-        """The variant the a -> b -> c rotation of `tier` plays next (pick()'s rule), without committing."""
-        letters = list(self.VARIANTS)
-        last = self.last_variant.get(tier)
-        if last in letters:
-            return letters[(letters.index(last) + 1) % len(letters)]
-        return next((l for l in letters if last is not None and l > last), letters[0])
+        """The variant `tier` plays next (pick()'s rule), without committing. Chosen at RANDOM from the
+        ones it did not just play, not in an a -> b -> c rotation: the rotation made eight bars repeat in
+        the same order every time, which is what the operator meant by robotic. Never the variant played
+        last, so the same phrase never runs twice back to back."""
+        return self.choose_letter(tier, list(self.VARIANTS))
+
+    def choose_letter(self, tier: str, letters: list[str]) -> str:
+        """One of `letters` at random, never the one `tier` played last (unless that is all there is)."""
+        if not letters:
+            raise ValueError("no variants to choose from")
+        fresh = [l for l in letters if l != self.last_variant.get(tier)]
+        return self.rng.choice(fresh or letters)
 
     def prepare(self, tier: str, bpm: float, post_at: int, now_ns: int):
-        """Ahead of the post: ask the generator for this tier's next variant at the tracker's exact bpm and
-        the current bold, unless the ready (or in-progress) clip already is that, or there is no time
-        left before the post instant (then whatever is ready gets posted)."""
+        """Ahead of the post: ask the generator for this tier's next variant at the tracker's exact bpm,
+        the current bold and the current facing, unless the ready (or in-progress) clip already is
+        that, or there is no time left before the post instant (then whatever is ready gets posted)."""
         live = self.live
         if live is None or not live.usable(now_ns):
             return
         letter = self.next_letter(tier)
-        if live.covers(tier, letter, bpm, self.bold):
+        if live.covers(tier, letter, bpm, self.bold, self.facing):
             return
         if post_at - now_ns < live.PREP_NS:
             return
-        live.request(tier, letter, bpm, self.bold, post_at)
+        live.request(tier, letter, bpm, self.bold, post_at, self.facing)
 
     def take_live(self, tier: str, bpm: float):
         """The ready live clip to post now, or None (-> the library). Whatever is ready is posted even if
         the tier moved since it was made (the spec's "else post what is ready"), except when a DROP wants
         the drop tier -- the spring on the hit is worth the library's exact-tier clip -- or the tempo
-        re-locked more than LIVE_BPM_TOL away (8 beats at the wrong bpm would drift off the grid)."""
+        re-locked more than LIVE_BPM_TOL away (8 beats at the wrong bpm would drift off the grid).
+        A facing that moved since is not a reason to drop the clip either: it never moves by less than
+        FACING_MARGIN, so a ready clip is at most one clip behind the person, and the next one catches up."""
         if self.live is None:
             return None
         return self.live.take(lambda r: not (tier == "drop" and r.tier != "drop") and abs(r.bpm - bpm) <= self.LIVE_BPM_TOL)
@@ -589,13 +739,9 @@ class ClipScheduler:
             return base
         t = base.split("_")[1]
         letters = [n.rsplit("_", 1)[1] for n in names]
-        last = self.last_variant.get(t)
-        if last in letters:
-            i = (letters.index(last) + 1) % len(letters)
-        else:
-            i = next((k for k, l in enumerate(letters) if last is not None and l > last), 0)
-        self.last_variant[t] = letters[i]
-        return names[i]
+        chosen = self.choose_letter(t, letters)
+        self.last_variant[t] = chosen
+        return names[letters.index(chosen)]
 
     @staticmethod
     def choose_clip(tier: str, bpm: float, available=None) -> str | None:
@@ -616,12 +762,48 @@ class ClipScheduler:
                 return best
         return None
 
+    def free_tempo(self, tracker: BeatTracker) -> float:
+        """The tempo the dance free-runs at, latched for the whole stretch without a lock.
+
+        The tracker's last period wins: it survives a lock (it is only forgotten on the first kick more
+        than EXPIRE_NS after the last one), so when a song ends the lamp keeps dancing at the tempo it
+        was just dancing at instead of jumping to a canned one. Clamped into BUCKETS, because a clip is
+        posted at this tempo and the library only covers 80..180. With no period ever measured (the lamp
+        started in a quiet room) it is FREE_RUN_BPM. Latched, not read per clip, so the grid the beats
+        are laid out on and the bpm the clips are generated at cannot drift apart."""
+        if self.free_bpm is None:
+            bpm = tracker.bpm
+            self.free_bpm = round(min(max(bpm, self.BUCKETS[0]), self.BUCKETS[-1]), 1) if bpm else FREE_RUN_BPM
+        return self.free_bpm
+
+    def free_beats(self, now_ns: int, n: int, tracker: BeatTracker):
+        """The next `n` beats of the free-running grid, and its period: the same shape (and the same
+        "more than 1 ms after now_ns" rule) as BeatTracker.next_beats, so plan() cannot tell them apart.
+        Anchored on the instant it is first needed and then left alone, so clip follows clip on one
+        continuous grid and the boundaries stay CLIP_BEATS apart."""
+        period_ns = int(round(60e9 / self.free_tempo(tracker)))
+        if self.free_grid_ns is None:
+            self.free_grid_ns = now_ns
+        k = math.floor((now_ns + 1_000_000 - self.free_grid_ns) / period_ns) + 1
+        return [int(self.free_grid_ns + (k + i) * period_ns) for i in range(n)], period_ns
+
+    def bpm_now(self, now_ns: int, tracker: BeatTracker) -> float:
+        """The tempo the next clip is made, picked and bucketed at -- the same one plan() lays its beats
+        on: the tracker's while it is locked, the free-running one otherwise."""
+        return tracker.bpm if tracker.locked(now_ns) else self.free_tempo(tracker)
+
     def plan(self, now_ns: int, tracker: BeatTracker):
-        """(post_at_ns, beat_ns, period_ns) for the next clip, or None."""
+        """(post_at_ns, beat_ns, period_ns) for the next clip, or None.
+
+        The tracker's beats while it is locked, the free-running grid otherwise. plan() is only asked
+        for the NEXT post, so a lock that arrives mid-clip changes nothing until that clip's boundary:
+        the clip playing keeps its grid to the end and the next one starts on the real beat."""
         beats = tracker.next_beats(now_ns, 32)
-        if not beats:
-            return None
-        period_ns = int(tracker.period * 1e9)
+        if beats:
+            period_ns = int(tracker.period * 1e9)
+            self.free_grid_ns = self.free_bpm = None      # a later free stretch re-anchors on this tempo
+        else:
+            beats, period_ns = self.free_beats(now_ns, 32, tracker)
         if self.boundary_ns is None:
             # The first beat whose post instant has not passed by more than LATE_NS: the loop polls
             # every few ms, so "not yet passed at all" would slide to the next beat forever.
@@ -639,6 +821,7 @@ class ClipScheduler:
 
     def reset(self):
         self.boundary_ns, self.drop_pending, self.build_until_ns = None, False, None
+        self.free_grid_ns, self.free_bpm = None, None     # the dance restarts: re-anchor on what is true then
 
     def tick(self, now_ns: int, active: bool, tracker: BeatTracker, excite: float):
         if not active:
@@ -650,14 +833,17 @@ class ClipScheduler:
                 return
         if now_ns < self.not_before_ns:
             # The hold behind the home pre-move: no post, but the first clip can be made meanwhile (its
-            # content depends on tier, variant, bpm and bold, not on which beat it will land on).
-            if tracker.locked(now_ns):
-                self.prepare(self.tier_for(excite, self.drop_pending), tracker.bpm, self.not_before_ns, now_ns)
+            # content depends on tier, variant, bpm and bold, not on which beat it will land on). The
+            # bpm is the one the first post will use, locked or free-running, so the clip made here is
+            # the clip that gets posted instead of being regenerated at the instant it is wanted.
+            self.prepare(self.tier_for(excite, self.drop_pending), self.bpm_now(now_ns, tracker),
+                         self.not_before_ns, now_ns)
             return
         p = self.plan(now_ns, tracker)
         if p is None:
             return
         post_at, beat, period_ns = p
+        bpm = self.bpm_now(now_ns, tracker)
         if self.build_until_ns is not None and now_ns >= self.build_until_ns:
             self.build_until_ns = None
         # build only when the BUILD outlasts at least half the clip: the crouch is deepest on beat 6, so a
@@ -666,14 +852,14 @@ class ClipScheduler:
                  and beat + (CLIP_BEATS // 2) * period_ns <= self.build_until_ns)
         tier = self.tier_for(excite, self.drop_pending, build)
         if now_ns < post_at:
-            self.prepare(tier, tracker.bpm, post_at, now_ns)      # the next clip, generated ahead of its post
+            self.prepare(tier, bpm, post_at, now_ns)               # the next clip, generated ahead of its post
             return
-        live = self.take_live(tier, tracker.bpm)
+        live = self.take_live(tier, bpm)
         if live is not None:
             name = live.name
             self.last_variant[live.tier] = live.variant             # the rotation moves on as pick() would
         else:
-            name = self.pick(tier, tracker.bpm)
+            name = self.pick(tier, bpm)
         if name is None:
             self.refused += 1; self.boundary_ns = beat + CLIP_BEATS * period_ns
             return
@@ -777,14 +963,19 @@ def animation_names(r) -> set[str]:
 
 class LiveClip:
     """A clip the generator wrote into the pack: what it is and what it is called."""
-    __slots__ = ("tier", "variant", "bpm", "bold", "name", "md5", "meta")
+    __slots__ = ("tier", "variant", "bpm", "bold", "facing", "name", "md5", "meta")
 
-    def __init__(self, tier, variant, bpm, bold, name, md5, meta):
+    def __init__(self, tier, variant, bpm, bold, name, md5, meta, facing: float = 0.0):
         self.tier, self.variant, self.bpm, self.bold = tier, variant, float(bpm), float(bold)
+        # The facing this clip was REQUESTED at, so covers() recognises it again. With a beat_clips
+        # that has no `facing` parameter it is what was asked for, not what the rows do (they swing
+        # around home): there the facing is ignored throughout, see LiveClips._load.
+        self.facing = float(facing)
         self.name, self.md5, self.meta = name, md5, meta
 
-    def covers(self, tier, variant, bpm, bold, bpm_tol: float) -> bool:
-        return self.tier == tier and self.variant == variant and self.bold == float(bold) and abs(self.bpm - bpm) <= bpm_tol
+    def covers(self, tier, variant, bpm, bold, bpm_tol: float, facing: float = 0.0) -> bool:
+        return self.tier == tier and self.variant == variant and self.bold == float(bold) \
+            and self.facing == float(facing) and abs(self.bpm - bpm) <= bpm_tol
 
 
 class LiveClips:
@@ -808,9 +999,10 @@ class LiveClips:
         self.list_fn = list_fn or (lambda: animation_names(lamp("/api/animations", timeout=0.3)))
         self.make_fn, self.write_fn, self.model_fn = make_fn, write_fn, model_fn
         self.model = None
+        self.takes_facing = None           # probed once on the worker: does this make_clip take `facing`?
         self.lock = threading.Lock()
         self.cond = threading.Condition(self.lock)
-        self.wanted = None                 # (tier, variant, bpm, bold, deadline_ns): the newest request
+        self.wanted = None                 # (tier, variant, bpm, bold, facing, deadline_ns): the newest request
         self.busy = None                   # the job the worker is on
         self.ready: LiveClip | None = None
         self.k = -1                        # the pool index used last
@@ -869,20 +1061,20 @@ class LiveClips:
         now_ns = time.monotonic_ns() if now_ns is None else now_ns
         return now_ns >= self.disabled_until_ns
 
-    def covers(self, tier, variant, bpm, bold) -> bool:
+    def covers(self, tier, variant, bpm, bold, facing: float = 0.0) -> bool:
         """Is that clip ready, being made, or queued already?"""
         with self.lock:
-            if self.ready is not None and self.ready.covers(tier, variant, bpm, bold, self.BPM_TOL):
+            if self.ready is not None and self.ready.covers(tier, variant, bpm, bold, self.BPM_TOL, facing):
                 return True
             for job in (self.busy, self.wanted):
                 if job is not None and job[0] == tier and job[1] == variant and job[3] == float(bold) \
-                        and abs(job[2] - bpm) <= self.BPM_TOL:
+                        and job[4] == float(facing) and abs(job[2] - bpm) <= self.BPM_TOL:
                     return True
         return False
 
-    def request(self, tier: str, variant: str, bpm: float, bold: float, deadline_ns: int):
+    def request(self, tier: str, variant: str, bpm: float, bold: float, deadline_ns: int, facing: float = 0.0):
         with self.cond:
-            self.wanted = (tier, variant, float(bpm), float(bold), int(deadline_ns))
+            self.wanted = (tier, variant, float(bpm), float(bold), float(facing), int(deadline_ns))
             if self.thread is None:
                 self.thread = threading.Thread(target=self._worker, name="live-clips", daemon=True)
                 self.thread.start()
@@ -944,6 +1136,18 @@ class LiveClips:
                 with self.lock:
                     self.busy = None
 
+    @staticmethod
+    def _takes_facing(make_fn) -> bool:
+        """Does this beat_clips.make_clip take `facing` (the base_yaw to build the clip around)? The
+        lamp may be running an older generator, and there the dance must still play -- on the home
+        heading -- instead of failing every clip with a TypeError. Asked of the signature once, at the
+        first generation; a make_clip that takes **kwargs is taken at its word."""
+        try:
+            params = inspect.signature(make_fn).parameters
+        except (TypeError, ValueError):                   # not introspectable: assume the old signature
+            return False
+        return "facing" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
     def _load(self):
         """beat_clips + the lamp's model, once, on the worker (an import and ~10 ms of file reading)."""
         if self.make_fn is None or self.write_fn is None:
@@ -951,14 +1155,20 @@ class LiveClips:
             self.make_fn = self.make_fn or beat_clips.make_clip
             self.write_fn = self.write_fn or beat_clips.write_clip_atomic
             self.model_fn = self.model_fn or beat_clips.Validator.for_lamp
+        if self.takes_facing is None:
+            self.takes_facing = self._takes_facing(self.make_fn)
+            if not self.takes_facing:
+                self.log(f"{time.strftime('%H:%M:%S')} live clips: this beat_clips.make_clip has no `facing`; "
+                         "the dance stays on the lamp's home heading")
         if self.model is None and self.model_fn is not None:
             self.model = self.model_fn()
 
     def _run(self, job):
-        tier, variant, bpm, bold, deadline = job
+        tier, variant, bpm, bold, facing, deadline = job
         t0 = time.monotonic_ns()
         self._load()
-        rows, meta = self.make_fn(tier, variant, bpm, bold, model=self.model)
+        rows, meta = self.make_fn(tier, variant, bpm, bold, model=self.model,
+                                  **({"facing": facing} if self.takes_facing else {}))
         if meta.get("ok") is not True:
             with self.lock: self.failed += 1
             self.log(f"{time.strftime('%H:%M:%S')} live clip {tier} {variant} {bpm:.1f}bpm bold {bold:.2f} FAILED "
@@ -988,12 +1198,13 @@ class LiveClips:
             self.log(f"{time.strftime('%H:%M:%S')} live clip {name}: not listed by the runtime within "
                      f"{self.LIST_NS // 1_000_000}ms -> library")
             return
-        clip = LiveClip(tier, variant, bpm, bold, name, md5, meta)
+        clip = LiveClip(tier, variant, bpm, bold, name, md5, meta, facing)
         with self.lock:
             self.ready = clip
             self.generated += 1
         late = time.monotonic_ns() - deadline
         self.log(f"{time.strftime('%H:%M:%S')} live clip {name} = {tier} {variant} {bpm:.1f}bpm bold {bold:.2f} "
+                 + (f"facing {facing:+.0f} " if self.takes_facing and facing else "") +
                  f"x{meta.get('multiplier', 0):.2f} A={meta.get('amplitude', 0):.1f} {meta.get('frames')}f md5 {md5[:8]} "
                  f"in {(time.monotonic_ns() - t0) / 1e6:.0f}ms" + (f" ({late / 1e6:+.0f}ms past its post instant)" if late > 0 else ""))
 
@@ -1094,16 +1305,20 @@ class TargetFile:
     """follow.py --live writes ~/feelthemusic-lamp/target.json every cycle (follow.TargetReport): what it
     sees and how centred it is. Read here by mtime: at most one stat every `poll` seconds on the UDP
     loop, a read and a parse (a ~150 B file) only when it changed. `seen` is true only while the file
-    is fresh (FRESH_S), so a follower that died does not keep claiming a target."""
+    is fresh (FRESH_S), so a follower that died does not keep claiming a target.
+
+    `yaw` (follow.py's solved facing, in base_yaw units) is passed through as it is found and takes no
+    part in `seen`: a stale file must not keep claiming a facing either, so every consumer of the yaw
+    gates on `seen` -- which already carries the freshness -- rather than on the yaw being present."""
     FRESH_S = 2.0
-    EMPTY = {"kind": None, "seen": False, "center": 0.0, "aim_deg": None, "age_s": None}
+    EMPTY = {"kind": None, "seen": False, "center": 0.0, "aim_deg": None, "yaw": None, "age_s": None}
 
     def __init__(self, path: str = TARGET_FILE, poll: float = 0.1):
         self.path, self.poll = path, poll
         self.mtime_ns, self.next_stat, self.body = None, float("-inf"), None
 
     def read(self, now: float, wall: float | None = None) -> dict:
-        """{kind, seen, center, aim_deg, age_s}; `now` is monotonic (the poll throttle), `wall` time.time()."""
+        """{kind, seen, center, aim_deg, yaw, age_s}; `now` is monotonic (the poll throttle), `wall` time.time()."""
         if now >= self.next_stat:
             self.next_stat = now + self.poll
             try:
@@ -1131,9 +1346,14 @@ class TargetFile:
             aim = None if aim is None or not math.isfinite(float(aim)) else round(float(aim), 1)
         except (TypeError, ValueError):
             aim = None
+        try:
+            yaw = b.get("yaw")
+            yaw = None if yaw is None or not math.isfinite(float(yaw)) else round(float(yaw), 1)
+        except (TypeError, ValueError):
+            yaw = None
         kind = b.get("kind")
         return {"kind": kind if isinstance(kind, str) else None, "seen": bool(b.get("seen")) and age <= self.FRESH_S,
-                "center": round(center, 3), "aim_deg": aim, "age_s": round(age, 2)}
+                "center": round(center, 3), "aim_deg": aim, "yaw": yaw, "age_s": round(age, 2)}
 
 
 class Panel(threading.Thread):
@@ -1336,6 +1556,9 @@ class Show:
         self.mode, self.lights, self.gen = mode, lights, None
         self.track = track if track in TRACKS else "face"     # what follow.py looks for (Control lamp.track)
         self.targets, self.target = TargetFile(), dict(TargetFile.EMPTY)
+        # A phone held in the middle of the lamp's view: the latch, and the state it last reported. Fed
+        # by tick(), rendered by the panel (ColourModel.green) and sent on in `lamp` telemetry.
+        self.phone_green, self.green = PhoneGreen(), False
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)
         self.sock.setblocking(False)
@@ -1357,8 +1580,11 @@ class Show:
         self.follow_proc, self.follow_lock, self.follow_atexit = None, threading.Lock(), False
         # what the running (or queued) follower looks for; None = unknown after a failed restart, so the
         # next Control with a lamp key restarts it. follow_gen numbers start requests: a start that finds
-        # a newer one queued gives up (the newer one spawns the newest track).
-        self.follow_track, self.follow_gen = None, 0
+        # a newer one queued gives up (the newer one spawns the newest track). follow_watch records
+        # whether the one that was spawned is the watch-only (--dry-run) kind the dance uses.
+        self.follow_track, self.follow_gen, self.follow_watch = None, 0, False
+        self.facing_seen_at = float("-inf")     # last time the follower reported a facing (update_facing)
+        self.wander_at = float("-inf")         # last time the idle dance picked a new heading to wander to
         self.seq, self.index, self.session = 0, None, None
         self.seen_event, self.seen_bass = set(), set()
         self.sent_at, self.rtts, self.min_rtt = {}, [], float("inf")
@@ -1408,9 +1634,11 @@ class Show:
         s = self.scheduler
         moves = s.moves + (self.counts["clips"] if self.vendor_clips else 0)
         self.target = self.targets.read(time.monotonic())
+        # "green": the latch tick() keeps, not a fresh look at the file, so what the conductor acts on is
+        # what the panel is showing (the latch is at most one tick, 50 ms, older than this packet).
         return {"t": "lamp", "state": state, "mode": self.mode, "locked": self.tracker.locked(time.monotonic_ns()),
                 "piC": pi_temperature(), "sdk": SDK, "moves": moves, "refused": s.refused, "lights": self.lights,
-                "bpm": round(self.tracker.bpm, 1), "target": self.target}
+                "bpm": round(self.tracker.bpm, 1), "target": self.target, "green": self.green}
 
     def send_lamp(self):
         self.send(b"\x04" + json.dumps(self.lamp_status(), sort_keys=True, separators=(",", ":")).encode())
@@ -1507,7 +1735,11 @@ class Show:
             print(f"{time.strftime('%H:%M:%S')} track {self.track} -> {track}", flush=True)
             self.track = track                                   # before set_mode: a follower it starts looks for it
         changed = self.set_mode(mode, now)   # before the gen reset: leaving dance must see what is playing
-        if self.mode == "follow" and not changed and self.follow_track != self.track:
+        # A follower is also up while dancing (watch-only), and it is the one that says where the person
+        # is, so a track change must reach it there too. Only once it is actually running (follow_proc):
+        # inside the dance's own stop-wait-home-start sequence a second restart would race with it.
+        following = self.mode == "follow" or (self.mode == "dance" and self.follow_proc is not None)
+        if following and not changed and self.follow_track != self.track:
             # already following, on another target (or on an unknown one after a failed restart): restart
             print(f"{time.strftime('%H:%M:%S')} follow: restarting on {self.track}"
                   + ("" if retrack else " (retry)"), flush=True)
@@ -1544,9 +1776,15 @@ class Show:
             if s.playing or s.boundary_ns is not None or s.inflight: s.stop()
             else: s.reset()
             self.clip_until = now
-        if mode == "follow":
+            # The dance's watch-only follower goes with the dance. It must not simply be left running:
+            # start_follow would find it with pgrep and leave it there, and follow mode would never get
+            # a follower that commands the arm. A follow mode next gets its commanding one from this
+            # stop's `then`, once the watcher is out -- the same road a track change takes.
+            self.stop_follow(then=(lambda: self.start_follow(wait_s=RESTART_WAIT_S)) if mode == "follow" else None,
+                             exit_s=FOLLOW_EXIT_S)
+        elif mode == "follow":
             self.start_follow()
-        elif mode == "dance":
+        if mode == "dance":
             self.enter_dance(now)
         self.apply_lights()
         return True
@@ -1558,7 +1796,10 @@ class Show:
         elbow -98), so the first blend-in crossed the flip region. Start from the vendor's `home`
         pose instead, through the runtime's own planned path, and post no clip for 5 s. A stray
         follow.py (left by mode.sh or a crash) would drive the arm at the same time: kill it first.
-        The scheduler is held from THIS thread at once, so no beat clip slips in before home."""
+        The scheduler is held from THIS thread at once, so no beat clip slips in before home.
+
+        The lamp's eyes come back after the home, watch-only, in _enter_dance_home: a follower that
+        COMMANDS the arm is still stopped before any clip plays, and only the watching one coexists."""
         hold = self.FOLLOW_SETTLE_S + self.HOME_HOLD_S
         self.scheduler.not_before_ns = max(self.scheduler.not_before_ns, time.monotonic_ns() + int(hold * 1e9))
         self.clip_until = max(self.clip_until, now + hold)
@@ -1567,6 +1808,10 @@ class Show:
     def _enter_dance_home(self):
         if self.mode != "dance":
             return
+        # The dance's own eyes. The commanding follower has been stopped and its FOLLOW_SETTLE_S has
+        # passed, so the one started here is the only one and it only watches (--dry-run): it writes
+        # target.json, which update_facing turns into the clips' facing, and never posts a pose.
+        self.start_follow()
         if self.vendor_clips:
             self.clip_until = time.monotonic() + self.HOME_HOLD_S
             self.scheduler.home(0, None, why="dance start")
@@ -1582,7 +1827,11 @@ class Show:
         given up on loudly and follow_track is forgotten (the next Control with a lamp key retries).
         Without `wait_s` a follower already running (mode.sh, a hand start) is left alone. A start
         that finds a newer start queued (follow_gen moved on) gives up: that one spawns the newest
-        track, so two quick track changes never leave the lamp on the older one."""
+        track, so two quick track changes never leave the lamp on the older one.
+
+        In dance mode the spawned follower is WATCH-ONLY: the clip owns the arm, and the two must never
+        both command it. The kind is decided at spawn time from the mode, like the track, so a restart
+        queued across a mode change still spawns the right one."""
         here = os.path.dirname(os.path.abspath(__file__))
         with self.follow_lock:
             self.follow_gen += 1
@@ -1617,17 +1866,26 @@ class Show:
                         return
                     time.sleep(FOLLOW_POLL_S)
                 if superseded(): return
-                track = self.track                                   # the newest wish, not the one at the call
+                track, watch = self.track, self.mode == "dance"      # the newest wish, not the one at the call
+                env = {**os.environ, "FOLLOW_TARGET": track}
+                if watch:
+                    # --dry-run makes follow.py see, locate and report without ever posting a pose (and
+                    # it leaves the runtime's idle configuration alone), which is the one way it may run
+                    # while a clip has the arm. It goes last so nothing in FOLLOW_ARGS can undo it; with
+                    # FOLLOW_ARGS unset this bypasses run_face.sh's own default options, which only tune
+                    # a motion a dry run never commands.
+                    env["FOLLOW_ARGS"] = (os.environ.get("FOLLOW_ARGS", "") + " --dry-run").strip()
                 log = open(FOLLOW_LOG, "ab")
-                proc = subprocess.Popen(["setsid", os.path.join(here, "run_face.sh")], cwd=here,
-                                        env={**os.environ, "FOLLOW_TARGET": track},
+                proc = subprocess.Popen(["setsid", os.path.join(here, "run_face.sh")], cwd=here, env=env,
                                         stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
                 with self.follow_lock:
-                    self.follow_proc, self.follow_track = proc, track
+                    self.follow_proc, self.follow_track, self.follow_watch = proc, track, watch
                     if not self.follow_atexit:                # our tracker dies with us (systemctl stop, a crash)
                         self.follow_atexit = True
                         atexit.register(self.stop_follow_at_exit)
-                print(f"follow: started run_face.sh --target {track} (pid {proc.pid}, log {FOLLOW_LOG})", flush=True)
+                print(f"follow: started run_face.sh --target {track}"
+                      + (" --dry-run (watching only: the dance has the arm)" if watch else "")
+                      + f" (pid {proc.pid}, log {FOLLOW_LOG})", flush=True)
             except Exception as exc:
                 print(f"follow: could not start ({exc})", flush=True)
         threading.Thread(target=go, daemon=True).start()
@@ -1704,26 +1962,83 @@ class Show:
         music = self.music
         loud = self.audio.now[2] if (self.audio and self.audio.now) else 0.0
         self.excite = excitement(sum(1 for t in self.hits if now - t < 2.0), loud)
+        # A phone in the middle of the lamp's view turns the panel green. Read here, at 20 Hz, so it
+        # works in every mode the panel is lit in -- follow mode, whose follower commands the arm, and
+        # dance, whose watch-only one only reports -- and so the conductor's copy and the panel's are
+        # the same state. TargetFile stats the file at most every 0.1 s and parses it only when it
+        # changed, so on most passes this is one stat.
+        self.target = self.targets.read(now)
+        self.green = self.phone_green.update(self.target)
         with self.panel.lock:
             # When no music is detected the colour floor decays to dark instead of sitting at the
             # envelope's phantom 1.0.
             target = self.bass_raw if music else 0.0
             m = self.panel.model
             m.bass += 0.35 * (target - m.bass)
-            m.excite, m.music = self.excite, music
+            m.excite, m.music, m.green = self.excite, music, self.green
         if music:
             self.loud_since = self.loud_since or now; self.quiet_since = None
         else:
             self.quiet_since = self.quiet_since or now; self.loud_since = None
-        if self.mode == "dance" and self.vendor_clips:
-            # v3.1: while the music has been loud for 2 s, keep a vendor clip going. Stop when quiet.
-            if self.loud_since and now - self.loud_since > 2.0 and now >= self.clip_until:
-                self.play_clip("music", now)
+        if self.mode == "dance":
+            self.update_facing(now)
+            if self.vendor_clips and now >= self.clip_until:
+                # The vendor fallback follows the same rule as the beat-locked path: in dance mode the
+                # clips never stop. v3.1 waited for 2 s of music (self.loud_since) and left the arm
+                # sitting still in a quiet room; clip_until alone paces them now -- it is set to the
+                # clip's own length by play_clip, so they still run back to back and never overlap.
+                self.play_clip("music" if music else "dance", now)
+
+    def update_facing(self, now: float):
+        """Point the dance at whoever the watch-only follower can see. Its target.json carries the
+        base_yaw that would face them ("yaw"); that becomes the clip generator's `facing`.
+
+        Gated on `seen`, which already carries the file's freshness, so a dead follower stops steering
+        the dance. Only past FACING_MARGIN, because a clip lasts several seconds and is only re-aimed
+        at a boundary anyway. Nothing seen holds the last facing -- people look away, and step behind
+        each other -- until FACING_HOLD_S has passed with no sighting, then the dance faces home again.
+        Dance mode only: elsewhere no clip is playing, and a commanding follower's yaw is just a
+        restatement of where it has already turned the arm."""
+        target = self.targets.read(now)
+        yaw = target.get("yaw")
+        if target.get("seen") and yaw is not None:
+            self.facing_seen_at = now
+            if abs(yaw - self.scheduler.facing) >= FACING_MARGIN:
+                self.scheduler.set_facing(yaw)
+        elif now - self.facing_seen_at > FACING_HOLD_S:
+            # Nothing to face. Rather than parking on the home heading and repeating itself there, the
+            # dance wanders: a new heading every WANDER_EVERY_S, drawn inside WANDER_UNITS of home and
+            # never the one it is already on. A clip still starts and ends on whatever heading it was
+            # built for, so this changes where the dance happens, never how it moves.
+            if now - self.wander_at > WANDER_EVERY_S:
+                self.wander_at = now
+                here = self.scheduler.facing
+                picks = [w for w in (-WANDER_UNITS, -WANDER_UNITS / 2, 0.0, WANDER_UNITS / 2, WANDER_UNITS)
+                         if abs(w - here) >= FACING_MARGIN]
+                if picks:
+                    self.scheduler.set_facing(self.scheduler.rng.choice(picks))
 
     def schedule(self, now_ns: int):
-        """Runs every loop pass (~3 ms), so a post lands within a few ms of its instant."""
+        """Runs every loop pass (~3 ms), so a post lands within a few ms of its instant.
+
+        Dance mode and MUSIC are the gate: the lamp dances for as long as the music plays and stops
+        when it stops. `self.offset_ns is not None` is deliberately NOT part of it any more, which is
+        the difference from v4.1: the lamp goes on dancing through a track the beat tracker cannot
+        lock, because the free-running grid is on this lamp's own monotonic clock and the tracker
+        (which does need the shared clock, being fed the conductor's scheduled instants) is consulted
+        only while it is locked. So "music playing, beat unreadable" still dances; only real silence
+        stops it.
+
+        `self.music` comes from KICK/SNARE events, never the bass envelope, which is normalised and
+        reads 1.0 in silence. It needs three hits in three seconds to turn on and four seconds with
+        none to turn off. If the lamp stops while music IS audibly playing, the fault is upstream and
+        not here: the conductor's tap binds to one output device and keeps reading it after macOS
+        moves the default output elsewhere, so it captures a silent device and sends no events at all
+        (run.jsonl then shows rmsDb -120 with no error). Check that before touching this.
+
+        The arm still moves in no other mode -- nothing below here is reached outside dance."""
         if self.mode == "dance" and not self.vendor_clips:
-            self.scheduler.tick(now_ns, self.music and self.offset_ns is not None, self.tracker, self.excite)
+            self.scheduler.tick(now_ns, self.music, self.tracker, self.excite)
 
     def load_clip_library(self):
         names = animation_names(lamp("/api/animations"))
@@ -1792,11 +2107,16 @@ class Show:
                 phase = (sum(s.phase_ms) / len(s.phase_ms)) if s.phase_ms else 0.0
                 lv = s.live
                 live = "off" if lv is None else f"{lv.state()} gen={lv.generated} used={lv.used} fail={lv.failed}"
+                # bpm: * = beat-locked, ~ = the free-running tempo the dance is on instead (nothing to lock to)
+                bpm_txt = (f"{self.tracker.bpm:.1f}*" if self.tracker.locked(now_ns)
+                           else f"{s.free_bpm:.1f}~" if s.free_bpm else f"{self.tracker.bpm:.1f}")
                 print(f"{time.strftime('%H:%M:%S')} peer#{self.index} {self.mode} ev={c['events']} bass={c['bass']} "
                       f"flashes={c['flashes']} clips={c['clips'] + s.moves} level={m.bass:.2f} "
                       f"note={note} conf={m.conf:.2f} loud={m.loud:.2f} excite={self.excite:.2f} "
-                      f"bpm={self.tracker.bpm:.1f}{'*' if self.tracker.locked(now_ns) else ''} beat_err={self.tracker.phase_error_ms():+.0f}ms "
-                      f"clip_phase={phase:+.0f}ms bold={s.bold:.2f} live={live} fps={self.panel.frames / 5:.0f} "
+                      f"bpm={bpm_txt} beat_err={self.tracker.phase_error_ms():+.0f}ms "
+                      f"clip_phase={phase:+.0f}ms bold={s.bold:.2f} facing={s.facing:+.0f} "
+                      f"green={'y' if self.green else 'n'} live={live} "
+                      f"fps={self.panel.frames / 5:.0f} "
                       f"rtt={self.min_rtt if self.rtts else -1:.1f}ms{extra}", flush=True)
                 self.panel.frames = 0; nxt["report"] = now + 5.0
 

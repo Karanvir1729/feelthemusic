@@ -239,6 +239,83 @@ class PhoneTracker:
         return selected[0], selected[1], selected[2] / PHONE_WIDTH_M
 
 
+FLASHLIGHT_NOMINAL_M = 0.8    # a torch's apparent size is its brightness, not its distance: every sighting
+                              # is treated as this far away, so the bearing steers the head and the IK is
+                              # left to pick a comfortable posture instead of lunging at a guessed depth.
+CAMERA_PITCH_DEG = 15.0       # how far the camera looks above the shade axis the robot description models
+                              # (see LampModel(camera_pitch_deg=...) and --camera-pitch below)
+
+
+class FlashlightTracker:
+    """Follow a torch -- a phone's flashlight or a pocket light -- pointed at the lamp.
+
+    Measured on this lamp's own camera in the venue on 2026-09-19, a bright hall of ceiling panels,
+    laptop screens and window glare: pixels at V >= 254 with S <= 40, opened with a 7-px disc, leave
+    NOTHING in the room. The brightest ceiling panel survives only a 5-px disc, and then as a blob
+    under 70 px. A torch aimed at the camera clips a much larger core and carries a bright halo
+    around it, so the gates are a clipped-white core that survives the opening, roughly round, inside
+    a halo substantially larger than itself. A bright round blob is not proof of a torch, a person
+    holding one, or anyone's intent; which candidate is followed from frame to frame is TargetLock's
+    rule, unchanged.
+    """
+    V_CORE, S_CORE = 254, 40
+    OPEN = 7                                 # px at 640 wide, scaled with the frame
+    MIN_AREA, MAX_AREA = 0.00003, 0.25       # of the frame: about 9 px at 640x480, up to a quarter of it.
+                                             # The floor is this low on purpose: the 7-px opening above has
+                                             # already cleared every highlight the venue itself produces
+                                             # (measured: nothing survives it), so the remaining job is to
+                                             # keep a torch held across the room, which lands around 20 px.
+    ROUNDNESS = 0.45                         # 4*pi*area/perimeter^2 of the core contour
+    HALO_V, HALO_S = 180, 110
+    HALO_MIN = 1.5                           # the halo covers at least this much of the core's own area
+    NOMINAL = 1.0                            # set from the model in main(): fx / FLASHLIGHT_NOMINAL_M
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self.lock = TargetLock(clock=clock)
+
+    def masks(self, bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(clipped-white core, bright halo) as 0/255 masks."""
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        sat, val = hsv[:, :, 1], hsv[:, :, 2]
+        core = ((val >= self.V_CORE) & (sat <= self.S_CORE)).astype(np.uint8) * 255
+        k = max(3, int(round(self.OPEN * bgr.shape[1] / 640)) | 1)
+        core = cv2.morphologyEx(core, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        halo = ((val >= self.HALO_V) & (sat <= self.HALO_S)).astype(np.uint8) * 255
+        return core, halo
+
+    def candidates(self, bgr: np.ndarray) -> list[tuple[float, float, float]]:
+        """Every torch-shaped light as (x, y, narrow span), all in picture widths/heights."""
+        height, width = bgr.shape[:2]
+        core, halo = self.masks(bgr)
+        contours, _ = cv2.findContours(core, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        out: list[tuple[float, float, float]] = []
+        for contour in contours:
+            area = float(cv2.contourArea(contour))
+            if not self.MIN_AREA <= area / (width * height) <= self.MAX_AREA:
+                continue
+            perimeter = float(cv2.arcLength(contour, True))
+            if perimeter <= 0 or 4 * math.pi * area / (perimeter * perimeter) < self.ROUNDNESS:
+                continue
+            (cx, cy), sides, _ = cv2.minAreaRect(contour)
+            narrow = min(sides)
+            if narrow < 3:
+                continue
+            x, y, w, h = cv2.boundingRect(contour)
+            pad = max(w, h)
+            box = halo[max(0, y - pad):min(height, y + h + pad), max(0, x - pad):min(width, x + w + pad)]
+            if cv2.countNonZero(box) < self.HALO_MIN * area:
+                continue
+            out.append((cx / width, cy / height, narrow / width))
+        return out
+
+    def locate(self, bgr: np.ndarray) -> tuple[float, float, float] | None:
+        height, width = bgr.shape[:2]
+        selected = self.lock.select(self.candidates(bgr), height / width)
+        if selected is None:
+            return None
+        return selected[0], selected[1], self.NOMINAL
+
+
 class ObjectTracker:
     """Last resort when there is no face and no hand: look at a person's upper body, or at a thing.
 
@@ -371,7 +448,9 @@ LIVE_BASE = "http://127.0.0.1:8081"
 LIVE_MS, LIVE_PERIOD, LIVE_STEP = 250, 0.25, 30.0
 LIVE_SPEED_CAP = 140.0        # units/s commanded, at most
 VENDOR_NEUTRAL = {"base_yaw": 4.4, "base_pitch": -49.3, "elbow_pitch": -22.5, "wrist_roll": 0.0, "wrist_pitch": 30.0}
-SEARCH_POSTURE = {"base_pitch": -49.0, "elbow_pitch": -22.0, "wrist_roll": 0.0, "wrist_pitch": 30.0}
+SEARCH_POSTURE = {"base_pitch": -49.0, "elbow_pitch": -22.0, "wrist_roll": 0.0, "wrist_pitch": 60.0}
+# wrist_pitch 60, not the 30 the shade axis suggests: the camera looks CAMERA_PITCH_DEG above that
+# axis, so 30 sweeps the ceiling. At 60 the sweep runs level with the room (measured 2026-09-19).
 BASE_PITCH_MIN = -65.0        # the lamp tips backwards past this
 FLIP_BASE_PITCH = -52.0       # shoulder further back than this AND
 FLIP_ELBOW_MAX = -40.0        # ... elbow not lifted at least this far = the flip region
@@ -670,9 +749,15 @@ class TargetReport:
     """What the follower sees, for the show process (lamp_show.py) next door: one small JSON file,
     rewritten atomically (tmp + os.replace, so a reader never sees half a file) every cycle, at
     most `min_interval` apart. {"t": monotonic, "kind": "face"|"phone"|None, "seen": bool,
-    "x", "y": last sighting in picture 0..1, "aim_deg": float|None, "center": 0..1 (from the last
-    sighting, even while unseen), "state": the follower's state}. A disk problem is counted and
-    printed once; it never stops the loop."""
+    "x", "y": last sighting in picture 0..1, "aim_deg": float|None, "yaw": float|None,
+    "center": 0..1 (from the last sighting, even while unseen), "state": the follower's state}.
+    A disk problem is counted and printed once; it never stops the loop.
+
+    "yaw" is the base_yaw that FACES the target, in joint units, from the last pose look_at() solved
+    (LiveFollower.aim_yaw) -- null while there is no target. It is there for a consumer that points
+    something else at the target while the follower only watches: lamp_show.py generates its dance
+    clips around it, so the lamp dances at the person instead of at its home heading. Solved, not
+    measured: it is where the arm WOULD point, not where it is."""
 
     def __init__(self, path: str | os.PathLike = DEFAULT_TARGET_FILE, *, clock: Callable[[], float] = time.monotonic,
                  min_interval: float = 0.05, out=print) -> None:
@@ -682,15 +767,18 @@ class TargetReport:
         self.body: dict | None = None                    # the last body written (or throttled)
         self.last_write, self.writes, self.errors = float("-inf"), 0, 0
 
-    def write(self, kind: str | None, seen_px: tuple[float, float] | None, aim_deg: float | None, state: str) -> dict:
+    def write(self, kind: str | None, seen_px: tuple[float, float] | None, aim_deg: float | None, state: str,
+              yaw: float | None = None) -> dict:
         """Records the sighting, writes the file unless one went out less than min_interval ago."""
         now = self.clock()
         if seen_px is not None:
             self.last = {"kind": kind, "x": float(seen_px[0]), "y": float(seen_px[1])}
         last = self.last
         aim = float(aim_deg) if aim_deg is not None and math.isfinite(float(aim_deg)) else None
+        face = float(yaw) if yaw is not None and math.isfinite(float(yaw)) else None
         self.body = {"t": now, "kind": last["kind"] if last else None, "seen": seen_px is not None,
                      "x": last["x"] if last else None, "y": last["y"] if last else None, "aim_deg": aim,
+                     "yaw": face,
                      "center": center_score(last["x"], last["y"]) if last else 0.0, "state": state}
         if now - self.last_write >= self.min_interval:
             self.last_write = now
@@ -738,6 +826,11 @@ class LiveFollower:
         self.face_hold_until, self.fresh_after, self.last_note = float("-inf"), float("-inf"), float("-inf")
         self.state = "holding"
         self.aim_error: float | None = None
+        # The base_yaw of the last pose look_at() solved: where the arm WOULD point to face the
+        # target. Reported in the target file for a consumer that aims something else at the same
+        # target while this loop only watches (lamp_show.py points its dance clips this way). It
+        # follows aim_error exactly: set when a facing is solved, cleared whenever the sightings go.
+        self.aim_yaw: float | None = None
         self.fatal: str | None = None
         self.commands, self.refusals, self.read_failures, self.post_failures, self.consecutive_refusals = 0, 0, 0, 0, 0
         self.settles = 0
@@ -755,7 +848,7 @@ class LiveFollower:
         if self.cfg.target != "phone" or phone_frame_is_fresh(stamp, now):
             return True
         self.sightings.clear()
-        self.correcting, self.aim_error = False, None
+        self.correcting, self.aim_error, self.aim_yaw = False, None, None
         self.confirmed_target_until = float("-inf")
         self.fresh_after, self.state = now, "holding"
         self.out("holding   phone frame receipt expired; waiting for three fresh sightings", flush=True)
@@ -850,7 +943,7 @@ class LiveFollower:
             return self._cycle()
         finally:
             if self.report is not None:
-                self.report.write(self.seen_kind, self.seen_px, self.aim_error, self.state)
+                self.report.write(self.seen_kind, self.seen_px, self.aim_error, self.state, self.aim_yaw)
 
     def _cycle(self) -> str:
         cfg, model = self.cfg, self.model
@@ -921,7 +1014,7 @@ class LiveFollower:
             window = TargetLock.LOST_S if kind in FRAME_TARGETS else 3.5
             self.sightings = [s for s in self.sightings if now - s[0] < window and s[2] == kind]
             if not self.sightings:
-                self.correcting, self.aim_error = False, None
+                self.correcting, self.aim_error, self.aim_yaw = False, None, None
             self.sightings.append((stamp if kind == "phone" else now, point, kind))
             del self.sightings[:-self.SIGHTINGS]
             # A confirmed face or phone can blink out for a frame without starting a search. Only the
@@ -956,6 +1049,10 @@ class LiveFollower:
                     t1 = time.perf_counter()
                     goal, report = model.look_at(target, prefer_distance=cfg.prefer_distance)
                     ik_ms = (time.perf_counter() - t1) * 1000
+                    # The one place a facing is solved, so the report carries the last one rather than
+                    # one per cycle: look_at costs ~20 ms on a laptop and more on the Pi, and here it
+                    # already runs at most once per poster period.
+                    self.aim_yaw = float(goal["base_yaw"])
                     if not self._require_fresh_phone(self.sightings[0][0]):
                         return self.state
                     step, note = self._send(now, measured, goal)
@@ -971,7 +1068,7 @@ class LiveFollower:
             window = TargetLock.LOST_S if frame_kind else 3.5
             self.sightings = [s for s in self.sightings if now - s[0] < window]
             if not self.sightings:
-                self.aim_error, self.correcting = None, False
+                self.aim_error, self.correcting, self.aim_yaw = None, False, None
             self.state, want = self.search.want(now)
             if self.state == "stalled" or self.guard.blocked(None):
                 self.state, note = "stalled", "holding until the target moves"
@@ -1038,7 +1135,12 @@ def describe(model: LampModel, units: dict) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--target", choices=["auto", "face", "hand", "object", "phone"], default=None,
+    ap.add_argument("--camera-pitch", type=float, default=CAMERA_PITCH_DEG,
+                    help=f"degrees the camera looks ABOVE the shade axis in the robot description (default "
+                         f"{CAMERA_PITCH_DEG:g}). Measure it once: let the lamp settle on a still torch, read "
+                         f"how far the torch sits from the middle of the picture, and add that elevation here. "
+                         f"Wrong by more than a few degrees and the lamp aims past the target and hunts.")
+    ap.add_argument("--target", choices=["auto", "face", "hand", "object", "phone", "flashlight"], default=None,
                     help="auto = a face if one is in view, otherwise a hand, otherwise a person or a thing "
                          "(default: auto; face with --live); phone = a screen showing the app (purple to pink), "
                          "selected explicitly")
@@ -1079,7 +1181,7 @@ def main() -> None:
     if args.deadband_deg is None:
         args.deadband_deg = 4.0 if args.live else 10.0
 
-    model = LampModel(args.robot_dir)
+    model = LampModel(args.robot_dir, camera_pitch_deg=args.camera_pitch)
     try:
         sdk = LampSDK(read_token())
         caps = sdk.capabilities()
@@ -1106,11 +1208,14 @@ def main() -> None:
           flush=True)
     cam = Camera(sdk, args.fps)
     cam.start()
-    trackers: list[tuple[str, FaceTracker | HandTracker | ObjectTracker | PhoneTracker]] = [
+    trackers: list[tuple[str, FaceTracker | HandTracker | ObjectTracker | PhoneTracker | FlashlightTracker]] = [
                 (name, cls()) for name, cls in (("face", FaceTracker), ("hand", HandTracker))
                 if args.target in ("auto", name)]
     if args.target == "phone":
         trackers.append(("phone", PhoneTracker()))
+    if args.target == "flashlight":
+        FlashlightTracker.NOMINAL = model.fx / FLASHLIGHT_NOMINAL_M   # aim by bearing at a nominal distance
+        trackers.append(("flashlight", FlashlightTracker()))
     if args.target in ("auto", "object"):
         if ObjectTracker.MODEL.exists():
             ObjectTracker.NOMINAL = model.fx / 1.0                # a cut-off box is treated as about 1 m away
@@ -1121,7 +1226,8 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     watching = {"auto": "a face, then a hand, then a person or a thing", "face": "a face", "hand": "a hand",
-                "object": "a person or a thing", "phone": "a phone screen showing the app (purple to pink)"}[args.target]
+                "object": "a person or a thing", "phone": "a phone screen showing the app (purple to pink)",
+                "flashlight": "a torch pointed at the lamp"}[args.target]
     print(f"watching for {watching}{' (dry run: will not move)' if args.dry_run else ''}. Ctrl-C to stop.", flush=True)
     idle_was = idle_off(sdk.base) if args.live and not (args.dry_run or args.keep_idle) else None
 

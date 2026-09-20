@@ -896,22 +896,23 @@ def test_target_report_writes_atomically_with_the_fields_and_reuses_the_last_sig
 
     monkeypatch.setattr(F.os, "replace", replace)
     report = F.TargetReport(path, clock=clock)
-    body = report.write("phone", (0.52, 0.49), 3.2, "tracking")
+    body = report.write("phone", (0.52, 0.49), 3.2, "tracking", -18.5)
     assert json.loads(path.read_text()) == body == {"t": 1000.0, "kind": "phone", "seen": True, "x": 0.52, "y": 0.49,
-                                                     "aim_deg": 3.2, "center": 1.0, "state": "tracking"}
+                                                     "aim_deg": 3.2, "yaw": -18.5, "center": 1.0, "state": "tracking"}
     assert replaced == [(str(path) + ".tmp", str(path))] and not (tmp_path / "deep" / "target.json.tmp").exists()
     clock.sleep(0.1)
     body = report.write(None, None, None, "holding")             # unseen: the last sighting still gives the centre
     assert json.loads(path.read_text()) == body
     assert body == {"t": pytest.approx(1000.1), "kind": "phone", "seen": False, "x": 0.52, "y": 0.49,
-                    "aim_deg": None, "center": 1.0, "state": "holding"}
+                    "aim_deg": None, "yaw": None, "center": 1.0, "state": "holding"}
     clock.sleep(0.1)
-    body = report.write("face", (0.2, 0.5), float("nan"), "tracking")
+    body = report.write("face", (0.2, 0.5), float("nan"), "tracking", float("inf"))
     assert body["kind"] == "face" and body["aim_deg"] is None and body["center"] == pytest.approx((0.5 - 0.3) / 0.45)
+    assert body["yaw"] is None                                   # a non-finite facing is no facing
     fresh = F.TargetReport(tmp_path / "t2.json", clock=clock)     # before any sighting
     assert fresh.write(None, None, None, "searching") == {"t": pytest.approx(1000.2), "kind": None, "seen": False,
-                                                          "x": None, "y": None, "aim_deg": None, "center": 0.0,
-                                                          "state": "searching"}
+                                                          "x": None, "y": None, "aim_deg": None, "yaw": None,
+                                                          "center": 0.0, "state": "searching"}
     assert report.writes == 3 and report.errors == 0
 
 
@@ -951,6 +952,30 @@ def test_live_follower_reports_the_target_every_cycle(one_axis_follow, tmp_path)
     gone = json.loads(path.read_text())
     assert gone["seen"] is False and gone["kind"] == "face" and (gone["x"], gone["y"]) == (body["x"], body["y"])
     assert gone["t"] == pytest.approx(clock() - 0.12) and follower.report.writes == 4
+
+
+def test_live_follower_reports_the_facing_it_solved_and_drops_it_with_the_target(one_axis_follow, tmp_path):
+    """"yaw" is the base_yaw of the pose look_at() solved: where the arm WOULD point to face the
+    target. lamp_show.py builds its dance clips around it while this loop only watches. It is solved
+    nowhere else, so it appears once a target is confirmed and a correction is due, and it goes when
+    the sightings go -- a lost target must not keep claiming a facing."""
+    import json
+    follower, clock, motors, camera = one_axis_follow
+    path = tmp_path / "target.json"
+    follower.report = F.TargetReport(path, clock=clock)
+    run_cycles(follower, clock, 1)
+    assert json.loads(path.read_text())["yaw"] is None             # one sighting: nothing confirmed, nothing solved
+    run_cycles(follower, clock, 4)
+    body = json.loads(path.read_text())
+    assert body["seen"] is True and body["yaw"] == pytest.approx(follower.aim_yaw)
+    # OneAxisModel.look_at faces a point by putting base_yaw on it, and the face sits at yaw 30
+    assert body["yaw"] == pytest.approx(30.0, abs=2.0)
+    assert motors.positions()[0]["base_yaw"] < body["yaw"] - 1.0   # solved, not measured: the arm is still on its way
+    camera.point[1] = -1.0                                         # the face leaves the room
+    run_cycles(follower, clock, 8)                                 # past TargetLock.LOST_S: the sightings expire
+    gone = json.loads(path.read_text())
+    assert gone["seen"] is False and gone["yaw"] is None and follower.aim_yaw is None
+    assert gone["aim_deg"] is None                                 # the facing follows aim_error exactly
 
 
 def test_phone_tracker_rejects_blank_irregular_and_hollow_regions():

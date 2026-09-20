@@ -991,14 +991,18 @@ def test_live_generation_failure_falls_back_to_library_and_disables_for_60s(tmp_
     s.tick(now, True, tr, 0.3)
     assert wait_for(lambda: lv.disables == 1, 3.0)                # ... and the generator dies once
     s.not_before_ns = 0
-    assert len(logs) == 1 and "model exploded" in logs[0] and "60s" in logs[0]
+    # _load probes make_clip for `facing` and says so once when it is absent (this fake has no such
+    # parameter), so count the generator's own deaths rather than every line
+    deaths = [l for l in logs if "model exploded" in l]
+    assert len(deaths) == 1 and "60s" in deaths[0]
+    assert sum("no `facing`" in l for l in logs) == 1
     assert not lv.usable() and lv.state().startswith("disabled")
     s.tick(post_at + 2_000_000, True, tr, 0.3)                     # the post itself: the library, as before
     _t.sleep(0.05)
     assert posts == ["beat_groove_120_a"] and s.live_posts == 0 and s.boundary_ns == beat + 8 * period
     s.tick(post_at + 10_000_000, True, tr, 0.3)                    # no second request while disabled
     _t.sleep(0.05)
-    assert lv.disables == 1 and len(logs) == 1
+    assert lv.disables == 1 and len([l for l in logs if "model exploded" in l]) == 1
     lv.disabled_until_ns = 0                                       # 60 s later: it tries again
     assert lv.usable()
     # a clip that fails validation, a write that fails, and a name the runtime never lists: fallbacks, no disable
@@ -1175,16 +1179,18 @@ def test_target_file_is_read_by_mtime_with_one_stat_per_poll(tmp_path):
     os.utime(path, ns=(1_000_000_000_000, 1_000_000_000_000))     # mtime = 1000.0 s wall
     assert tf.read(0.05) == L.TargetFile.EMPTY                     # inside the poll: no stat yet
     seen = tf.read(0.1, wall=1000.5)
-    assert seen == {"kind": "phone", "seen": True, "center": 0.8, "aim_deg": 2.3, "age_s": 0.5}
+    assert seen == {"kind": "phone", "seen": True, "center": 0.8, "aim_deg": 2.3, "yaw": None, "age_s": 0.5}
     assert tf.read(0.15, wall=1003.0)["seen"] is False             # stale for FRESH_S: no target claimed
     assert tf.read(0.15, wall=1003.0)["age_s"] == 3.0
-    path.write_text(json.dumps({"kind": "face", "seen": False, "center": 0.3, "aim_deg": None}))
+    path.write_text(json.dumps({"kind": "face", "seen": False, "center": 0.3, "aim_deg": None, "yaw": -41.27}))
     os.utime(path, ns=(1_001_000_000_000, 1_001_000_000_000))
     assert tf.read(0.19, wall=1001.0)["kind"] == "phone"           # unchanged until the next poll
-    assert tf.read(0.2, wall=1001.0) == {"kind": "face", "seen": False, "center": 0.3, "aim_deg": None, "age_s": 0.0}
-    path.write_text(json.dumps({"kind": 7, "seen": True, "center": "x", "aim_deg": "nan"}))
+    assert tf.read(0.2, wall=1001.0) == {"kind": "face", "seen": False, "center": 0.3, "aim_deg": None,
+                                         "yaw": -41.3, "age_s": 0.0}     # the yaw is read whatever `seen` says
+    path.write_text(json.dumps({"kind": 7, "seen": True, "center": "x", "aim_deg": "nan", "yaw": "nan"}))
     os.utime(path, ns=(1_002_000_000_000, 1_002_000_000_000))
-    assert tf.read(0.31, wall=1002.0) == {"kind": None, "seen": True, "center": 0.0, "aim_deg": None, "age_s": 0.0}
+    assert tf.read(0.31, wall=1002.0) == {"kind": None, "seen": True, "center": 0.0, "aim_deg": None,
+                                          "yaw": None, "age_s": 0.0}
     path.write_text("{not json")
     os.utime(path, ns=(1_003_000_000_000, 1_003_000_000_000))
     assert tf.read(0.42) == L.TargetFile.EMPTY
@@ -1209,7 +1215,7 @@ def test_lamp_telemetry_carries_the_target_and_goes_to_5hz_while_it_is_seen(monk
     write()
     monkeypatch.setattr(L.time, "time", lambda: stamp[0] / 1e9 + 0.1)
     status = show.lamp_status()
-    assert status["target"] == {"kind": "phone", "seen": True, "center": 1.0, "aim_deg": 2.3, "age_s": 0.1}
+    assert status["target"] == {"kind": "phone", "seen": True, "center": 1.0, "aim_deg": 2.3, "yaw": None, "age_s": 0.1}
     assert show.lamp_period() == 0.2
     show.send_lamp()
     sent = json.loads(show.sock.sent[-1][1:])
@@ -1275,7 +1281,7 @@ class _Lamp:
     to linger, then only SIGKILL does, or nothing at all). Popen sets it and records FOLLOW_TARGET."""
     def __init__(self, show, monkeypatch, tmp_path):
         self.show, self.alive, self.linger, self.immortal = show, False, False, False
-        self.pkills, self.popens = [], []
+        self.pkills, self.popens, self.args = [], [], []
         monkeypatch.setattr(L.subprocess, "run", self.run)
         monkeypatch.setattr(L.subprocess, "Popen", self.popen)
         monkeypatch.setattr(L, "FOLLOW_LOG", str(tmp_path / "follow.log"))
@@ -1295,6 +1301,7 @@ class _Lamp:
     def popen(self, args, **kw):
         assert args[0] == "setsid" and args[1].endswith("run_face.sh")
         self.popens.append(kw["env"]["FOLLOW_TARGET"]); self.alive = True
+        self.args.append(kw["env"].get("FOLLOW_ARGS"))            # "--dry-run" marks the watch-only kind
         return _types.SimpleNamespace(pid=4242 + len(self.popens), wait=lambda timeout=None: 0, poll=lambda: None)
 
     def control(self, **lamp):
@@ -1354,3 +1361,369 @@ def test_two_quick_track_changes_end_on_the_newest_track_once(monkeypatch, tmp_p
     assert lamp.popens == ["phone", "phone"] and show.follow_track == "phone"
     out = capsys.readouterr().out
     assert "superseded" in out and "--target face" not in out
+
+
+# ---- v4.2: the dance faces the person ---------------------------------------------------------------
+def test_the_dance_faces_the_target_past_the_margin_then_holds_it_and_lets_go(monkeypatch, tmp_path):
+    """The watch-only follower's solved yaw reaches the scheduler through target.json. A move under
+    FACING_MARGIN is not worth a regenerated clip; nothing seen holds the last facing (people look
+    away, and are walked in front of) until FACING_HOLD_S, and then the dance faces home again."""
+    show = bare_show(monkeypatch, [], mode="dance")
+    path = tmp_path / "target.json"
+    show.targets = L.TargetFile(str(path))
+    s = show.scheduler
+    stamp = [1_700_000_000_000_000_000]
+
+    def write(**body):
+        path.write_text(json.dumps({"t": 1.0, "kind": "flashlight", "seen": True, "x": 0.5, "y": 0.5,
+                                    "aim_deg": 1.0, "center": 1.0, "state": "tracking", **body}))
+        stamp[0] += 1_000_000                                      # a distinct mtime whatever the filesystem
+        os.utime(path, ns=(stamp[0], stamp[0]))
+        monkeypatch.setattr(L.time, "time", lambda: stamp[0] / 1e9 + 0.1)
+
+    def tick(now, on=None):
+        """One show tick that certainly re-reads the file: the poll throttle has its own test, and the
+        `now` here is a made-up monotonic, not the one lamp_status() reads with."""
+        on = on or show
+        on.targets.next_stat = float("-inf")
+        on.tick(now)
+
+    assert s.facing == 0.0
+    write(yaw=41.37)
+    tick(100.0)
+    assert s.facing == 41.4                                        # past the margin: the dance turns
+    show.targets.next_stat = float("-inf")
+    assert show.lamp_status()["target"]["yaw"] == 41.4             # the conductor sees it too
+    write(yaw=41.37 + L.FACING_MARGIN - 0.5)                       # the person shifts, but not far
+    tick(100.1)
+    assert s.facing == 41.4
+    write(yaw=41.37 + L.FACING_MARGIN + 0.5)                       # ... and now far enough to be worth a clip
+    tick(100.2)
+    assert s.facing == pytest.approx(48.9)
+    write(seen=False, yaw=None)                                    # the torch goes out for a moment
+    tick(100.3)
+    assert s.facing == pytest.approx(48.9)
+    tick(100.2 + L.FACING_HOLD_S)                                  # held to the timeout, not one tick less
+    assert s.facing == pytest.approx(48.9)
+    tick(100.2 + L.FACING_HOLD_S + 0.1)
+    assert s.facing == 0.0                                         # gone: back to the lamp's home heading
+    # only in dance mode: elsewhere no clip is playing and there is nothing to aim
+    show.mode = "light"
+    write(yaw=-30.0)
+    tick(200.0)
+    assert s.facing == 0.0
+    # and a follower that died stops steering it: `seen` carries the file's freshness, the yaw does not
+    show2 = bare_show(monkeypatch, [], mode="dance")
+    show2.targets = L.TargetFile(str(path))
+    tick(300.0, show2)
+    assert show2.scheduler.facing == -30.0
+    write(yaw=-80.0)
+    monkeypatch.setattr(L.time, "time", lambda: stamp[0] / 1e9 + 10.0)   # the follower died 10 s ago
+    show2.targets.next_stat = float("-inf")
+    assert show2.lamp_status()["target"] == {"kind": "flashlight", "seen": False, "center": 1.0,
+                                             "aim_deg": 1.0, "yaw": -80.0, "age_s": 10.0}
+    tick(300.0 + L.FACING_HOLD_S + 0.1, show2)
+    assert show2.scheduler.facing == 0.0
+
+
+def test_dance_watches_with_a_dry_run_follower_and_never_a_commanding_one(monkeypatch, tmp_path, capsys):
+    """Dance and follow used to be exclusive: entering dance killed the follower and the lamp danced at
+    its home heading. Now the dance keeps its eyes -- but only watching (--dry-run), started after the
+    commanding one was stopped and the arm homed, and stopped again when the dance ends, or follow mode
+    would find it with pgrep and never get a follower that commands the arm."""
+    show, lamp = follow_on(monkeypatch, tmp_path, track="flashlight")
+    assert lamp.args == [None] and show.follow_watch is False       # follow mode: that one drives the arm
+    lamp.control(mode="dance", track="flashlight")
+    assert show.mode == "dance"
+    assert wait_for(lambda: lamp.popens == ["flashlight", "flashlight"])
+    assert lamp.args[-1] == "--dry-run" and show.follow_watch is True
+    out = capsys.readouterr().out
+    assert "--dry-run (watching only" in out
+    assert out.index("follow: stopped") < out.index("--dry-run")    # the commanding one went first
+    assert out.index("home") < out.index("--dry-run") if "home" in out else True
+    # the dashboard's track choice reaches the watcher too, and it stays watch-only
+    lamp.control(mode="dance", track="phone")
+    assert wait_for(lambda: lamp.popens == ["flashlight", "flashlight", "phone"])
+    assert lamp.args[-1] == "--dry-run" and show.follow_watch is True and show.follow_track == "phone"
+    # back to follow: the watcher goes and one that commands the arm takes over, exactly once
+    lamp.control(mode="follow", track="phone")
+    assert wait_for(lambda: len(lamp.popens) == 4)
+    import time as _t; _t.sleep(0.1)
+    assert lamp.popens == ["flashlight", "flashlight", "phone", "phone"]
+    assert lamp.args[-1] is None and show.follow_watch is False
+    assert "--dry-run" not in capsys.readouterr().out.split("started run_face.sh --target phone")[-1]
+
+
+def test_a_facing_change_regenerates_the_prepared_clip(tmp_path):
+    """The facing is part of what makes a clip the right clip, like bold: the scheduler hands it to the
+    generator, and a clip prepared at the old facing no longer covers the request."""
+    made = []
+
+    def make(tier, variant, bpm, bold, gains=None, model=None, facing=0.0):
+        made.append((tier, variant, bold, facing))
+        return [(0.0, -49.0, -22.0, 0.0, 30.0)] * 149, {"ok": True, "reasons": []}
+
+    lv, pack = live_for(tmp_path, make_fn=make)
+    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
+                        manifest=manifest_v2(bpms=(128,)), live=lv)
+    now = L.time.monotonic_ns()
+    post_at = now + 5_000_000_000
+    assert s.facing == 0.0
+    s.prepare("groove", 128.0, post_at, now)
+    assert wait_for(lambda: lv.peek() is not None, 3.0) and made == [("groove", "a", 0.6, 0.0)]
+    s.prepare("groove", 128.0, post_at, now)                        # covered: no second request
+    import time as _t; _t.sleep(0.05)
+    assert len(made) == 1
+    assert s.set_facing(-38.2) and s.facing == -38.2
+    s.prepare("groove", 128.0, post_at, now)
+    assert wait_for(lambda: lv.peek() is not None and lv.peek().facing == -38.2, 3.0)
+    assert made[-1] == ("groove", "a", 0.6, -38.2) and len(made) == 2
+    s.prepare("groove", 128.0, post_at, now)                        # covered again at the new facing
+    _t.sleep(0.05)
+    assert len(made) == 2
+    assert not s.set_facing(-38.2)                                  # unchanged: nothing made, nothing logged
+    assert s.set_facing(999.0) and s.facing == L.FACING_LIMIT       # clamped to the joint's range
+    assert not s.set_facing(float("nan")) and s.facing == L.FACING_LIMIT
+
+
+def test_an_older_beat_clips_without_the_facing_parameter_still_dances(tmp_path):
+    """The lamp may be running a generator whose make_clip predates `facing`. The signature is probed
+    once, at the first generation; the dance then plays on the home heading, as v4.1 did, instead of
+    failing every clip with a TypeError and disabling the generator for a minute."""
+    logs, seen = [], []
+
+    def old_make(tier, variant, bpm, bold, gains=None, model=None):        # v4.1's signature
+        seen.append((tier, variant, bold))
+        return [(0.0, -49.0, -22.0, 0.0, 30.0)] * 149, {"ok": True, "reasons": []}
+
+    lv, pack = live_for(tmp_path, log=logs.append, make_fn=old_make)
+    lv.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9, facing=40.0)
+    assert wait_for(lambda: lv.peek() is not None, 3.0), logs
+    assert lv.takes_facing is False and seen == [("groove", "a", 0.6)] and lv.failed == lv.disables == 0
+    assert sum("no `facing`" in l for l in logs) == 1                      # probed once, said once
+    lv.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9, facing=-12.0)
+    assert wait_for(lambda: lv.generated == 2, 3.0)
+    assert sum("no `facing`" in l for l in logs) == 1
+    # the clip carries the facing it was ASKED for, so covers() recognises the same request again
+    assert lv.peek().facing == -12.0 and lv.covers("groove", "a", 120.0, 0.6, -12.0)
+    assert not lv.covers("groove", "a", 120.0, 0.6, 40.0)
+
+    def new_make(tier, variant, bpm, bold, gains=None, model=None, facing=0.0):
+        seen.append(("facing", facing))
+        return [(0.0, -49.0, -22.0, 0.0, 30.0)] * 149, {"ok": True, "reasons": []}
+
+    lv2, _ = live_for(tmp_path / "b", log=logs.append, make_fn=new_make)
+    lv2.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9, facing=-37.5)
+    assert wait_for(lambda: lv2.peek() is not None, 3.0), logs
+    assert lv2.takes_facing is True and seen[-1] == ("facing", -37.5)
+    assert sum("no `facing`" in l for l in logs) == 1                      # nothing said about the new one
+    assert L.LiveClips._takes_facing(lambda *a, **kw: None) is True        # **kwargs is taken at its word
+    assert L.LiveClips._takes_facing(max) is False                         # not introspectable: the old shape
+
+
+# ---- v4.3: the dance never stops ---------------------------------------------------------------------
+def free_scheduler(posts):
+    """A scheduler with no library and no manifest, so pick() names the bucket it wants."""
+    return L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                           status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True,
+                                           "elapsed_seconds": 0.0},
+                           start_latency_ns=350_000_000, log=lambda *_: None)
+
+
+def test_dance_free_runs_clip_after_clip_with_no_music_and_no_lock():
+    """No kicks have ever arrived, so the tracker has no period and no lock. Dance mode still posts one
+    clip after another, on a grid of the scheduler's own, with the same timing the locked path uses."""
+    posts = []
+    tr, s = L.BeatTracker(), free_scheduler(posts)
+    now = 10_000_000_000
+    assert tr.locked(now) is False and tr.next_beats(now, 8) == []
+    free_period = int(round(60e9 / L.FREE_RUN_BPM))
+    for i in range(4):
+        p = s.plan(now, tr)
+        assert p is not None, i
+        post_at, beat, period = p
+        assert period == free_period                          # FREE_RUN_BPM: the tempo beat_clips defaults to
+        assert beat - post_at == 350_000_000 + L.HOLD_NS      # START_LATENCY + HOLD, exactly as when locked
+        if s.boundary_ns is not None:                         # and the rest between clips is the locked rule's
+            assert beat >= s.boundary_ns + s.hold_ns + s.START_JITTER_NS - 1_000_000
+        s.tick(post_at + 2_000_000, True, tr, 0.3)
+        assert wait_for(lambda: not s.inflight)
+        assert s.boundary_ns == beat + L.CLIP_BEATS * period
+        now = s.boundary_ns
+    # the tier is the tier picker's business; what matters here is that a clip was posted every time,
+    # at the free tempo, and 128 is a bucket, so the name is exact and nothing was rounded to reach it
+    assert len(posts) == 4 and {n.rsplit("_", 1)[1] for n in posts} == {"128"}
+    assert s.moves == 4 and s.refused == 0
+    # the grid is one continuous one: every clip starts a whole number of beats after the first
+    assert (s.free_grid_ns is not None and s.free_bpm == L.FREE_RUN_BPM
+            and (s.boundary_ns - s.free_grid_ns) % free_period == 0)
+
+
+def test_the_free_tempo_is_the_last_one_that_locked_then_a_beat_is_rejoined_at_the_clip_boundary():
+    """A song ends mid-show: the dance carries on at the tempo it was just locked to (no tempo jump on
+    the last note), and when the band starts again the clip that is playing keeps its grid to the end --
+    the real beat is joined at the next boundary, not by jerking the arm mid-pattern."""
+    posts = []
+    tr, s = L.BeatTracker(), free_scheduler(posts)
+    for k in kicks(160, 16, t0=1_000_000_000): tr.feed(k)
+    quiet = kicks(160, 16)[-1] + tr.EXPIRE_NS + 1_000_000_000      # the last kick is older than EXPIRE_NS
+    assert tr.locked(quiet) is False and round(tr.bpm) == 160
+    post_at, beat, period = s.plan(quiet, tr)
+    assert s.free_bpm == pytest.approx(160, abs=1.0)               # not FREE_RUN_BPM: the tempo of the track
+    assert period == pytest.approx(60e9 / 160, abs=2_000_000)
+    s.tick(post_at + 2_000_000, True, tr, 0.3)
+    assert wait_for(lambda: not s.inflight) and len(posts) == 1 and posts[0].endswith("_160")
+    boundary = s.boundary_ns
+    # the band starts again at 120 bpm while that clip is playing
+    ks = kicks(120, 8, t0=beat - 1_500_000_000)
+    for k in ks: tr.feed(k)
+    mid = ks[-1] + 10_000_000
+    assert tr.locked(mid) and mid < boundary                       # a lock, and the clip is still running
+    s.tick(mid, True, tr, 0.3)
+    assert len(posts) == 1 and s.boundary_ns == boundary           # nothing is posted inside the clip
+    assert s.free_grid_ns is None and s.free_bpm is None            # the free grid is dropped while locked
+    post2, beat2, period2 = s.plan(mid, tr)
+    assert beat2 in tr.next_beats(mid, 32)                          # the next clip lands on a REAL beat
+    assert beat2 >= boundary + s.hold_ns + s.START_JITTER_NS - 1_000_000
+    assert period2 == pytest.approx(500_000_000, abs=5_000_000)     # at the tracker's tempo, not the free one
+    s.tick(post2 + 2_000_000, True, tr, 0.3)
+    assert wait_for(lambda: not s.inflight) and posts[-1].endswith("_120")   # and at the band's tempo
+
+
+def test_a_locked_tracker_still_lands_its_clips_on_the_beat():
+    """The beat lock is the good part and must not regress: the measured first frame is one HOLD before
+    a predicted beat, and the phase error the operator watches stays at zero."""
+    posts = []
+    tr, s = L.BeatTracker(), free_scheduler(posts)
+    ks = kicks(124, 16, jitter_ms=4.0)
+    for k in ks: tr.feed(k)
+    now = ks[-1] + 10_000_000
+    assert tr.locked(now)
+    post_at, beat, period = s.plan(now, tr)
+    assert beat in tr.next_beats(now, 32) and s.free_grid_ns is None
+    assert post_at == s.post_instant(beat, s.start_latency_ns, s.hold_ns)
+    s.status_fn = lambda: {"current_animation": posts[-1] if posts else "", "playing": True,
+                           "elapsed_seconds": (L.time.monotonic_ns() - (beat - s.hold_ns)) / 1e9}
+    s.tick(post_at + 2_000_000, True, tr, 0.3)
+    assert wait_for(lambda: not s.inflight)
+    assert len(posts) == 1 and posts[0].endswith("_124") and s.phase_ms and abs(s.phase_ms[-1]) < 5.0
+
+
+def test_show_dance_posts_without_music_or_a_conductor_clock_and_no_other_mode_moves_the_arm(monkeypatch):
+    import time as _t
+    posts = []
+    show = bare_show(monkeypatch, posts, mode="light", library=("beat_groove_128", "home"))
+    s = show.scheduler
+    s.log = lambda *_: None
+    show.mode = "dance"                                        # straight in: the home hold has its own test
+    show.music, show.offset_ns = False, None                   # no music, and nothing from the conductor yet
+    post_at = s.plan(L.time.monotonic_ns(), show.tracker)[0]
+    show.schedule(post_at + 2_000_000)
+    assert wait_for(lambda: len(posts) == 1) and posts[0].endswith("_128")   # at the free tempo
+    assert wait_for(lambda: not s.inflight)
+    # the safety rule: only dance (and follow, which has no scheduler) may move the arm
+    for mode in ("light", "off", "follow"):
+        show.mode, s.boundary_ns, s.not_before_ns = mode, None, 0
+        show.schedule(L.time.monotonic_ns() + 5_000_000_000)
+    _t.sleep(0.05)
+    assert len(posts) == 1                                     # nothing more was posted
+
+
+# ---- v4.3: a phone in the middle of the view turns the lamp green -------------------------------------
+def test_the_light_goes_green_only_for_a_centred_seen_phone():
+    g = L.PhoneGreen()
+    assert g.update({"kind": "phone", "seen": True, "center": 1.0}) is True
+    assert g.update({"kind": "phone", "seen": False, "center": 1.0}) is False    # gone: no hysteresis on `seen`
+    assert g.update({"kind": "face", "seen": True, "center": 1.0}) is False      # a face in the middle is not it
+    assert g.update({"kind": "flashlight", "seen": True, "center": 1.0}) is False
+    assert g.update(dict(L.TargetFile.EMPTY)) is False                           # no follower at all
+    assert g.update({"kind": "phone", "seen": True, "center": L.PhoneGreen.ON - 0.01}) is False   # off to one side
+    assert g.update({"kind": "phone", "seen": True, "center": L.PhoneGreen.ON}) is True
+    assert g.update({"kind": "phone", "seen": True, "center": None}) is False    # a reading with no centre
+    # ON is the middle third of the picture and OFF the middle half, through follow.center_score
+    import follow
+    assert follow.center_score(0.5 + 1 / 6, 0.5) == pytest.approx(L.PhoneGreen.ON, abs=0.005)
+    assert follow.center_score(0.5, 0.5 + 0.25) == pytest.approx(L.PhoneGreen.OFF, abs=0.005)
+
+
+def test_the_green_latch_holds_across_a_marginal_reading():
+    g = L.PhoneGreen()
+    marginal = {"kind": "phone", "seen": True, "center": (L.PhoneGreen.ON + L.PhoneGreen.OFF) / 2}
+    assert g.update(marginal) is False                      # not centred enough to turn it on
+    assert g.update({"kind": "phone", "seen": True, "center": 0.95}) is True
+    for _ in range(5):
+        assert g.update(marginal) is True                   # ... and the same reading now holds it, every frame
+    assert g.update({"kind": "phone", "seen": True, "center": L.PhoneGreen.OFF}) is True
+    assert g.update({"kind": "phone", "seen": True, "center": L.PhoneGreen.OFF - 0.01}) is False
+    assert g.update(marginal) is False                      # and it takes ON, not OFF, to come back
+
+
+def test_green_replaces_the_hue_and_leaves_the_flashes_and_the_burst_alone():
+    def run(green):
+        m, lim = L.ColourModel(), L.FlashLimiter()
+        m.music, m.green = True, green
+        out = []
+        for i in range(80):
+            now = i / 50
+            if i == 10: m.request_flash(L.flash_target_for("KICK", 1.0, 0.8), lim, now)
+            if i == 40: m.start_drop(now)
+            out.append(m.step(now))
+        return out
+    plain, green = run(False), run(True)
+    assert [o[1:] for o in plain] == [o[1:] for o in green]         # saturation, value and brightness untouched
+    assert all(o[0] == L.GREEN_HUE for o in green)
+    assert {round(o[0], 6) for o in plain} == {0.62}                # the melody's hue, unchanged, underneath
+    values = [o[2] for o in green]
+    assert max(values[10:20]) > values[9] + 0.2                     # the kick still flashes ...
+    assert values[25] < max(values[10:20])                          # ... and the envelope still decays
+    assert green[41][3] == L.PEAK_BRIGHTNESS                        # the DROP still bursts at PEAK
+    rgb, _ = L.safe_output(*green[15][:4])
+    assert rgb[1] > rgb[0] and rgb[1] > rgb[2]                      # and what reaches the panel is green
+
+
+def test_a_centred_phone_turns_the_panel_green_and_the_telemetry_says_so(monkeypatch, tmp_path):
+    show = bare_show(monkeypatch, [])
+    path = tmp_path / "target.json"
+    show.targets = L.TargetFile(str(path), poll=0.0)                # every read stats (the poll has its own test)
+    stamp = [1_700_000_000_000_000_000]
+
+    def write(**body):
+        path.write_text(json.dumps({"t": 1.0, "kind": "phone", "seen": True, "x": 0.5, "y": 0.5,
+                                    "aim_deg": 0.0, "center": 1.0, "state": "tracking", **body}))
+        stamp[0] += 1_000_000                                       # a distinct mtime whatever the filesystem
+        os.utime(path, ns=(stamp[0], stamp[0]))
+        monkeypatch.setattr(L.time, "time", lambda: stamp[0] / 1e9 + 0.1)
+
+    def tick(now):
+        """One show tick that certainly re-reads the file: the `now` here is a made-up monotonic, not
+        the one lamp_status() reads with."""
+        show.targets.next_stat = float("-inf")
+        show.tick(now)
+
+    assert show.lamp_status()["green"] is False and show.panel.model.green is False
+    write()
+    tick(100.0)
+    assert show.green is True and show.panel.model.green is True
+    assert show.panel.model.step(100.0)[0] == L.GREEN_HUE
+    status = show.lamp_status()
+    assert status["green"] is True
+    for k in ("t", "state", "mode", "locked", "piC", "sdk", "moves", "refused", "lights", "bpm", "target"):
+        assert k in status                                          # every existing key is still there
+    show.send_lamp()
+    assert json.loads(show.sock.sent[-1][1:])["green"] is True      # and it goes out on the wire
+    write(center=(L.PhoneGreen.ON + L.PhoneGreen.OFF) / 2)          # the phone drifts off the middle a little
+    tick(100.05)
+    assert show.green is True and show.lamp_status()["green"] is True
+    write(center=0.2)                                               # ... and then to the edge of the frame
+    tick(100.1)
+    assert show.green is False and show.panel.model.green is False
+    assert show.panel.model.step(100.1)[0] != L.GREEN_HUE
+    write(kind="face")
+    tick(100.15)
+    assert show.green is False
+    write()                                                         # green again ...
+    tick(100.2)
+    assert show.green is True
+    monkeypatch.setattr(L.time, "time", lambda: stamp[0] / 1e9 + 10.0)   # ... until the follower dies
+    tick(100.25)
+    assert show.green is False and show.lamp_status()["green"] is False
