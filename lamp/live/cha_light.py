@@ -17,6 +17,9 @@ from __future__ import annotations
 import sys
 import time
 
+import json
+import urllib.request
+
 import cv2
 import numpy as np
 
@@ -24,9 +27,20 @@ from sdk import LampSDK, SDKError, read_token
 
 FPS = 6.0           # frames a second asked of the camera stream: plenty for "is anyone there"
 HOLD_S = 1.0        # a face seen this recently keeps the green: a blink or a turned head must not flash red
-REFRESH_S = 3.0     # re-send the colour this often even when unchanged
+REFRESH_S = 0.25    # re-send the colour this often: something on the lamp posts a light command about
+                    # once a second through the runtime's web route (source robot_runtime_web, unidentified
+                    # 2026-09-20 05:04; the vendor light/stop does not silence it) and the last writer wins,
+                    # so this paints four times a second through the SAME route and stays on top
 GREEN, RED = (0, 255, 0), (255, 0, 0)
 LUMINANCE = 1.0
+
+
+def paint(rgb) -> None:
+    """The runtime's own solid-colour route (what the vendor dashboard uses): no token, no action lifecycle."""
+    body = json.dumps({"r": int(rgb[0]), "g": int(rgb[1]), "b": int(rgb[2])}).encode()
+    req = urllib.request.Request("http://127.0.0.1:8081/api/light/solid", data=body,
+                                 headers={"Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=3).read()
 
 
 def main() -> int:
@@ -48,7 +62,12 @@ def main() -> int:
                     last_seen = now
                 state = (now - last_seen) <= HOLD_S
                 if state != shown or now - sent_at >= REFRESH_S:
-                    sdk.glow(GREEN if state else RED, LUMINANCE)
+                    try:
+                        paint(GREEN if state else RED)
+                    except Exception as exc:
+                        print(f"{time.strftime('%H:%M:%S')} light route: {exc}", flush=True)
+                    if state != shown:
+                        sdk.glow(GREEN if state else RED, LUMINANCE)   # and the SDK's glow, for the brightness
                     sent_at = now
                     if state != shown:
                         print(f"{time.strftime('%H:%M:%S')} {'GREEN: person in view' if state else 'RED: nobody in view'} (frame {frames})", flush=True)

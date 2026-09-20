@@ -105,10 +105,10 @@ SLIDE_YAW = YAW_REACH
 STOMP_YAW = 16.0       # "a little +yaw": enough to say which foot, not enough to read as a turn
 CB_YAW = YAW_REACH     # charlie brown's left/right pulses: half a beat each, 251 units/s peak at 35
 
-LEAN = [0.0, -10.0, 22.0, 0.0, 18.0]      # head (0.008, 0.179, 0.322): +0.096 m FORWARD, dead level.
+LEAN = [0.0, -14.0, 22.0, 0.0, 18.0]      # was base_pitch -10: a little less forward (operator 2026-09-20, more clearance at the front)
                                           # The lean is pure travel toward the audience because the
                                           # elbow's +44 exactly pays back the height base_pitch spends.
-BACK = [0.0, -46.0, 18.0, 0.0, -12.0]     # head (0.017, 0.036, 0.399): -0.047 m back, +0.075 m up,
+BACK = [0.0, -46.0, 10.0, 0.0, -8.0]      # was elbow 18 / wrist -12: operator 2026-09-20, a jerk back here tips the lamp; two thirds of the retreat, slower
                                           # nose tipped UP. Backward travel is scarce (head_y may not
                                           # go under 0.020 and START is only at 0.083), so the retreat
                                           # buys its legibility by rearing UP as well as back -- the
@@ -130,11 +130,11 @@ REV_TOP = [0.0, -46.0, 14.0, 0.0, -15.0]  # head (0.017, 0.041, 0.393): up AND 0
 REV_LAND = [0.0, -52.0, -24.0, 0.0, 8.0]  # lands BEHIND home (y 0.074 against home's 0.083). -52 is
                                           # the base_pitch floor while the elbow is above -45; going
                                           # further back here would be clamped, not danced.
-STOMP = [0.0, -40.0, -58.0, 0.0, 6.0]     # head (0.012, 0.120, 0.211): -0.113 m DOWN in 0.4 beat.
+STOMP = [0.0, -40.0, -52.0, 0.0, 6.0]     # was elbow -58: a shallower jab, more clearance at the front (operator 2026-09-20)
                                           # The elbow does the dropping (it is the joint that folds
                                           # the arm down) and base_pitch only keeps the head from
                                           # falling back into the lamp on the way.
-KNEE = [0.0, -20.0, -50.0, 0.0, 12.0]     # head (0.009, 0.159, 0.174): -0.149 m down, deeper than the
+KNEE = [0.0, -20.0, -44.0, 0.0, 12.0]     # was elbow -50: more clearance at the front (operator 2026-09-20); deeper than the
                                           # stomp and four times slower -- the pair must not be
                                           # confusable, so they differ in both depth and tempo.
 ROCK = [0.0, -28.0, 2.0, 0.0, 24.0]       # the cha-cha-cha rock: about 0.055 m forward, level
@@ -345,10 +345,10 @@ def cha_take_it_back() -> Call:
     # descent home 1.5 -> 1.875 (+25 %): operator, "when it goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"
     # paid by the trailing hold (0.5 -> 0.2, LEAD_BEATS) and 0.0375 from each punctuation hold (0.25 -> 0.2125)
     return (Call(4, says="take it back now y'all")
-            .to(BACK_HALF, 0.75).hold(0.2125)
-            .to(BACK, 0.75).hold(0.2125)
-            .home(1.875)
-            .hold(0.2))
+            .to(BACK_HALF, 0.9, "glide").hold(0.2)
+            .to(BACK, 0.9, "glide").hold(0.2)
+            .home(1.6)
+            .hold(0.2))     # glides, not eases: no snap at either end of the retreat (operator: it would tip back)
 
 
 def _hop(call: Call, top, land, rise: float = 0.6, fall: float = 0.65, recover: float = 0.55) -> Call:
@@ -404,6 +404,7 @@ def cha_stomp_left() -> Call:
             .hold(0.4325))
 
 
+LOW = _at(bc.BOTTOM, base_pitch=4.0)    # bc.BOTTOM sits 3.3 cm over the table; base_pitch 10 -> 4 lifts the head about 2 cm (operator: more clearance)
 NOD = _at(DESIGN_START, elbow_pitch=float(DESIGN_START[2]) + 6.0, wrist_pitch=55.0)   # the bob: nose down 30 -> 55, elbow up 6
 
 
@@ -473,7 +474,7 @@ def cha_how_low() -> Call:
     half a beat (the punchline, and the half beat is what makes the servos actually reach it), and the
     stand-up is the 1.5-beat tail. The tail is brisk on purpose: it must not be mistaken for a move."""
     return (Call(8, says="how low can you go")
-            .glide(bc.BOTTOM, 6.0)
+            .glide(LOW, 6.0)
             .hold(0.5)
             .home(1.5))
 
@@ -485,9 +486,9 @@ def cha_to_the_top() -> Call:
     and deliberately so: they are a matched pair and the follower reads the DIRECTION, which is the
     only thing that differs."""
     return (Call(8, says="bring it to the top")
-            .glide(bc.TOP, 6.0)
-            .hold(0.5)
-            .home(1.5))
+            .glide(bc.TOP, 5.7)
+            .hold(0.4)
+            .home(1.9))     # descent 1.5 -> 1.9 beats: the head is heavy (operator), and 99 % of the ceiling
 
 
 def cha_freeze() -> Call:
@@ -556,7 +557,7 @@ def cha_look_left_2() -> Call:
 def cha_take_it_back_2() -> Call:
     """"take it back now y'all", two beats: one step back instead of two."""
     # descent home 0.6 -> 0.75 (+25 %): operator, "when it goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"; the BACK hold pays (0.4 -> 0.25)
-    return Call(2, says="take it back now y'all").to(BACK, 0.8).hold(0.25).home(0.75).hold(0.2)
+    return Call(2, says="take it back now y'all").to(BACK, 0.9, "glide").hold(0.2).home(0.7).hold(0.2)
 
 
 def cha_slide_left_2() -> Call:
@@ -583,11 +584,13 @@ def cha_turn_4() -> Call:
 
 
 def cha_how_low_4() -> Call:
-    return Call(4, says="how low can you go").glide(bc.BOTTOM, 2.4).hold(0.3).home(1.3)
+    return Call(4, says="how low can you go").glide(LOW, 2.4).hold(0.3).home(1.3)
 
 
 def cha_to_the_top_4() -> Call:
-    return Call(4, says="bring it to the top").glide(bc.TOP, 2.3).hold(0.2).home(1.5)
+    # descent 1.5 -> 1.7 beats: from the -38 rest the top is 132 elbow units up and the way down was
+    # 294 units/s after smoothing (ceiling 290); the operator wants descents slow anyway
+    return Call(4, says="bring it to the top").glide(bc.TOP, 2.1).hold(0.2).home(1.7)
 
 
 # The cue order is the song's order, near enough: this list is what --list prints and what move.sh
