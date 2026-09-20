@@ -114,7 +114,7 @@ BACK = [0.0, -46.0, 18.0, 0.0, -12.0]     # head (0.017, 0.036, 0.399): -0.047 m
                                           # buys its legibility by rearing UP as well as back -- the
                                           # opposite corner of the room from LEAN, not a smaller LEAN.
 BACK_HALF = [0.0, -47.5, -2.0, 0.0, 0.0]  # the first of the two steps back
-HOP_TOP = [0.0, -35.0, 20.0, 0.0, 8.0]    # head (0.014, 0.080, 0.386): +0.062 m straight UP, y within
+HOP_TOP = [0.0, -35.0, 10.0, 0.0, 8.0]    # elbow 10, not 20: from the -38 rest a 58-unit rise in half a beat was 374 units/s    # head (0.014, 0.080, 0.386): +0.062 m straight UP, y within
                                           # 3 mm of home. Nose comes UP on the leap.
 HOP_LAND = [0.0, -45.0, -30.0, 0.0, 45.0]  # the squash: 0.034 m below home with the nose down. A hop
                                           # that stops dead at home reads as a twitch; the landing
@@ -177,7 +177,7 @@ def _yawed(pose, yaw: float, level: bool = False) -> list[float]:
 
 def _toward(pose, fraction: float) -> list[float]:
     """Part of the way from START to `pose`, for the quick quotes of a big move (charlie brown)."""
-    return list(bc.START + float(fraction) * (np.asarray(pose, dtype=float) - bc.START))
+    return list(DESIGN_START + float(fraction) * (np.asarray(pose, dtype=float) - DESIGN_START))
 
 
 # ----------------------------------------------------------------------------- the timeline
@@ -197,6 +197,10 @@ def _glide(u: np.ndarray, ramp: float = GLIDE_RAMP) -> np.ndarray:
 
 PROFILES = {"ease": bc.ease, "glide": _glide, "hold": lambda u: np.zeros_like(np.asarray(u, float))}
 START = np.array(_at(bc.START, base_yaw=CENTRE, elbow_pitch=HOME_ELBOW), dtype=float)   # where every cha clip starts and ends
+# The design frame's home: yaw 0 (CENTRE is added in rows()), elbow at the session's rest. Poses are
+# ABSOLUTE and unchanged by HOME_ELBOW: a lower home only makes the descents shallower and the lifts
+# taller, never pushes a pose closer to the table (2026-09-20 04:45: "it is smashing its head").
+DESIGN_START = np.array(_at(bc.START, elbow_pitch=HOME_ELBOW), dtype=float)
 
 
 class Call:
@@ -212,7 +216,7 @@ class Call:
     def __init__(self, beats: float, *, says: str = "") -> None:
         self.beats = float(beats)
         self.says = says
-        self.keys: list[tuple[float, np.ndarray, str]] = [(0.0, np.array(bc.START, dtype=float), "ease")]
+        self.keys: list[tuple[float, np.ndarray, str]] = [(0.0, np.array(DESIGN_START, dtype=float), "ease")]
         self.bite = 0.0                  # how far clamp_envelope had to move the trajectory
 
     @property
@@ -240,17 +244,17 @@ class Call:
         The from-above return spends 6/11 of `beats` rising and 5/11 settling (it was 0.6/0.4): a caller
         that keeps its rise time asks for 1.1 x and pays the tenth from its trailing hold."""
         elbow = JOINTS.index("elbow_pitch")
-        if self.here[elbow] < bc.START[elbow] - 1e-9 and beats >= 0.3:
-            above = _at(bc.START, elbow_pitch=float(bc.START[elbow]) + ELBOW_OVERSHOOT)
+        if self.here[elbow] < DESIGN_START[elbow] - 1e-9 and beats >= 0.3:
+            above = _at(DESIGN_START, elbow_pitch=float(DESIGN_START[elbow]) + ELBOW_OVERSHOOT)
             # settle 0.4 -> 0.5 of the old return (+25 %): operator, "when it goes down, have a little bit more control as the head is heavy, tone the speed down by 20%"
-            return self.to(above, beats * 6 / 11, style).to(bc.START, beats * 5 / 11, "ease")
-        return self.to(bc.START, beats, style)
+            return self.to(above, beats * 6 / 11, style).to(DESIGN_START, beats * 5 / 11, "ease")
+        return self.to(DESIGN_START, beats, style)
 
     def rows(self) -> np.ndarray:
         end = self.keys[-1][0]
         if abs(end - self.beats) > 1e-9:
             raise ValueError(f"keyframes fill {end:g} beats of a {self.beats:g}-beat call")
-        if not np.allclose(self.keys[-1][1], bc.START, atol=1e-9):
+        if not np.allclose(self.keys[-1][1], DESIGN_START, atol=1e-9):
             raise ValueError("a call must end at bc.START so the next call can follow it with no snap")
         # The lead-in (LEAD_BEATS at home, see the runtime's rules above) is paid for by the call's own
         # closing stillness when it has one, so the move itself keeps its designed speed; a call that
@@ -267,13 +271,12 @@ class Call:
                     + [(LEAD_BEATS + t * scale, pose, style) for t, pose, style in keys[1:]])
         n = int(round(self.beats * BEAT * FPS)) + 1
         t = np.linspace(0.0, self.beats, n)
-        U = np.tile(bc.START.astype(float), (n, 1))
+        U = np.tile(DESIGN_START.astype(float), (n, 1))
         for (t0, a, _), (t1, b, style) in zip(keys, keys[1:]):
             span = max(t1 - t0, 1e-12)
             where = (t >= t0 - 1e-12) & (t <= t1 + 1e-12)
             U[where] = a + (b - a) * PROFILES[style]((t[where] - t0) / span)[:, None]
         U[:, JOINTS.index("base_yaw")] += CENTRE      # designed about 0, danced about CENTRE
-        U[:, JOINTS.index("elbow_pitch")] += ELBOW_SHIFT   # designed about -22, danced about the rest
         V = bc.clamp_envelope(U)
         self.bite = float(np.abs(V - U).max())      # > 0 means a pose above was written unsafely and
         V[0] = START                                # the envelope had to argue with it: a design bug,
@@ -290,7 +293,7 @@ def cha_look_right() -> Call:
     It turns from home, without the reach the slides use, and that is the point of the pair: a look
     pivots on the spot (head 0.051 m, the lit end of the shade 0.128 m) while a slide travels."""
     return (Call(4, says="to the right")
-            .to(_at(bc.START, base_yaw=LOOK_YAW), 0.75)
+            .to(_at(DESIGN_START, base_yaw=LOOK_YAW), 0.75)
             .hold(2.5)
             .home(0.75))
 
@@ -299,7 +302,7 @@ def cha_look_left() -> Call:
     """"to the left" -- the mirror of cha_look_right, yaw -55. Kept as its own clip rather than a
     flipped copy at play time so the cue sheet names the direction it wants."""
     return (Call(4, says="to the left")
-            .to(_at(bc.START, base_yaw=-LOOK_YAW), 0.75)
+            .to(_at(DESIGN_START, base_yaw=-LOOK_YAW), 0.75)
             .hold(2.5)
             .home(0.75))
 
@@ -316,8 +319,8 @@ def cha_clap() -> Call:
     beat at 124 bpm, so the clip is rhythmic rather than phase-locked and the cue sheet places it."""
     call = Call(8, says="everybody clap your hands")
     for nod in range(8):
-        call.to(CLAP_DOWN, CLAP_STROKE)                              # down: the clap
-        call.to(CLAP_UP if nod < 7 else bc.START, CLAP_STROKE)       # up, and the last one comes home
+        call.to(_at(CLAP_DOWN, elbow_pitch=HOME_ELBOW), CLAP_STROKE)                              # down: the clap
+        call.to(_at(CLAP_UP, elbow_pitch=HOME_ELBOW) if nod < 7 else DESIGN_START, CLAP_STROKE)       # up, and the last one comes home
     return call
 
 
@@ -348,7 +351,7 @@ def cha_take_it_back() -> Call:
             .hold(0.2))
 
 
-def _hop(call: Call, top, land, rise: float = 0.5, fall: float = 0.75, recover: float = 0.55) -> Call:
+def _hop(call: Call, top, land, rise: float = 0.6, fall: float = 0.65, recover: float = 0.55) -> Call:
     """One hop into a 2-beat call: up fast, down past home into a squash, recover, then stand still.
     Whatever is left of the two beats is the stillness -- and the stillness is what makes the eye call
     the hop sharp, so the default leaves 0.2 beat of it (LEAD_BEATS, so the lead-in costs the move nothing)."""
@@ -401,7 +404,7 @@ def cha_stomp_left() -> Call:
             .hold(0.4325))
 
 
-NOD = _at(bc.START, elbow_pitch=float(bc.START[2]) + 6.0, wrist_pitch=55.0)   # the bob: nose down 30 -> 55, elbow up 6
+NOD = _at(DESIGN_START, elbow_pitch=float(DESIGN_START[2]) + 6.0, wrist_pitch=55.0)   # the bob: nose down 30 -> 55, elbow up 6
 
 
 def cha_cha() -> Call:
@@ -465,7 +468,7 @@ def cha_how_low() -> Call:
     table, on the table margin itself), at CONSTANT speed for 6 beats: about 26 units/s, the slowest
     thing the lamp does. Slowness is the message, so no easing -- an ease would arrive early and hang
     about, and "how low" is a question you answer gradually.
-    It cannot arrive at the very end of the call and stay there: every clip must end at bc.START or
+    It cannot arrive at the very end of the call and stay there: every clip must end at DESIGN_START or
     the next call starts with a snap. So the descent owns 6 of the 8 beats, the bottom is HELD for
     half a beat (the punchline, and the half beat is what makes the servos actually reach it), and the
     stand-up is the 1.5-beat tail. The tail is brisk on purpose: it must not be mistaken for a move."""
@@ -489,7 +492,7 @@ def cha_to_the_top() -> Call:
 
 def cha_freeze() -> Call:
     """"FREEZE" -- a human stops dead.
-    The lamp holds bc.START for the whole call and moves nothing: peak speed 0 on every joint. It is a
+    The lamp holds DESIGN_START for the whole call and moves nothing: peak speed 0 on every joint. It is a
     clip and not a gap because the cue sheet schedules clips, and because a freeze that is a GAP would
     let whatever ran last keep its pose; this one puts the lamp at home, which is where the next call
     expects to start. Stillness only reads as a freeze if the moves around it are big -- which is the
@@ -516,7 +519,7 @@ def cha_charlie_brown() -> Call:
     counts four directions, and any one of them alone would be a different call."""
     call = Call(4, says="charlie brown")
     for pose in (_toward(LEAN, 0.7), _toward(BACK, 0.7),
-                 _at(bc.START, base_yaw=-CB_YAW), _at(bc.START, base_yaw=CB_YAW)):
+                 _at(DESIGN_START, base_yaw=-CB_YAW), _at(DESIGN_START, base_yaw=CB_YAW)):
         call.to(pose, 0.45).home(0.45).hold(0.10)
     return call
 
@@ -543,11 +546,11 @@ def cha_reverse() -> Call:
 # the longest version that fits the gap to the next call.
 def cha_look_right_2() -> Call:
     """"to the right", two beats: the same look, a shorter hold."""
-    return Call(2, says="to the right").to(_at(bc.START, base_yaw=LOOK_YAW), 0.6).hold(0.9).home(0.5)
+    return Call(2, says="to the right").to(_at(DESIGN_START, base_yaw=LOOK_YAW), 0.6).hold(0.9).home(0.5)
 
 
 def cha_look_left_2() -> Call:
-    return Call(2, says="to the left").to(_at(bc.START, base_yaw=-LOOK_YAW), 0.6).hold(0.9).home(0.5)
+    return Call(2, says="to the left").to(_at(DESIGN_START, base_yaw=-LOOK_YAW), 0.6).hold(0.9).home(0.5)
 
 
 def cha_take_it_back_2() -> Call:
@@ -567,7 +570,7 @@ def cha_slide_right_2() -> Call:
 def cha_clap_4() -> Call:
     call = Call(4, says="clap your hands")
     for nod in range(4):
-        call.to(CLAP_DOWN, CLAP_STROKE).to(CLAP_UP if nod < 3 else bc.START, CLAP_STROKE)
+        call.to(_at(CLAP_DOWN, elbow_pitch=HOME_ELBOW), CLAP_STROKE).to(_at(CLAP_UP, elbow_pitch=HOME_ELBOW) if nod < 3 else DESIGN_START, CLAP_STROKE)
     return call
 
 
