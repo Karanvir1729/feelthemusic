@@ -12,6 +12,7 @@ measure against and pick from. It is not a merge candidate as it stands: see "Ru
 | `spatial.py` | Forward kinematics, IK (`look_at`), pose checks, on the vendor description and the lamp's own calibration (read at runtime, never copied). |
 | `sdk.py` | Client for the vendor SDK gateway (token read from the lamp's environment, never printed). |
 | `ftm_discover.py` | Finds the conductor over mDNS/DNS-SD with the standard library (no zeroconf/avahi); caches the last answer. `lamp_show.py` re-discovers after 15 s of silence. |
+| `follow_game.py` | The lamp's side of the follow-the-lamp phone game ([docs/follow-game.md](../../docs/follow-game.md)): publishes each accepted clip's head path to the conductor (`lpath` telemetry, the lamp's own frame, never mirrored, stamped with the instant the head physically starts), follows it with a still **rest path** so the ball never leaves the phones while the arm rests between clips, re-stamps it once the runtime reports the clip actually running (±90 ms of start jitter → about 10 ms), and shows the room's `followStatus` on the panel as a colour that glides and cannot flash. Moves nothing. Hooked into `lamp_show.py` only when `FOLLOW_GAME=1` (default off). `--record` writes `testdata/dance.json`, the recorded dance the conductor repository's replay tool plays into a show so the phones can be tested without the robot. |
 | `install_clips.py` | Puts generated clips into the runtime's animation pack atomically (tmp → fsync → replace → sync → md5) and checks the runtime lists them. |
 | `mode.sh`, `run_show.sh`, `run_face.sh`, `hold.py` | Operator launchers. |
 | `analysis/` | The measurement scripts behind the numbers below (ZMP per clip, the shoulder/elbow pair rule, servo and clip-route probes, the on-arm beat tracer). |
@@ -79,6 +80,32 @@ Verification for this candidate:
 - `lamp_show.py --help` and `git diff --check`: passed without starting the show.
 
 Physical movement and the dashboard end-to-end flow were not tested.
+
+#### What the presets mean for the phone game
+
+`follow_game.py` draws whatever the scheduler posts, so the calibrated presets change the size of the ball on
+every phone. Re-measured on this tree (offline, generator only, no robot and no network), 12 tier/variant
+combinations x 80-214 bpm x bold 0, 0.5 and 1: the lateral range grew 1.85 x (the sweep reaches 52.0 delivered
+yaw units against 28.1 before) and the vertical range did not move at all (24.2 units, still the build's
+crouch). `X_RANGE_UNITS` therefore went 29 -> 54 and `Y_RANGE_UNITS` stayed at 25; at the old value the new
+hype tier pinned 371 path points to the edge of the phone's screen, up to 37 % of a single clip. At the new
+ranges nothing clips at any tempo or bold, a typical clip fills 0.73 of the range (0.66 at `DEFAULT_BOLD`) and
+the sweep at bold 1 reaches 0.96. Against @tonycodex's model figures (16.7 cm lateral, 10.5 cm rise at
+132 bpm) x 1.0 is about 10.2 cm of head travel and y 1.0 about 8.3 cm.
+
+The hype tier also moves for 76 % of a clip now instead of 58 %, which the game wants: it is 3.5 s of ball
+movement per clip against 2.75 s, and the phone needs 1 s in any 2.5 s window to stay scored.
+
+**The dashboard's picker.** The conductor is not in this repository, so the selector is being built there and
+the wire between them is one key in the Control message the lamp already receives:
+`"lamp": {"preset": "auto|sweep|rise|diagonal|wiggle", "bold": 0..1, "gen": n}` -- the names are
+`beat_clips.DANCE_PATTERNS` exactly, `bold` is the slider this tree already reads, and `gen` (which already
+exists) bumps on every change so queued clips for the old settings can be dropped. The lamp validates both and
+may refuse; it reports what it is really doing back in its once-a-second `{"t":"lamp"}` status as the optional
+`preset` and `bold` keys, and the dashboard shows those rather than what it asked for. The full definition,
+including how old lamps and old conductors degrade, is in [docs/follow-game.md](../../docs/follow-game.md)
+under "Choosing the dance". Reading that key into `ClipScheduler.set_pattern()` is not part of this branch --
+the branch this is stacked on wires the selector to `--pattern` only, on purpose.
 
 The new choreography and detector are offline-tested candidates, not a claim of deployment or physical acceptance.
 The hardware measurements above describe the earlier event build, not these changes.
