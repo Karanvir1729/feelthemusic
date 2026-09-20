@@ -1,6 +1,8 @@
-"""beat_clips v2: the pure pieces (beats, easing, gain table, envelope clamp, per-joint amplitude,
-variants, accents), and one end-to-end generation at 128 bpm (needs the vendor robot description,
-which is restricted material read in place from the scratchpad and never copied)."""
+"""beat_clips v4: the pure pieces (beats, easing, gain table, envelope clamp, per-joint amplitude,
+variants, accents, the reach layer), the head travel the choreography is actually for -- measured
+through the calibrated forward kinematics, because the joint columns cannot show it -- and one
+end-to-end generation at 128 bpm (needs the vendor robot description, which is restricted material
+read in place from the scratchpad and never copied)."""
 import csv
 import hashlib
 import itertools
@@ -43,13 +45,86 @@ def test_ease_is_cosine_monotone_with_flat_ends():
     assert bc.ease(-1) == 0.0 and bc.ease(2) == 1.0       # clipped outside 0..1
 
 
+def test_the_hardware_envelope_constants_are_what_the_arm_was_measured_against():
+    """The numbers the whole safety argument rests on, pinned as VALUES and not as their own names.
+
+    Every other test in this file spells these as bc.JOINT_MAX, bc.SPEED_LIMIT and so on, which is
+    right for reading but cannot fail: `out[bc.YAW] == bc.JOINT_MAX` holds whatever JOINT_MAX is set
+    to. This test is the one place that says what they actually are, so moving one is a deliberate
+    edit here rather than a silent drift in the envelope the clips are validated against.
+
+    v3 -> v4 (the tempo-sized rewrite), for the ones that moved:
+    * JOINT_MAX 94 -> 98. The servo's calibrated range is +-100; the margin to it went from 6 units
+      to 2 once the calibration was trusted, which is where the extra yaw for `facing` came from.
+    * SPEED_DESIGN/SPEED_LIMIT 140 -> 380. 140 was the vendor SIMULATION limit read as a hardware
+      one; 380 is what the vendor's own shipped animation clips actually reach, so it is the
+      runtime's demonstrated ceiling rather than a guess.
+    * MOVE_FRAC 0.7 -> 0.85: more of each beat is the move, less of it the punctuating hold, which
+      is free amplitude at the same speed.
+    WP_MAX 60 did not move -- the wrist stops physically near +94 and 60 is the margin to it.
+    """
+    assert (bc.JOINT_MAX, bc.WP_MAX) == (98.0, 60.0)
+    assert (bc.SPEED_DESIGN, bc.SPEED_LIMIT) == (380.0, 380.0)
+    assert bc.MOVE_FRAC == 0.85
+    assert (bc.BP_MIN, bc.BP_FLIP, bc.ELBOW_FLIP) == (-65.0, -52.0, -45.0)
+    assert bc.SPEED_MARGIN == 0.99                      # design to 99 % so rounding never trips the validator
+    assert bc.JOINT_MAX < 100.0 and bc.WP_MAX < bc.JOINT_MAX     # both inside the calibrated span
+    assert np.allclose(bc.START, [0.0, -49.0, -22.0, 0.0, 30.0])
+    # The ZMP bounds the tipping criterion is checked against, and the head's clearance over the table.
+    #
+    # ZMP_Y_MAX is the FORWARD tipping bound and it is the one that has been moving: 0.050 (half the
+    # base footprint) -> 0.070 -> 0.085, all on 2026-09-20, each step taken to let the dance reach
+    # lower and further over the table. The lamp actually tips when the ZMP leaves the base footprint
+    # at 0.100 (safety.yaml cylinder_radius_m, read below off the model rather than trusted from a
+    # comment), so 0.085 is 15 mm of margin on a criterion computed from a 5-frame-smoothed CoM.
+    # It is pinned here, as a value, so that moving it again is a deliberate edit in one obvious
+    # place and not a number that drifts while the choreography is being tuned.
+    assert (bc.HEAD_Y_MIN, bc.ZMP_Y_MIN, bc.ZMP_Y_MAX) == (0.020, -0.012, 0.085)
+    if HAVE_ROBOT:
+        tipping = bc.Validator(ROBOTDESC).model.base["radius"]
+        assert tipping == pytest.approx(0.100)
+        # the bound must stay strictly inside the footprint the lamp really goes over at, with the
+        # remaining margin stated rather than implied
+        assert bc.ZMP_Y_MAX < tipping
+        assert tipping - bc.ZMP_Y_MAX == pytest.approx(0.015, abs=0.0005)
+
+
+def test_the_speed_budget_rises_with_tempo_and_never_passes_the_hard_limit():
+    """speed_for() is v4: a FIXED budget made fast songs look tamer than slow ones (a shorter beat
+    buys a smaller excursion out of the same units/s), so the budget now rises with the tempo --
+    260 units/s at 80 bpm to the vendor's 380 at 170 and above. SPEED_LIMIT stays 380 and stays the
+    hard ceiling every clip is validated against, so the budget may reach it but never exceed it.
+
+    Pinned here because the assertions elsewhere are written against speed_for(bpm) itself and would
+    hold for any shape at all; this is what says the shape is a plateau, a ramp, then a plateau."""
+    assert (bc.SPEED_AT_SLOW, bc.SPEED_AT_FAST) == (260.0, 380.0)
+    assert (bc.BPM_SLOW, bc.BPM_FAST) == (80.0, 170.0)
+    assert bc.speed_for(80) == 260.0 and bc.speed_for(170) == 380.0
+    assert bc.speed_for(125) == pytest.approx(320.0)          # the midpoint of the ramp
+    assert bc.speed_for(100) == pytest.approx(286.67, abs=0.01)
+    # flat outside the ramp: a tempo the tracker cannot reach is not extrapolated into more speed
+    for slow in (0.0, 40.0, 79.9, bc.BPM_SLOW):
+        assert bc.speed_for(slow) == bc.SPEED_AT_SLOW
+    for fast in (bc.BPM_FAST, 180.0, 214.0, 300.0):
+        assert bc.speed_for(fast) == bc.SPEED_AT_FAST
+    # monotone over everything the tracker reports, and never past the limit the validator enforces
+    budgets = [bc.speed_for(b) for b in np.linspace(40, 300, 261)]
+    assert budgets == sorted(budgets)
+    assert max(budgets) <= bc.SPEED_LIMIT
+    assert all(b >= bc.SPEED_AT_SLOW for b in budgets)
+    # and the budget is what sizes the beat: a faster song moves faster AND still travels
+    assert bc.max_move(180) > bc.max_move(180, bc.SPEED_AT_SLOW)
+
+
 def test_max_move_is_the_cosine_speed_budget():
-    # a one-beat move of D units with cosine easing peaks at (pi/2) * D / (0.7 * P)
+    # a one-beat move of D units with cosine easing peaks at (pi/2) * D / (MOVE_FRAC * P), against
+    # this tempo's own budget (speed_for: 260 units/s at 80 bpm rising to the vendor's 380 at 170)
     for bpm in (80, 132, 180):
         D = bc.max_move(bpm)
-        assert (np.pi / 2) * D / (bc.MOVE_FRAC * 60 / bpm) == pytest.approx(bc.SPEED_DESIGN)
+        assert (np.pi / 2) * D / (bc.MOVE_FRAC * 60 / bpm) == pytest.approx(bc.speed_for(bpm))
+        assert bc.max_move(bpm, bc.SPEED_DESIGN) >= D and bc.speed_for(bpm) <= bc.SPEED_LIMIT
     assert bc.max_move(80) > bc.max_move(132) > bc.max_move(180)
-    assert bc.max_move(132) == pytest.approx(28.3, abs=0.1)
+    assert bc.max_move(132) == pytest.approx(81.0, abs=0.1)
 
 
 def test_gain_table_scales_excursion_from_start_only():
@@ -86,9 +161,14 @@ def test_gains_override_from_file_changes_the_command(tmp_path):
     # the per-joint scale is chosen against the SAME speed limit, so the commanded peak speed is the
     # same and the commanded amplitude too; what changes is what the arm is asked relative to the pattern
     assert bc.peak_speed(lo)[bc.YAW] <= bc.SPEED_DESIGN and bc.peak_speed(hi)[bc.YAW] <= bc.SPEED_DESIGN
-    s_lo = bc.joint_scales(bc.raw_trajectory("groove", 128, "a"), 128, g)
-    s_hi = bc.joint_scales(bc.raw_trajectory("groove", 128, "a"), 128)
-    assert s_lo[bc.YAW] > s_hi[bc.YAW]                      # less gain -> more of the pattern fits
+    # At the library's own gains no joint is speed-bound any more -- the yaw ceiling and the lift
+    # envelope bind first -- so the scale is exercised at a gain that does bind, which is what the
+    # --gains override is for. Less gain, more of the pattern fits.
+    raw = bc.raw_trajectory("hype", 180, "a")
+    big = bc.gain_vector({"base_yaw": 3.5})
+    s_lo, s_hi = bc.joint_scales(raw, 180, g), bc.joint_scales(raw, 180, big)
+    assert s_lo[bc.YAW] == 1.0 and s_hi[bc.YAW] < 1.0
+    assert bc.peak_speed(bc.apply_gain(bc.scaled(raw, s_hi), big))[bc.YAW] <= bc.SPEED_DESIGN
 
 
 def test_envelope_clamp_rules():
@@ -99,7 +179,7 @@ def test_envelope_clamp_rules():
     assert c(np.array([0.0, -58.0, -47.0, 0.0, 30.0]))[bc.BP] == pytest.approx(-54.0)        # blend: 2 units under -45
     assert c(np.array([0.0, -58.0, -60.0, 0.0, 30.0]))[bc.BP] == pytest.approx(-58.0)        # elbow lifted: allowed
     out = c(np.array([120.0, -49.0, -22.0, -120.0, 80.0]))
-    assert out[bc.YAW] == 94.0 and out[bc.WR] == -94.0 and out[bc.WP] == 60.0
+    assert out[bc.YAW] == bc.JOINT_MAX and out[bc.WR] == -bc.JOINT_MAX and out[bc.WP] == bc.WP_MAX
     assert np.allclose(c(bc.START), bc.START)
     # continuous in the elbow: sweeping the elbow through -45..-58 at base_pitch -60 gives no jump
     el = np.linspace(-30, -65, 200)
@@ -130,8 +210,8 @@ def test_trajectory_lands_keyframes_on_the_beat_and_holds_the_ends():
     for k, t in enumerate(bc.beat_instants(bpm)):
         i = int(round(t * bc.FPS))
         assert np.allclose(U[i], keys[k], atol=1e-6), f"beat {k}"
-        if 0 < k < bc.BEATS:                                 # the first 30 % of the next beat is a hold
-            j = i + int(0.25 * 60 / bpm * bc.FPS)
+        if 0 < k < bc.BEATS:                     # the first 1 - MOVE_FRAC of the next beat is a hold
+            j = i + int(0.5 * (1 - bc.MOVE_FRAC) * 60 / bpm * bc.FPS)
             assert np.allclose(U[j], keys[k], atol=1e-6)
 
 
@@ -147,68 +227,147 @@ def test_keyframes_start_and_end_at_start_pose_for_every_variant():
         bc.keyframes("groove", "z")
 
 
-def test_accents_on_beat_one_of_each_bar_and_the_flick_on_beat_five():
-    K = bc.keyframes("groove", "a") - bc.START
-    # groove a: sway +Y alternating; beats 1 and 5 are x1.3 of beats 3 and 7
-    assert K[3, bc.YAW] == pytest.approx(bc.Y) and K[7, bc.YAW] == pytest.approx(bc.Y)
-    assert K[1, bc.YAW] == pytest.approx(bc.ACCENT * bc.Y) and K[5, bc.YAW] == pytest.approx(bc.ACCENT * bc.Y)
-    assert K[2, bc.YAW] == pytest.approx(-bc.Y) and K[4, bc.YAW] == pytest.approx(-bc.Y)
-    # beat 5 carries the head flick on top of the accented bob (wrist_pitch up, wrist_roll)
-    assert np.allclose(K[5] - bc.ACCENT * K[3], bc.FLICK)
-    assert not np.allclose(K[1], K[5])
-    for tier in ("groove", "hype"):
+def test_the_swing_lands_where_the_head_is_furthest_from_the_yaw_axis():
+    """The v4 rule, and the whole reason the dance is wide: sideways travel is the head's distance from
+    the yaw axis times the sine of the turn, so a beat is only allowed to spend its swing where the arm
+    is out. LIFTS and YAWS are written as one table and this is the invariant that ties them together.
+    Read off the tables, which is where the pairing is authored; lift_profile only ever moves a beat
+    TOWARD its neighbours, so a rate-limited phrase is a smaller version of this, never a wider one."""
+    assert set(bc.YAWS) == {(t, v) for t in bc.TIERS if t != "build" for v in bc.VARIANTS}
+    for (tier, variant), row in bc.YAWS.items():
+        L = np.array(bc.LIFTS[(tier, variant)], dtype=float)
+        y = np.abs(np.array(row, dtype=float))
+        assert len(row) == len(L) == bc.BEATS - 1
+        for k, (lift, turn) in enumerate(zip(L, y), start=1):
+            if turn >= 0.95 * y.max():                       # the ends of this phrase's swing ...
+                assert 0.45 <= lift <= 0.75, (tier, variant, k, lift)     # ... where the reach is
+            if lift <= 0.05 or lift >= 0.95:                 # the beats that visit BOTTOM or TOP ...
+                assert turn <= 0.4, (tier, variant, k, turn)              # ... pass near the centre
+
+
+def test_reach_only_extends_the_arm_where_the_swing_can_use_it():
+    L = np.linspace(0.0, 1.0, 21)
+    full = bc.reach_layer(L, np.full_like(L, bc.YAW_MAX))
+    assert full[0] == 0.0 and full[-1] == pytest.approx(0.0, abs=1e-12)   # BOTTOM and TOP: the bare line
+    assert full.max() == pytest.approx(bc.REACH) and L[full.argmax()] == pytest.approx(0.5)
+    assert np.allclose(bc.reach_layer(L, np.zeros_like(L)), 0.0)          # a centred beat gets none of it
+    assert np.allclose(bc.reach_layer(L, np.full_like(L, bc.YAW_MAX / 2)), full / 2)
+    assert np.allclose(bc.reach_layer(L, np.full_like(L, 2 * bc.YAW_MAX)), full)     # and never more
+    # it only ever RAISES base_pitch, so it cannot reach the -65 floor or open the flip region
+    bare, out = bc.lift_pose(L), bc.lift_pose(L, full)
+    assert (out[:, bc.BP] >= bare[:, bc.BP] - 1e-12).all()
+    assert np.array_equal(out[:, [bc.YAW, bc.EL, bc.WR, bc.WP]], bare[:, [bc.YAW, bc.EL, bc.WR, bc.WP]])
+    assert not bc.envelope_violations(out) and not bc.envelope_violations(bare)
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_reach_takes_the_head_away_from_the_yaw_axis():
+    """The measurement the reach exists for: at mid lift the bare BOTTOM..TOP line leaves the head
+    0.114 m from the yaw axis, and a 68-unit turn there is worth 2 * 0.114 * sin(51 deg) of travel.
+    Reaching out takes that distance past 0.16 m, and the pose is still one the model allows."""
+    model = bc.Validator(ROBOTDESC).model
+
+    def radius(pose):
+        p = model.head(dict(zip(bc.JOINTS, pose)))["position"]
+        return float(np.hypot(p[0], p[1]))
+
+    for lift in (0.5, 0.6):
+        bare = bc.lift_pose(np.array([lift]))[0]
+        out = bc.lift_pose(np.array([lift]), bc.reach_layer(np.array([lift]), np.array([bc.YAW_MAX])))[0]
+        assert radius(bare) == pytest.approx(0.114, abs=0.005), lift
+        assert radius(out) > 1.4 * radius(bare), (lift, radius(bare), radius(out))
+        assert not model.problems(dict(zip(bc.JOINTS, out))), lift
+    # folded at the bottom the head sits on the axis whatever the shoulder does: nothing to win there
+    assert radius(bc.lift_pose(np.array([0.0]))[0]) < 0.07
+
+
+def test_the_bar_accent_widens_beat_one_of_each_bar_up_to_the_ceiling():
+    for tier in ("groove", "hype", "drop"):
         for variant in bc.VARIANTS:
-            K = bc.keyframes(tier, variant) - bc.START
-            plain = _unaccented(tier, variant)
-            assert np.allclose(K[1], bc.ACCENT * plain[0])                       # beat 1: x1.3
-            assert np.allclose(K[5], bc.ACCENT * plain[4] + bc.FLICK)            # beat 5: x1.3 + the flick
-            assert np.allclose(K[3], plain[2]) and np.allclose(K[7], plain[6])   # the others: nominal
-    # drop: beat 1 is the spec's spring, exactly (no x1.3), and the flick is still on beat 5
-    D = bc.keyframes("drop", "a")
-    assert np.allclose(D[1], bc.SPRING)
-    assert D[5, bc.WP] - bc.START[bc.WP] == pytest.approx(bc.ACCENT * bc.hype_excursions("a")[4][bc.WP] + bc.FLICK[bc.WP])
-    # build: a progressive crouch with neither the accent nor the beat-5 flick, on every variant
+            shape = np.array(bc.YAWS[(tier, variant)], dtype=float)
+            ceiling = float(np.abs(shape).max())
+            yaw, roll, _ = bc.yaw_layer(tier, variant, 128, bc.lift_profile(tier, variant, 128))
+            amp = float(np.abs(yaw).max()) / ceiling
+            for k in bc.ACCENT_BEATS:                              # beat 1 of each bar: x1.3, then clipped
+                want = float(np.clip(shape[k - 1] * bc.ACCENT, -ceiling, ceiling))
+                assert yaw[k] == pytest.approx(amp * want), (tier, variant, k)
+                assert abs(yaw[k]) >= abs(amp * shape[k - 1]) - 1e-9   # never narrower than unaccented
+            for k in (3, 7):                                       # the other bar beats stay nominal
+                assert yaw[k] == pytest.approx(amp * shape[k - 1]), (tier, variant, k)
+            assert np.abs(yaw).max() == pytest.approx(amp * ceiling)   # and nothing passes the ceiling
+            if (tier, variant) != ("groove", "b"):     # ... which runs its own roll, at the yaw's rate
+                assert np.allclose(roll, bc.ROLL * yaw)                # the counter-tilt follows the yaw
+            assert yaw[0] == 0.0 and yaw[bc.BEATS] == 0.0
+    # the build tier crouches on the beat and carries no accent at all
+    for variant in bc.VARIANTS:
+        yaw, _, _ = bc.yaw_layer("build", variant, 128, bc.lift_profile("build", variant, 128))
+        assert not np.isclose(abs(yaw[1]), bc.ACCENT * abs(yaw[3])) or np.allclose(yaw, 0.0), variant
+
+
+def test_the_tiers_are_sized_by_their_own_yaw_ceiling():
+    for bpm in (80, 128, 180):
+        for tier in ("groove", "hype", "drop"):
+            ceiling = bc.YAW_CALM if tier == "groove" else bc.YAW_MAX
+            for v in bc.VARIANTS:
+                cmd = bc.commanded(tier, bpm, v)
+                A = float(np.abs(cmd[:, bc.YAW]).max())
+                assert A <= ceiling + 1e-9, (tier, v, bpm, A)
+                assert (np.abs(cmd - bc.START).max(axis=0) > 2.0).all(), (tier, v, bpm)   # no dead joint
+        calm = max(np.abs(bc.commanded("groove", bpm, v)[:, bc.YAW]).max() for v in bc.VARIANTS)
+        loud = min(np.abs(bc.commanded(t, bpm, v)[:, bc.YAW]).max()
+                   for t in ("hype", "drop") for v in bc.VARIANTS)
+        assert loud > calm, bpm                      # the loud tiers swing wider at every bucket tempo
+
+
+def test_the_a_variants_are_the_same_wheel_turned_opposite_ways():
+    a, da = np.array(bc.YAWS[("hype", "a")]), np.array(bc.YAWS[("drop", "a")])
+    assert np.allclose(da[2:], -a[:5])               # drop a is hype a, two beats later and mirrored
+    assert bc.LIFTS[("hype", "a")][0] == 0.6 and bc.LIFTS[("drop", "a")][0] == 1.0   # ... after the hit
+    for tier in ("hype", "drop"):
+        L = np.array(bc.LIFTS[(tier, "a")])
+        assert L.min() == 0.0 and L.max() == 1.0     # the wheel still visits BOTTOM and TOP
+
+
+def test_the_b_variants_lean_out_halfway_between_the_floor_and_the_top():
+    for tier in ("hype", "drop"):
+        L, Y = np.array(bc.LIFTS[(tier, "b")]), np.array(bc.YAWS[(tier, "b")])
+        assert Y[1] > 0 > Y[5] and abs(Y[1]) == abs(Y[5])          # the two leans are opposite and equal
+        assert L.min() == 0.0 and L.max() >= 0.9                   # and the phrase travels floor to top
+        for k in (1, 5):                                           # each lean is taken mid-travel ...
+            assert L[k - 1] < L[k] < L[k + 1] or L[k - 1] > L[k] > L[k + 1], (tier, k)
+            assert abs(Y[k]) > abs(Y[k - 1]) and abs(Y[k]) > abs(Y[k + 1]), (tier, k)
+
+
+def test_the_c_variants_sweep_across_the_crowd_at_mid_lift():
+    for tier in ("hype", "drop"):
+        L, Y = np.array(bc.LIFTS[(tier, "c")]), np.array(bc.YAWS[(tier, "c")])
+        assert list(Y) == bc.SWEEP_C and Y[2] == -1.0 and Y[4] == 1.0          # the ends of the sweep
+        assert 0.45 <= L[2] <= 0.75 and 0.45 <= L[4] <= 0.75                   # ... taken with the arm out
+        assert Y[3] == 0.0 and L[3] > L[2] and L[3] > L[4]                     # the apex, through the centre
+        assert Y[0] * Y[-1] < 0                                                # it starts and ends opposite
+        _, _, nod = bc.yaw_layer(tier, "c", 128, bc.lift_profile(tier, "c", 128))
+        assert np.abs(nod[1:bc.BEATS]).max() == pytest.approx(bc.NOD)          # the nod rides the sweep
+        assert nod[0] == 0.0 and nod[bc.BEATS] == 0.0
+
+
+def test_the_drop_hits_on_beat_one_and_the_build_crouches_without_reaching_out():
     for v in bc.VARIANTS:
-        B = bc.keyframes("build", v)
-        assert np.allclose(B[1:8], bc.START + np.array(bc.build_excursions(v))), v
-    B = bc.keyframes("build", "a")
-    assert B[1, bc.EL] > B[2, bc.EL] > B[3, bc.EL] > B[4, bc.EL] > B[5, bc.EL] == B[6, bc.EL]
-    assert (np.diff(B[:7, bc.BP]) <= 1e-9).all()
-    for v in ("a", "b"):                                    # wrist_pitch ramps 30 -> 15 over beats 1-6, no stutter
-        wp = bc.keyframes("build", v)[:7, bc.WP]
-        assert (np.diff(wp) < 0).all() and wp[0] == 30 and wp[6] == 15, (v, wp)
-    assert np.allclose(B[:, bc.WR], 0.0) and np.allclose(B[:, bc.YAW], 0.0)   # a sinks straight down: no flick
-    # the accent x1.3 and the flick only ever touch groove/hype/drop
-    for v in bc.VARIANTS:                                   # c nods on alternate beats around the ramp, no flick on 5
-        C = bc.keyframes("build", v)
-        assert not np.allclose(C[5] - bc.START, np.array(bc.build_excursions(v))[4] + bc.FLICK)
-
-
-def _unaccented(tier, variant):
-    return {"groove": bc.groove_excursions, "hype": bc.hype_excursions}[tier](variant)
-
-
-def test_hype_b_has_two_bottom_up_phrases_instead_of_a_head_circle():
-    K = bc.keyframes("hype", "b")
-    for start in (1, 5):
-        phrase = K[start:start + 3]
-        # Authored joint sequence only: actual head-height direction also needs calibrated FK.
-        assert (np.diff(phrase[:, [bc.BP, bc.EL, bc.WP]], axis=0) > 0).all()
-        assert phrase[0, bc.EL] < bc.START[bc.EL] < phrase[-1, bc.EL]
-        assert np.sign(phrase[:, bc.YAW]).tolist() == [np.sign(phrase[0, bc.YAW])] * 3
-    assert K[1, bc.YAW] * K[5, bc.YAW] < 0               # rises on each side, not repeated nods
-    assert np.allclose(K[4], bc.START)
-
-
-def test_hype_c_crosses_both_diagonals_through_the_centre():
-    K = bc.keyframes("hype", "c")
-    for start in (1, 5):
-        phrase = K[start:start + 3]
-        assert phrase[0, bc.YAW] * phrase[-1, bc.YAW] < 0
-        assert phrase[1, bc.YAW] == pytest.approx(0.0)
-        assert (np.diff(phrase[:, [bc.BP, bc.EL, bc.WP]], axis=0) > 0).all()
-        assert phrase[0, bc.EL] < bc.START[bc.EL] < phrase[-1, bc.EL]
-    assert (K[3, bc.YAW] - K[1, bc.YAW]) * (K[7, bc.YAW] - K[5, bc.YAW]) < 0
+        assert bc.LIFTS[("drop", v)][0] == 1.0                     # every drop opens on the highest pose
+        assert abs(bc.YAWS[("drop", v)][0]) <= 0.35                # ... taken near the centre, as a hit
+    for variant in bc.VARIANTS:
+        L = bc.lift_profile("build", variant, 128)
+        assert L[0] == L[bc.BEATS] == pytest.approx(bc.START_LIFT)
+        assert (np.diff(L[1:7]) <= 1e-9).all() and L[6] == pytest.approx(0.0)   # a progressive sink
+        K = bc.commanded_keyframes("build", variant, 128)
+        # no reach: the crouch is the bare BOTTOM..TOP line, shoulder back and down, not a lean forward
+        assert np.allclose(K[1:bc.BEATS][:, [bc.BP, bc.EL]], bc.lift_pose(L[1:bc.BEATS])[:, [bc.BP, bc.EL]])
+        assert np.allclose(K[0], bc.START) and np.allclose(K[bc.BEATS], bc.START)
+    K = bc.commanded_keyframes("build", "a", 128)
+    assert np.allclose(K[:, [bc.YAW, bc.WR]], 0.0)                 # a sinks straight down
+    low = K[:, bc.BP] < bc.BP_FLIP - 1e-9                          # the flip rule holds at every keyframe
+    assert (K[low][:, bc.EL] <= bc.ELBOW_FLIP + 1e-9).all() and K[:, bc.BP].min() >= bc.BP_MIN - 1e-9
+    assert bc.commanded_keyframes("build", "b", 128)[6, bc.WR] > 15    # b leans as it sinks
+    assert bc.commanded_keyframes("build", "c", 128)[5, bc.WP] != bc.commanded_keyframes("build", "c", 128)[6, bc.WP]
 
 
 @pytest.mark.parametrize("bpm", [80, 127.3, 132, 180])
@@ -223,54 +382,48 @@ def test_expressive_hype_and_inherited_drop_tails_keep_all_command_gates(bpm):
 
 
 @pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+@pytest.mark.parametrize("bpm", [80, 128, 180])
+def test_the_head_sweeps_as_wide_as_it_is_tall(bpm):
+    """What the whole choreography is for, measured where it can be measured: the head's own path
+    through the calibrated forward kinematics. v3 spanned 0.271 m vertically and 0.107 m sideways
+    (0.081 m at 180 bpm); v4 spans 0.229..0.260 m sideways on every hype and drop clip while keeping
+    the vertical. The joint columns cannot show this -- the same base_yaw buys 0.067 m of travel with
+    the arm folded and 0.17 m with it out -- which is why this test runs the model."""
+    v = bc.Validator(ROBOTDESC)
+    for tier, variant in itertools.product(("hype", "drop"), bc.VARIANTS):
+        U = bc.commanded(tier, bpm, variant)
+        P = np.array([v.model.head(dict(zip(bc.JOINTS, u)))["position"] for u in U])
+        span = P.max(axis=0) - P.min(axis=0)
+        assert span[0] > 0.22, (tier, variant, bpm, span)          # sideways, against v3's 0.081..0.128
+        assert span[2] > 0.20, (tier, variant, bpm, span)          # and still tall
+        assert v.validate(U)["ok"], (tier, variant, bpm)
+    # the vertical envelope is untouched: the tallest phrase still runs the lamp's full reach
+    U = bc.commanded("hype", bpm, "a")
+    z = np.array([v.model.head(dict(zip(bc.JOINTS, u)))["position"][2] for u in U])
+    assert z.min() < 0.19 and z.max() > 0.42
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
 @pytest.mark.parametrize("bpm", [80, 132, 180])
 def test_expressive_gestures_rise_and_cross_in_calibrated_head_space(bpm):
-    validator = bc.Validator(ROBOTDESC)
+    v = bc.Validator(ROBOTDESC)
     for tier, variant in itertools.product(("hype", "drop"), ("b", "c")):
         U = bc.commanded(tier, bpm, variant)
-        report = validator.validate(U)
+        report = v.validate(U)
         assert report["ok"], (tier, variant, bpm, report["reasons"])
         # Take the first complete frame at each beat, during its hold rather than before arrival.
         indices = np.ceil(bc.beat_instants(bpm) * bc.FPS).astype(int)
-        heads = np.array([validator.model.head(dict(zip(bc.JOINTS, U[i])))["position"] for i in indices])
-        for start in ((1, 5) if tier == "hype" else (5,)):
-            assert heads[start + 2, 2] - heads[start, 2] > 0.01, (tier, variant, bpm, heads)
-        if tier == "hype" and variant == "c":
-            dx_first = heads[3, 0] - heads[1, 0]
-            dx_second = heads[7, 0] - heads[5, 0]
-            assert dx_first * dx_second < 0, (bpm, heads)
-            assert min(abs(dx_first), abs(dx_second)) > 0.01
-
-
-def test_drop_and_build_poses_follow_the_spec():
-    D = bc.keyframes("drop", "b")
-    assert np.allclose(D[1], [0.0, -36.0, 2.0, 0.0, 50.0])                       # spring
-    assert D[2, bc.YAW] == pytest.approx(bc.Y) and D[4, bc.YAW] == pytest.approx(-bc.Y)   # b sweeps right first
-    assert D[3, bc.YAW] == 0 and D[3, bc.BP] < bc.START[bc.BP]                   # ... through a centre recoil on beat 3
-    A = bc.keyframes("drop", "a")
-    assert A[2, bc.YAW] == pytest.approx(-bc.Y) and A[3, bc.YAW] == 0 and A[4, bc.YAW] == pytest.approx(bc.Y)
-    assert np.allclose(A[5:8], bc.keyframes("hype", "a")[5:8])                   # settles into hype
-    h = [e * bc.MIRROR for e in bc.hype_excursions("b")[4:7]]                    # b: hype b mirrored, then the
-    assert np.allclose(D[5:8] - bc.START, [bc.ACCENT * h[0] + bc.FLICK, h[1], h[2]])   # bar accent and the flick on top
-    assert np.allclose(bc.keyframes("drop", "c")[5:8], bc.keyframes("hype", "c")[5:8])
-    # no single beat carries more than 1.6 Y of yaw in any drop or groove c (the sweep and the look
-    # reversals are spread over two beats, so the yaw budget is not spent on one move)
-    for tier, v in (("drop", "a"), ("drop", "b"), ("drop", "c"), ("groove", "c")):
-        K = bc.keyframes(tier, v)
-        assert np.abs(np.diff(K[:, bc.YAW])).max() <= 1.6 * bc.Y + 1e-9, (tier, v)
-    # the sweep's end and the hype's first beat point the same way (or the hype starts centred)
-    for v in bc.VARIANTS:
-        K = bc.keyframes("drop", v)
-        assert K[4, bc.YAW] * K[5, bc.YAW] >= 0
-    B = bc.keyframes("build", "a")
-    assert np.allclose(B[6], bc.CROUCH)                                          # deepest on beat 6
-    assert bc.keyframes("build", "b")[6, bc.WR] > 15 and bc.keyframes("build", "c")[5, bc.WP] != bc.keyframes("build", "c")[6, bc.WP]
-    assert np.allclose(B[8], bc.START)                                           # the drop's first frame
-    # at every crouch keyframe the flip rule holds after the gain: base_pitch < -52 only with elbow <= -45
-    C = bc.apply_gain(B)
-    low = C[:, bc.BP] < -52
-    assert (C[low][:, bc.EL] <= -45 + 1e-9).all()
-    assert C[:, bc.BP].min() >= -65
+        heads = np.array([v.model.head(dict(zip(bc.JOINTS, U[i])))["position"] for i in indices])
+        if variant == "b":                            # each phrase crosses the height, leaning one way
+            # measured 2026-09-19: 0.191..0.267 m of head height per phrase across 80, 132 and 180 bpm,
+            # so 0.15 is a real floor and not a formality. The phrase is most of the lamp's 0.27 m reach.
+            for start in (1, 5):
+                assert abs(heads[start + 2, 2] - heads[start, 2]) > 0.15, (tier, variant, bpm, heads)
+            assert heads[2, 0] * heads[6, 0] < 0, (tier, variant, bpm, heads)
+        else:                                         # c crosses the crowd, left of centre to right
+            dx = heads[5, 0] - heads[3, 0]
+            assert abs(dx) > 0.15, (tier, variant, bpm, dx)
+            assert heads[3, 0] * heads[5, 0] < 0, (tier, variant, bpm, heads)
 
 
 def test_shiver_overlay_is_on_eighth_notes_and_zero_at_start():
@@ -292,43 +445,53 @@ def test_shiver_overlay_is_on_eighth_notes_and_zero_at_start():
 
 
 @pytest.mark.parametrize("bpm", [80, 132, 180])
-def test_per_joint_scales_fill_the_speed_budget(bpm):
+def test_the_tempo_budget_sizes_the_phrase_and_the_scale_has_nothing_left_to_trim(bpm):
+    """v3 wrote each pattern at a nominal size and let joint_scales shrink the commanded trajectory to
+    the speed limit, so a scale below 1.0 was the normal case and this test watched every bound joint
+    sit within 2 % of the budget. v4 rate-limits the lift and the yaw to beat_budget(bpm) while it
+    writes the phrase, so at the library's own gains NOTHING is speed-bound at any tempo the demo can
+    reach: every scale is exactly 1.0, at every bucket bpm (checked 2026-09-19 over all of BPMS).
+
+    That is the stronger statement, not the weaker one -- it says the choreography needed no trimming
+    at all. But it also means v3's 2 % check had quietly stopped executing here, so it is kept below at
+    a gain that does still bind, the same way the --gains tests reach for one."""
+    budget = bc.speed_for(bpm) * bc.SPEED_MARGIN
     for tier, variant in COMBOS:
         raw = bc.raw_trajectory(tier, bpm, variant)
         s = bc.joint_scales(raw, bpm)
         assert (0 < s).all() and (s <= 1).all()
+        assert np.allclose(s, 1.0), (tier, variant, s)
         cmd = bc.commanded(tier, bpm, variant)
         speed = bc.peak_speed(cmd)
-        assert speed.max() <= bc.SPEED_DESIGN, (tier, variant, speed)
-        # a joint that was scaled down sits within 2 % of the budget (the amplitude is as large as
-        # the speed limit allows); one step more would break it
-        pre = bc.peak_speed(bc.apply_gain(bc.scaled(raw, s)))
-        for j in range(5):
-            if s[j] < 1.0:
-                assert pre[j] >= bc.SPEED_DESIGN * bc.SPEED_MARGIN * 0.98, (tier, variant, j, pre[j])
-                s2 = s.copy()
-                s2[j] += 2 * bc.SCALE_STEP
-                assert bc.peak_speed(bc.apply_gain(bc.scaled(raw, s2)))[j] > bc.SPEED_DESIGN * bc.SPEED_MARGIN
+        # against THIS tempo's own budget (speed_for: 260 units/s at 80 bpm, 380 at 170 and above) and
+        # not the bare 380 ceiling, which at 80 bpm would be 46 % of slack. Measured over the whole
+        # bucket library the worst clip reaches 0.993 of its own budget, so this is tight.
+        assert speed.max() <= budget + 1e-9, (tier, variant, bpm, speed)
         assert np.allclose(cmd[0], bc.START) and np.allclose(cmd[-1], bc.START)
         assert not bc.envelope_violations(cmd)
-
-
-def test_v2_is_bigger_than_v1_where_the_choreography_allows():
-    # the 4-beat and 8-beat sweeps buy amplitude at the same speed budget: at 132 bpm the figure-eight
-    # sways about twice as far as the beat-by-beat sway, and hype's wide sway is wider than groove a's
-    A = {v: np.abs(bc.commanded("groove", 132, v)[:, bc.YAW]).max() for v in bc.VARIANTS}
-    assert A["b"] > 1.7 * A["a"]
-    assert A["c"] > 1.6 * A["a"]                          # the nod-led look reversals no longer bind the yaw scale
-    H = np.abs(bc.commanded("hype", 132, "a")[:, bc.YAW]).max()
-    assert H > 1.5 * A["a"]
-    # every drop swings as wide as hype at the demo tempo (the sweep no longer spends 2 Y on one beat)
-    for v in bc.VARIANTS:
-        assert np.abs(bc.commanded("drop", 132, v)[:, bc.YAW]).max() > 0.95 * H, v
-    # every joint is alive in every hype/groove clip (no joint stays at START)
-    for tier in ("groove", "hype"):
-        for v in bc.VARIANTS:
-            cmd = bc.commanded(tier, 132, v)
-            assert (np.abs(cmd - bc.START).max(axis=0) > 2.0).all(), (tier, v)
+        # nothing was trimmed, so the commanded clip IS the gained design, frame for frame
+        assert np.allclose(cmd, bc.clamp_envelope(bc.apply_gain(raw))), (tier, variant, bpm)
+    # ... and the phrase SPENDS that budget rather than leaving it on the table: the lift's slowest
+    # joint takes the whole of it on its biggest beat (ratio 1.00000 at 80, 128, 132 and 180)
+    steps = [np.abs(np.diff(bc.commanded_keyframes(t, v, bpm), axis=0)).max() for t, v in COMBOS]
+    assert max(steps) == pytest.approx(bc.beat_budget(bpm))
+    # The safety net is still a net. At a gain that does bind, the bound joint's commanded trajectory
+    # sits within 2 % of the budget and one scale step more would break it -- v3's assertion, kept
+    # alive at the one place it still fires.
+    big = bc.gain_vector({"base_yaw": 3.5})
+    bound = 0
+    for tier, variant in COMBOS:
+        raw = bc.raw_trajectory(tier, bpm, variant)
+        s = bc.joint_scales(raw, bpm, big)
+        pre = bc.peak_speed(bc.apply_gain(bc.scaled(raw, s), big))
+        for j in range(5):
+            if s[j] < 1.0:
+                bound += 1
+                assert budget * 0.98 <= pre[j] <= budget + 1e-9, (tier, variant, bpm, j, pre[j])
+                s2 = s.copy()
+                s2[j] += 2 * bc.SCALE_STEP
+                assert bc.peak_speed(bc.apply_gain(bc.scaled(raw, s2), big))[j] > budget
+    assert bound >= 6, (bpm, bound)         # measured: 7 clips bind at 80 bpm, 8 at 132 and at 180
 
 
 def test_variants_differ_in_choreography():
@@ -341,9 +504,10 @@ def test_variants_differ_in_choreography():
 
 
 def test_commanded_clamps_after_the_gain(monkeypatch):
-    # a huge sway: raw 60 -> x1.8 = 108 -> clamped to the +-94 box after the gain, not before
-    monkeypatch.setattr(bc, "Y", 60.0)
-    raw = bc.raw_trajectory("groove", 80, "a")
+    # a ceiling past the box: commanded 120 -> raw 120/1.8 -> x1.8 again -> clamped to the +-98 box
+    # AFTER the gain, not before
+    monkeypatch.setattr(bc, "YAW_MAX", 120.0)
+    raw = bc.raw_trajectory("hype", 80, "a")
     ones = np.ones(5)
     U = bc.clamp_envelope(bc.apply_gain(bc.scaled(raw, ones)))
     assert np.abs(U[:, bc.YAW]).max() == pytest.approx(bc.JOINT_MAX)
@@ -427,7 +591,8 @@ def test_generate_128_all_tiers_and_variants(tmp_path):
         assert np.allclose(U[0], bc.START) and np.allclose(U[-1], bc.START)
         v = validator.validate(U)
         assert v["ok"], v["reasons"]
-        assert v["head_y_min"] >= bc.HEAD_Y_MIN and v["zmp_y_min"] >= bc.ZMP_Y_MIN
+        assert v["head_y_min"] >= bc.HEAD_Y_MIN and bc.ZMP_Y_MIN <= v["zmp_y_min"]
+        assert v["zmp_y_max"] <= bc.ZMP_Y_MAX
         assert v["peak_speed"].max() <= bc.SPEED_LIMIT
         assert not bc.envelope_violations(U)
         assert all(not validator.model.problems(dict(zip(bc.JOINTS, u))) for u in U[::7])
@@ -438,17 +603,18 @@ def test_generate_128_all_tiers_and_variants(tmp_path):
     manifest = json.loads(bc.write_manifest(tmp_path, entries).read_text())
     assert manifest["version"] == 2 and manifest["fps"] == 30 and manifest["hold_s"] == 0.6
     assert manifest["variants"] == ["a", "b", "c"] and manifest["tiers"] == ["groove", "hype", "drop", "build"]
-    assert manifest["gain"] == bc.GAINS and manifest["speed_limit"] == 140.0
+    assert manifest["gain"] == bc.GAINS and manifest["speed_limit"] == bc.SPEED_LIMIT == 380.0
     assert len(manifest["clips"]) == 16
     assert manifest["aliases"] == {f"beat_{t}_128": f"beat_{t}_128_a" for t in bc.TIERS}
     c = next(c for c in manifest["clips"] if c["name"] == "beat_groove_128_b")
     assert {"name", "base", "variant", "bpm", "tier", "frames", "md5", "seconds", "first", "last", "range",
-            "scale", "amplitude", "accent_beats", "flick_beat", "peak_speed"} <= set(c)
+            "scale", "amplitude", "accent_beats", "peak_speed", "head_y_min", "zmp_y_min", "zmp_y_max"} <= set(c)
+    assert bc.ZMP_Y_MIN <= c["zmp_y_min"] and c["zmp_y_max"] <= bc.ZMP_Y_MAX
     assert c["base"] == "beat_groove_128" and c["variant"] == "b" and c["accent_beats"] == [1, 5]
     assert c["first"] == c["last"] == manifest["start_pose"]
     b = next(c for c in manifest["clips"] if c["name"] == "beat_build_128_a")
     assert b["crouch"]["base_pitch"] < -58 and b["crouch"]["elbow_pitch"] < -50 and "START" in b["note"]
-    assert b["flick_beat"] is None and b["accent_beats"] == [] and c["flick_beat"] == 5
+    assert b["accent_beats"] == []
     assert b["gain"] == manifest["gain"] == bc.GAINS
     assert b["last"] == manifest["start_pose"] == next(c for c in manifest["clips"] if c["name"] == "beat_drop_128_a")["first"]
     # the out dir holds exactly the manifest's clips (plus the manifest)
@@ -468,7 +634,7 @@ def test_generate_refuses_failing_clip_and_removes_stale_csv(tmp_path, monkeypat
     assert len(failures) == 1 and failures[0].startswith("beat_groove_128_a:") and "peak speed" in failures[0]
     assert [p.name for p in tmp_path.iterdir()] == []
     # a clip that does not start at START is refused by the validator itself
-    monkeypatch.setattr(bc, "SPEED_LIMIT", 140.0)
+    monkeypatch.undo()                                   # ... and back to the real speed limit
     U = bc.commanded("groove", 128, "a")
     U2 = U.copy()
     U2[0, bc.YAW] = 3.0
@@ -560,14 +726,22 @@ def test_bold_is_applied_before_the_speed_budget():
     # if that fits the budget, gets scale 1.0 -- so its commanded excursion is min(m * raw, budget), never more
     bpm = 127.3
     raw = bc.raw_trajectory("groove", bpm, "a")
-    s1 = bc.joint_scales(raw, bpm)
-    s0 = bc.joint_scales(bc.bold_trajectory("groove", bpm, "a", 0.0), bpm)
+    assert (bc.joint_scales(bc.bold_trajectory("groove", bpm, "a", 0.0), bpm)
+            >= bc.joint_scales(raw, bpm) - 1e-12).all()
+    # a joint the budget actually binds: at the library's gains nothing is speed-bound any more (the
+    # yaw ceiling and the lift envelope bind first), so this is read at a gain that does bind
+    big = bc.gain_vector({"base_yaw": 3.5})
+    s1 = bc.joint_scales(bc.bold_trajectory("hype", bpm, "a", 1.0), bpm, big)
+    s0 = bc.joint_scales(bc.bold_trajectory("hype", bpm, "a", 0.0), bpm, big)
     assert s1[bc.YAW] < 1.0 and s0[bc.YAW] > s1[bc.YAW]
     assert (s0 >= s1 - 1e-12).all()
     for bold in (0.0, 0.6, 1.0):
         rows, meta = bc.make_clip("groove", "a", bpm, bold)
         U = np.array(rows)
-        assert bc.peak_speed(U).max() <= bc.SPEED_DESIGN and not bc.envelope_violations(U)
+        # this tempo's own budget, not the 380 ceiling: measured 2026-09-19 the worst clip over every
+        # tier, variant, tempo and bold reaches 0.992 of speed_for(bpm) * SPEED_MARGIN
+        assert bc.peak_speed(U).max() <= bc.speed_for(bpm) * bc.SPEED_MARGIN + 1e-9
+        assert not bc.envelope_violations(U)
         assert np.allclose(U[0], bc.START) and np.allclose(U[-1], bc.START)
         assert meta["ok"] is None and meta["frames"] == len(rows) == round(bc.clip_seconds(bpm) * bc.FPS)
         assert meta["multiplier"] == pytest.approx(bc.bold_multiplier(bold))
@@ -588,7 +762,8 @@ def test_make_clip_at_exact_bpm_passes_validation_and_grows_with_bold():
             assert meta["ok"] is True and meta["reasons"] == [], (tier, variant, bold, meta["reasons"])
             assert isinstance(rows, list) and len(rows[0]) == 5 and isinstance(rows[0], tuple)
             ok, report = bc.validate_rows(rows, v)
-            assert ok and report["ok"] and report["frames"] == len(rows) and report["peak_speed"]["base_yaw"] <= 140
+            assert ok and report["ok"] and report["frames"] == len(rows)
+            assert report["peak_speed"]["base_yaw"] <= bc.SPEED_LIMIT
             exc = _excursion(rows)
             if prev is not None:
                 # every joint's excursion is monotone in bold; a speed-bound joint sits at the budget for
@@ -612,7 +787,11 @@ def test_make_clip_at_exact_bpm_passes_validation_and_grows_with_bold():
             if free0[j] and free1[j] and m1["scale"][bc.JOINTS[j]] == 1.0 and hi[j] > 1.0:
                 assert lo[j] / hi[j] == pytest.approx(0.35, abs=0.01), (tier, variant, bc.JOINTS[j])
                 checked += 1
-        assert checked >= 1, (tier, variant)
+        # v3 could only ever prove this on one joint, because the speed budget bound the rest. v4 trims
+        # nothing at this tempo, so the slider's 0.35 is exact on nearly every moving joint: measured
+        # 2026-09-19, 5 joints for groove, 4 for hype/drop and build b/c, 3 for build a (whose wrist
+        # roll never leaves START). A drop back to 1 would mean the budget had started binding again.
+        assert checked >= 3, (tier, variant, checked)
     # a bad row is caught, and lists of tuples are accepted like arrays
     rows, _ = bc.make_clip("groove", "a", bpm, 0.6)
     bad = list(rows); bad[40] = (0.0, -70.0, -22.0, 0.0, 30.0)
@@ -639,8 +818,8 @@ def test_make_clip_bold_1_at_a_bucket_is_the_batch_file_byte_for_byte(tmp_path):
     if not manifest.exists():
         pytest.skip(f"no generated library at {bc.DEFAULT_OUT}")
     m = json.loads(manifest.read_text())
-    # every real clip, hype/drop b/c (re-choreographed in #31) included: the library at DEFAULT_OUT is
-    # generated by this generator, so any silent re-choreography shows up here as an md5 mismatch
+    # every real clip: the library at DEFAULT_OUT is generated by this generator, so any silent
+    # re-choreography shows up here as an md5 mismatch. A DELIBERATE one means regenerating it.
     real = [c for c in m["clips"] if not c.get("alias_of")]
     assert len(real) >= 12
     assert any(c["tier"] == "hype" and c["variant"] in ("b", "c") for c in real)
@@ -713,8 +892,17 @@ def test_one_cli_writes_a_validated_clip_at_the_exact_bpm(tmp_path, capsys):
 
 
 # ----------------------------------------------------------------------------- live path: facing
-FACING_OK = 20.0        # measured 2026-09-19: every tier/variant/tempo validates out to +-25 units, the
-                        # first failure being drop c at 80 bpm at +30 (head_y 0.017 m vs the 0.020 m floor)
+FACING_OK = 20.0        # Measured 2026-09-19 against this calibration, in 1-unit steps over 80, 128,
+                        # 160 and 180 bpm. Two different things stop a bigger turn. The JOINT BOX is
+                        # what binds the loud tiers: hype and drop swing to YAW_MAX 68, so the +-98 box
+                        # leaves them exactly +-30 (+-33.9 at 180, where the tempo budget trims the
+                        # swing), while groove keeps +-53 and build +-77 or more. The MODEL is what
+                        # binds at fast tempi: the smallest turn refused anywhere in the demo band is
+                        # +-25 on hype c and drop c at 180 bpm, and the reason is ALWAYS "zmp_y max"
+                        # -- v4 leans out over the table (REACH) to buy sideways travel, so a turn now
+                        # spends forward tipping margin, where v3's turns spent head clearance. Nothing
+                        # at 80 or 128 bpm is refused at any turn the box will give. 20 leaves 5 units
+                        # of margin on the earliest refusal, which is what makes it the safe constant.
 
 
 def _yaw_room(tier, bpm, variant, bold=1.0):
@@ -835,13 +1023,13 @@ def test_a_turned_clip_still_passes_the_validator(bpm):
 
 @pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
 def test_a_turn_the_model_refuses_is_reported_not_shipped():
-    # the joint box is not the only limit: turning the arm swings the head sideways over the table, and
-    # past the measured +-25 units some clips lose the base clearance. make_clip must say so, so the live
-    # path falls back to the library rather than playing it (measured 2026-09-19 on this calibration).
+    # the joint box is not the only limit: turning the arm swings its reach round toward the front, and
+    # past the measured +-24 units some clips lose a tipping margin. make_clip must say so, so the live
+    # path falls back to the library rather than playing it (measured on this calibration).
     v = bc.Validator(ROBOTDESC)
-    rows, meta = bc.make_clip("drop", "c", 80, 1.0, model=v, facing=500.0)
-    assert meta["facing"] > 25.0 and meta["ok"] is False
-    assert any("head_y" in r for r in meta["reasons"]), meta["reasons"]
+    rows, meta = bc.make_clip("hype", "c", 180, 1.0, model=v, facing=500.0)
+    assert meta["facing"] > 24.0 and meta["ok"] is False
+    assert any("zmp_y" in r for r in meta["reasons"]), meta["reasons"]
     assert not bc.envelope_violations(np.array(rows))            # the joint box alone would have let it through
 
 
@@ -861,13 +1049,20 @@ def test_facing_cli_renders_a_turned_clip_beside_the_home_facing_one(tmp_path, c
     assert bc.one_name("groove", "a", 128.0, 1.0) == "live_groove_a_128_1p00"
     assert bc.one_name("groove", "a", 128.0, 1.0, 20.0) == "live_groove_a_128_1p00_f20"
     assert bc.one_name("groove", "a", 128.0, 1.0, -12.5) == "live_groove_a_128_1p00_f-12p5"
-    # a turn the box cannot give is reduced, and the run says so rather than pretending it turned that far.
-    # groove a at 128 has +-54 of box room, but the model refuses the head clearance out there, so the run
+    # a turn the box cannot give is reduced, and the run says so rather than pretending it turned that
+    # far. groove a at 128 has +-53 of box room, and the model still allows it out there, so that one
+    # passes; hype c at 180 has +-34 of room and the model refuses the forward ZMP past +24, so that run
     # fails and writes nothing: the box clamp is a convenience, the validator is the verdict.
-    assert bc.main(common + ["--facing", "500"]) == 1
+    assert bc.main(common + ["--facing", "500"]) == 0
     said = capsys.readouterr().out
-    assert "reduced to +54" in said and "FAIL" in said and "head_y" in said
-    assert sorted(p.name for p in out.iterdir()) == ["live_groove_a_128_1p00.csv", "live_groove_a_128_1p00_f20.csv"]
+    assert "reduced to +53" in said and "PASS" in said
+    written = sorted(q.name for q in out.iterdir())
+    assert len(written) == 3 and written[2].startswith("live_groove_a_128_1p00_f53p")
+    hard = ["--one", "hype", "c", "180", "1.00", "--out", str(out), "--robotdesc", str(ROBOTDESC), "--facing", "500"]
+    assert bc.main(hard) == 1
+    said = capsys.readouterr().out
+    assert "reduced to +33" in said and "FAIL" in said and "zmp_y" in said
+    assert sorted(q.name for q in out.iterdir()) == written       # the refused turn wrote nothing
     # --facing is a --one option: the batch library is the home-facing one
     assert bc.main(["--out", str(out), "--tier", "groove", "--bpm", "128", "--facing", "20",
                     "--robotdesc", str(ROBOTDESC)]) == 2

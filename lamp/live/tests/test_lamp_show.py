@@ -101,6 +101,14 @@ def test_chroma_weights_and_bins_are_consistent():
 
 
 # ---- colour model and clamps ----------------------------------------------------------------------
+# What one unit of loudness is worth in the panel's value, from ColourModel.step:
+#     base = 0.04 + 0.18 * loud + 0.10 * bass + 0.15 * excite + 0.35 * build^2
+# It was 0.30 (over a 0.06 floor) until v4.4 dropped the whole base so that the floor BETWEEN hits is
+# low and the hits read as hits: at full tilt the base now sits near 0.35 rather than 0.55, and a
+# flash out of a dim panel is the whole effect where the same flash onto a bright one barely shows.
+LOUD_WEIGHT = 0.18
+
+
 def frames(model, now, n, audio=None):
     out = None
     for i in range(n):
@@ -124,7 +132,7 @@ def test_value_is_monotone_in_loudness_and_excitement():
 
 
 def test_loudness_is_smoothed_so_a_kick_over_silence_is_not_a_flash():
-    """A 10 ms RMS jumps 0 -> 1 between two packets; the value must not step by the full 0.30 weight
+    """A 10 ms RMS jumps 0 -> 1 between two packets; the value must not step by the full LOUD_WEIGHT
     in one frame (that is a flash the limiter never saw). It still gets there within ~10 frames."""
     m = L.ColourModel(); m.music = True
     _, _, v0, _ = frames(m, 0.0, 40, audio=(3, 0.8, 0.0, 0.9))   # 40 frames: the note articulation has faded
@@ -134,11 +142,12 @@ def test_loudness_is_smoothed_so_a_kick_over_silence_is_not_a_flash():
         m.set_audio((3, 0.8, 1.0, 0.9) if i == 0 else m.audio, 1.0 + i / 50)
         _, _, v, _ = m.step(1.0 + i / 50)
         steps.append(v - prev); prev = v
-    assert max(steps) < 0.2 and max(steps) > 0.05
-    assert prev - v0 > 0.25                                   # and the loudness does arrive
+    # the biggest step is exactly one LOUD_RISE of the weight: 0.063, not the 0.18 the loudness is worth
+    assert max(steps) == pytest.approx(LOUD_WEIGHT * L.ColourModel.LOUD_RISE, abs=2e-3)
+    assert prev - v0 > 0.9 * LOUD_WEIGHT                      # and the loudness does arrive (0.179 of 0.18)
     m.set_audio((3, 0.8, 0.0, 0.9), 2.0)
     _, _, v_down, _ = m.step(2.0)
-    assert prev - v_down < 0.3 * L.ColourModel.LOUD_RISE + 1e-9   # the fall is slower than the rise
+    assert prev - v_down < LOUD_WEIGHT * L.ColourModel.LOUD_RISE + 1e-9   # the fall is slower than the rise
 
 
 def test_hue_follows_note_wheel_with_persistence_and_articulation():
@@ -231,7 +240,12 @@ def test_safe_output_clamps_value_and_brightness_everywhere():
         h, s, v, b = m.step(i / 50)
         rgb, bb = L.safe_output(h, s, v, b)
         assert max(rgb) <= 255 and bb <= L.PEAK_BRIGHTNESS and 0.0 <= L.clamp(v) <= 1.0
-    assert L.PEAK_BRIGHTNESS <= 0.75
+    # The two ceilings, MEASURED on the 5 V rail with --burst-test: HW_BRIGHTNESS 0.7 is ~2.35 A of a
+    # 3.0 A supply (it was 0.6 / ~2.0 A at 5.12-5.14 V, raised for a brighter room), and the DROP
+    # burst's PEAK_BRIGHTNESS 0.85 (was 0.75) implies ~2.85 A -- which PEAK_MAX_S keeps under 400 ms,
+    # so it is never sustained and the Pi and the servos keep their share of the rating.
+    assert (L.HW_BRIGHTNESS, L.PEAK_BRIGHTNESS, L.PEAK_MAX_S) == (0.7, 0.85, 0.4)
+    assert L.HW_BRIGHTNESS < L.PEAK_BRIGHTNESS <= 0.85
 
 
 def test_flash_never_saturated_and_flash_attack_matches_v31():
@@ -266,11 +280,22 @@ def test_refused_flash_becomes_soft_pulse_and_small_pulses_bypass():
 
 
 def test_flash_targets():
-    assert L.flash_target_for("KICK", 1.0, 0.0) == pytest.approx(0.9)
-    assert L.flash_target_for("KICK", 1.0, 0.9) == pytest.approx(1.0)
-    assert L.flash_target_for("SNARE", 0.5, 0.0) == pytest.approx(0.5)
+    """v4.4 raised both hit floors as the base value came down (see LOUD_WEIGHT): a kick at full
+    intensity now reaches the top of the envelope instead of 0.9. KICK was 0.45 + 0.45 * intensity,
+    SNARE was a bare 0.35 + 0.30 * intensity."""
+    assert L.flash_target_for("KICK", 1.0, 0.0) == pytest.approx(1.0)       # was 0.9
+    assert L.flash_target_for("KICK", 0.0, 0.0) == pytest.approx(0.62)      # even the softest kick is seen
+    assert L.flash_target_for("KICK", 0.5, 0.0) == pytest.approx(0.81)
+    assert L.flash_target_for("KICK", 0.5, 0.9) == pytest.approx(0.91)      # an excited section: +0.1
+    assert L.flash_target_for("KICK", 1.0, 0.9) == pytest.approx(1.0)       # ... and never past full
+    assert L.flash_target_for("SNARE", 0.5, 0.0) == pytest.approx(0.75)     # was 0.5
+    assert L.flash_target_for("SNARE", 1.0, 0.0) == pytest.approx(1.0)
     assert L.flash_target_for("DROP", 0.0, 0.0) == 1.0
     assert L.flash_target_for("BUILD", 1.0, 1.0) == 0.0
+    # louder hits never flash less, and nothing overflows the envelope the limiter works in
+    for kind in ("KICK", "SNARE"):
+        vals = [L.flash_target_for(kind, i / 10, 0.0) for i in range(11)]
+        assert vals == sorted(vals) and vals[0] >= 0.5 and vals[-1] == 1.0
     assert L.excitement(8, 1.0) == 1.0 and L.excitement(0, 0.0) == 0.0 and L.excitement(4, 0.5) == pytest.approx(0.5)
 
 
@@ -385,13 +410,40 @@ def test_hello_contents_for_the_new_conductor():
 
 
 # ---- ClipScheduler --------------------------------------------------------------------------------
+class Steady(random.Random):
+    """The scheduler's dice, held still. v4.4 made two of its choices random -- which of groove/hype
+    it plays (SURPRISE_TIER) and which variant letter comes next -- and both draw on ClipScheduler.rng.
+    random() never falls under SURPRISE_TIER here, so the tier is the one the loudness asked for, and
+    choice() takes the first of what it is offered, which is still "never the letter played last" and
+    so reads a, b, a, b.
+
+    The randomness itself is not weakened away: it has its own tests (the surprise rate, the
+    never-twice-in-a-row rule, that every variant comes up, that it is not the old rotation). The
+    tests that use this one are about WHEN a clip is posted and at what tier, and a moving answer
+    would make them unreadable and flaky rather than rigorous."""
+    def random(self):
+        return 1.0
+
+    def choice(self, seq):
+        return seq[0]
+
+
+def steady(s):
+    """Pin `s`'s dice (see Steady) and hand the scheduler back, so a test can write steady(...)."""
+    s.rng = Steady()
+    return s
+
+
 def test_post_instant_arithmetic():
     beat = 50_000_000_000
     assert L.ClipScheduler.post_instant(beat, 350_000_000) == beat - 350_000_000 - L.HOLD_NS
     assert L.ClipScheduler.post_instant(beat, 300_000_000, 600_000_000) == beat - 900_000_000
     assert L.ClipScheduler.bucket(127.0) == 128 and L.ClipScheduler.bucket(79) == 80 and L.ClipScheduler.bucket(300) == 180
-    assert L.ClipScheduler.tier_for(0.3, False) == "groove" and L.ClipScheduler.tier_for(0.7, False) == "hype"
-    assert L.ClipScheduler.tier_for(0.1, True) == "drop"
+    # tier_for is an INSTANCE method in v4.4 (it draws on the scheduler's own rng for SURPRISE_TIER),
+    # so it needs a scheduler; with the dice held still it is the plain loudness rule it always was.
+    s = steady(L.ClipScheduler(post=lambda n: {}, status=lambda: {}))
+    assert s.tier_for(0.3, False) == "groove" and s.tier_for(0.7, False) == "hype"
+    assert s.tier_for(0.1, True) == "drop"
     assert L.ClipScheduler.choose_clip("hype", 127.0) == "beat_hype_128"
     lib = {"beat_groove_120", "beat_groove_124", "beat_hype_124", "home"}
     assert L.ClipScheduler.choose_clip("hype", 127.0, lib) == "beat_hype_124"
@@ -439,9 +491,9 @@ def test_scheduler_posts_once_per_boundary_without_network():
     tr = L.BeatTracker()
     ks = kicks(120, 16)
     for k in ks: tr.feed(k)
-    s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
-                        status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                        start_latency_ns=350_000_000, log=lambda *_: None)
+    s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                               status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
+                               start_latency_ns=350_000_000, log=lambda *_: None))
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
     s.tick(post_at - 1_000, True, tr, 0.3)
@@ -618,7 +670,7 @@ def test_leaving_dance_with_a_post_in_flight_still_homes_exactly_once(monkeypatc
     import time as _t
     posts, gate = [], _th.Event()
     show = bare_show(monkeypatch, posts, mode="light")
-    s = show.scheduler
+    s = steady(show.scheduler)                                 # the tier must not surprise: this is about homing
     def slow_post(name):
         posts.append(name)
         if name != "home": gate.wait(1.0)                      # the clip POST is still on the wire
@@ -681,36 +733,56 @@ def test_base_of_and_manifest_loading():
     assert s.load_manifest({}) == 0 and s.load_manifest({"clips": "junk"}) == 0
 
 
-def test_variants_rotate_a_b_c_per_tier_and_never_repeat():
+def test_variants_are_drawn_at_random_per_tier_and_never_repeat():
+    """v4.4: pick() no longer walks a -> b -> c. The rotation brought the same eight bars back in the
+    same order every time, which is what the operator meant by robotic; the letter is DRAWN from the
+    ones that tier did not just play. What is still promised, and is what this pins: never the same
+    phrase twice in a row, every variant does come up, no variant is starved, and each tier keeps its
+    own last letter."""
     s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, manifest=manifest_v2())
-    picks = [s.pick("groove", 121.0) for _ in range(7)]
-    assert picks == ["beat_groove_120_a", "beat_groove_120_b", "beat_groove_120_c",
-                     "beat_groove_120_a", "beat_groove_120_b", "beat_groove_120_c", "beat_groove_120_a"]
-    # another tier rotates on its own; the groove rotation is where it was
-    assert s.pick("hype", 121.0) == "beat_hype_120_a" and s.pick("hype", 121.0) == "beat_hype_120_b"
-    assert s.pick("groove", 121.0) == "beat_groove_120_b"
-    # the bpm bucket changing does not restart the rotation
-    assert s.pick("groove", 123.5) == "beat_groove_124_c" and s.pick("groove", 121.0) == "beat_groove_120_a"
-    # never the same variant twice in a row, whatever the sequence of tiers and buckets
-    seq = [s.pick(t, b) for t, b in zip("groove hype groove drop hype drop groove".split(), (120, 124, 124, 120, 120, 124, 120))]
+    s.rng = random.Random(4242)                                 # seeded: the invariants below, not a coin toss
+    picks = [s.pick("groove", 121.0) for _ in range(300)]
+    letters = [n.rsplit("_", 1)[1] for n in picks]
+    assert {n.rsplit("_", 1)[0] for n in picks} == {"beat_groove_120"}   # one tier, one bucket throughout
+    assert all(a != b for a, b in zip(letters, letters[1:]))            # never the same phrase twice running
+    assert set(letters) == {"a", "b", "c"}                              # and all three do get played
+    for l in "abc":
+        assert 60 < letters.count(l) < 140, (l, letters.count(l))       # ~100 of 300 each: none is starved
+    assert letters[:9] != list("abcabcabc")                             # it is not the old rotation in disguise
+    # the bpm bucket changing does not reset the tier's memory of what it just played
+    s.last_variant.clear()
+    first = s.pick("groove", 121.0).rsplit("_", 1)[1]
+    assert s.pick("groove", 123.5).rsplit("_", 1)[1] != first
+    # each tier carries its own last letter, so one tier's draw never disturbs another's
+    s.last_variant.clear()
+    tiers = "groove hype groove drop hype drop groove".split() * 20
+    bpms = (120, 124, 124, 120, 120, 124, 120) * 20
     by_tier = {}
-    for n in seq:
-        t, v = n.split("_")[1], n.rsplit("_", 1)[1]
-        assert by_tier.get(t) != v, seq
+    for t, n in ((t, s.pick(t, b)) for t, b in zip(tiers, bpms)):
+        v = n.rsplit("_", 1)[1]
+        assert by_tier.get(t) != v, (t, n, by_tier)
         by_tier[t] = v
 
 
 def test_variants_respect_the_runtime_listing_and_fall_back_to_aliases():
-    # only a and c of groove 120 made it onto the lamp: rotate between those two
+    # Only a and c of groove 120 made it onto the lamp: the draw is between those two, and with two
+    # candidates "never the one played last" leaves exactly one -- so after the first pick it
+    # alternates. (It used to alternate from `a`; which letter opens is now the coin toss.)
     lib = {"beat_groove_120_a", "beat_groove_120_c", "beat_groove_120", "beat_hype_120", "home"}
     s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, manifest=manifest_v2(), available=lib)
-    assert [s.pick("groove", 120) for _ in range(4)] == ["beat_groove_120_a", "beat_groove_120_c"] * 2
-    # hype has only its alias on the lamp: the alias (v1 name) is what gets posted
+    s.rng = random.Random(7)
+    got = [s.pick("groove", 120) for _ in range(6)]
+    assert set(got) == {"beat_groove_120_a", "beat_groove_120_c"}       # never the b that is not on the lamp
+    assert all(a != b for a, b in zip(got, got[1:]))
+    # hype has only its alias on the lamp: the alias (v1 name) is what gets posted, every time
     assert s.pick("hype", 120) == "beat_hype_120" and s.pick("hype", 120) == "beat_hype_120"
-    # no manifest at all, variants on the lamp: rotate from the listing
+    # no manifest at all, variants on the lamp: drawn from the listing, under the same rule
     s2 = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {},
                          available={"beat_groove_120_a", "beat_groove_120_b", "beat_groove_120"})
-    assert [s2.pick("groove", 120) for _ in range(3)] == ["beat_groove_120_a", "beat_groove_120_b", "beat_groove_120_a"]
+    s2.rng = random.Random(7)
+    got2 = [s2.pick("groove", 120) for _ in range(6)]
+    assert set(got2) == {"beat_groove_120_a", "beat_groove_120_b"}
+    assert all(a != b for a, b in zip(got2, got2[1:]))
     # v1 library, no manifest: exactly v4's behaviour
     s3 = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, available={"beat_groove_120", "beat_hype_124"})
     assert s3.pick("groove", 120) == "beat_groove_120" and s3.pick("drop", 121) == "beat_hype_124"
@@ -720,10 +792,10 @@ def test_variants_respect_the_runtime_listing_and_fall_back_to_aliases():
 
 
 def test_build_tier_selection():
-    assert L.ClipScheduler.tier_for(0.3, False, True) == "build" and L.ClipScheduler.tier_for(0.9, False, True) == "build"
-    assert L.ClipScheduler.tier_for(0.3, True, True) == "drop"                  # the drop wins
-    assert L.ClipScheduler.tier_for(0.3, False) == "groove" and L.ClipScheduler.tier_for(0.7, False, False) == "hype"
-    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, manifest=manifest_v2())
+    s = steady(L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, manifest=manifest_v2()))
+    assert s.tier_for(0.3, False, True) == "build" and s.tier_for(0.9, False, True) == "build"
+    assert s.tier_for(0.3, True, True) == "drop"                                # the drop wins
+    assert s.tier_for(0.3, False) == "groove" and s.tier_for(0.7, False, False) == "hype"
     s.note_build(1_000_000_000, 0)
     assert s.build_until_ns is None                                             # durMs unknown: no build
     s.note_build(1_000_000_000, 3200)
@@ -732,15 +804,35 @@ def test_build_tier_selection():
     assert s.build_until_ns is None
 
 
+def test_the_tier_surprises_a_quarter_of_the_time_and_never_onto_drop_or_build():
+    """v4.4: the loudness still picks groove or hype, but SURPRISE_TIER of the time the scheduler
+    takes the other one anyway. Without it a quiet song is one unbroken groove, which reads as a
+    machine repeating itself rather than as dancing. A DROP and a BUILD mean something and are never
+    surprised away, whatever the dice say."""
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {})
+    s.rng = random.Random(20260920)                              # seeded: a rate, not a coin toss
+    quiet = [s.tier_for(0.3, False) for _ in range(4000)]
+    loud = [s.tier_for(0.9, False) for _ in range(4000)]
+    assert set(quiet) == set(loud) == {"groove", "hype"}          # both tiers come up either way round
+    assert quiet.count("hype") / len(quiet) == pytest.approx(L.SURPRISE_TIER, abs=0.02)   # 0.257 here
+    assert loud.count("groove") / len(loud) == pytest.approx(L.SURPRISE_TIER, abs=0.02)   # 0.239 here
+    assert L.SURPRISE_TIER == 0.25 and quiet.count("groove") > quiet.count("hype")
+    # the events always win, however the dice fall
+    for excite in (0.0, 0.3, 0.55, 0.9, 1.0):
+        for _ in range(100):
+            assert s.tier_for(excite, True) == "drop" and s.tier_for(excite, True, True) == "drop"
+            assert s.tier_for(excite, False, True) == "build"
+
+
 def test_scheduler_posts_build_during_a_build_then_drop_then_rotates(monkeypatch):
     import time as _t
     posts = []
     tr = L.BeatTracker()
     ks = kicks(120, 16)
     for k in ks: tr.feed(k)
-    s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
-                        status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)))
+    s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                               status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
+                               start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,))))
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
     s.note_build(now, 6000)                                    # a 6 s BUILD spans the next clip
@@ -758,7 +850,8 @@ def test_scheduler_posts_build_during_a_build_then_drop_then_rotates(monkeypatch
     s.tick(next_post() + 2_000_000, True, tr, 0.3)
     _t.sleep(0.05)
     assert posts[-1] == "beat_drop_120_a" and s.drop_pending is False and s.build_until_ns is None
-    # then the tier by excitement, rotating: groove a, then groove b
+    # then the tier by excitement, and a second phrase that is not the first (Steady takes the first
+    # candidate the never-the-last rule leaves, so the letters read a then b)
     for _ in range(2):
         t3 = next_post()
         s.tick(t3 + 2_000_000, True, tr, 0.3)
@@ -766,9 +859,9 @@ def test_scheduler_posts_build_during_a_build_then_drop_then_rotates(monkeypatch
     assert posts[-2:] == ["beat_groove_120_a", "beat_groove_120_b"]
     # an expired build is ignored, and a build with no build clips in the library falls back by excite
     s.note_build(t3 - 10_000_000_000, 1000)
-    s2 = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {},
-                         start_latency_ns=350_000_000, log=lambda *_: None,
-                         manifest=manifest_v2(tiers=("groove", "hype"), bpms=(120,)))
+    s2 = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {},
+                                start_latency_ns=350_000_000, log=lambda *_: None,
+                                manifest=manifest_v2(tiers=("groove", "hype"), bpms=(120,))))
     s2.note_build(now, 6000)
     s2.tick(post_at + 2_000_000, True, tr, 0.8)
     _t.sleep(0.05)
@@ -785,8 +878,9 @@ def test_build_needs_to_outlast_half_the_clip(monkeypatch):
     ks = kicks(120, 16)
     for k in ks: tr.feed(k)
     def fresh():
-        return L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {},
-                               start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)))
+        return steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {},
+                                      start_latency_ns=350_000_000, log=lambda *_: None,
+                                      manifest=manifest_v2(bpms=(120,))))
     now = ks[-1]
     s = fresh()
     post_at, beat, period = s.plan(now, tr)
@@ -885,15 +979,100 @@ def test_show_bold_from_cli_and_control(monkeypatch, capsys):
     assert not s.set_bold(0.851)                                          # two decimals, as the conductor sends it
 
 
-def test_next_letter_matches_pick_rotation():
+def test_the_moves_grow_with_the_bass_under_the_operators_ceiling():
+    """v4.4: the clip is generated at gen_bold(), not at the slider. The operator's "Bolder moves"
+    stays the CEILING and the bass rides underneath it -- a quiet passage plays at BASS_FLOOR of the
+    slider, a heavy one at all of it -- so the arm swells with the music instead of dancing one size
+    all night. Nothing here may ever exceed the slider: that is what the operator set.
+
+    The quantisation is not cosmetic and is the reason set_bass reports whether it changed. Every
+    distinct boldness is a fresh ~100 ms clip build on the Pi 5 plus a CSV write and a listing poll
+    (see LiveClips), so a bass that drifted continuously would rebuild the prepared clip several
+    times a second and never post one. BASS_STEP 0.15 leaves eight levels, which is plenty to see."""
+    assert (L.BASS_FLOOR, L.BASS_STEP) == (0.55, 0.15)
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {})
+    assert s.bass == 1.0 and s.bold == L.DEFAULT_BOLD == 0.6
+    assert s.gen_bold() == 0.6                               # full bass: the slider means what it says
+    # the whole 0..1 range collapses onto eight levels, and nothing off-grid survives
+    levels = []
+    for i in range(101):
+        s.set_bass(i / 100)
+        levels.append(s.bass)
+    assert sorted(set(levels)) == [0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0]
+    assert levels == sorted(levels)                          # monotone: more bass never means less
+    # ... and it only reports a change when the LEVEL changed, not when the reading did
+    s.set_bass(0.5)
+    assert s.bass == 0.45 and not s.set_bass(0.5) and not s.set_bass(0.47)
+    assert s.set_bass(0.9) and s.bass == 0.9
+    # gen_bold spans BASS_FLOOR..1.0 of the slider, and is never above it
+    s.bold = 1.0
+    got = {}
+    for level in (0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0):
+        s.set_bass(level)
+        got[level] = s.gen_bold()
+    assert got[0.0] == pytest.approx(L.BASS_FLOOR) and got[1.0] == pytest.approx(1.0)
+    assert list(got.values()) == sorted(got.values())
+    assert all(v <= s.bold + 1e-9 for v in got.values())
+    for bold in (0.0, 0.3, 0.6, 0.85, 1.0):
+        s.bold = bold
+        for level in (0.0, 0.45, 1.0):
+            s.set_bass(level)
+            assert s.gen_bold() <= bold + 1e-9, (bold, level)     # the slider is the ceiling, always
+        s.set_bass(0.0)
+        assert s.gen_bold() == pytest.approx(round(bold * L.BASS_FLOOR, 2), abs=0.011)
+        s.set_bass(1.0)
+        assert s.gen_bold() == pytest.approx(bold, abs=0.011)
+    s.bold = 0.0
+    s.set_bass(1.0)
+    assert s.gen_bold() == 0.0                               # the slider at zero still means still
+
+
+def test_the_show_feeds_the_panels_own_bass_to_the_dance_and_silence_floors_it(monkeypatch):
+    """One reading drives both: the panel already smooths the bass for its floor colour, so the light
+    and the arm swell together rather than disagreeing. In silence the dance takes 0.0 -- not the
+    bass envelope's own reading, which sits at 1.0 with no audio (see the music gate) and would have
+    the lamp dancing its biggest while nothing is playing."""
+    show = bare_show(monkeypatch, [], mode="dance")
+    s = show.scheduler
+    show.hits = [999.8, 999.9, 1000.0]                       # three kicks in the last 3 s: tick() calls it music
+    show.panel.model.bass = 0.9
+    show.tick(1000.0)
+    assert show.music is True
+    # the panel's own smoothed reading reaches the dance (the panel model goes on decaying it after
+    # this, which is why the assertion is on what the scheduler took and not on the panel's value now)
+    assert s.bass == 0.9
+    show.panel.model.bass = 0.1
+    show.tick(1000.05)
+    assert s.bass == 0.15
+    # silence floors it, however loud the envelope still reads: the bass envelope sits at 1.0 with no
+    # audio, so without the music gate the lamp would dance its biggest while nothing was playing
+    show.hits = []
+    show.panel.model.bass = 1.0
+    show.tick(1000.1)
+    assert show.music is False
+    assert s.bass == 0.0 and s.gen_bold() == pytest.approx(round(s.bold * L.BASS_FLOOR, 2), abs=0.011)
+
+
+def test_next_letter_and_pick_obey_the_same_never_the_last_one_rule():
+    """next_letter() is what prepare() asks the live generator to build; pick() is what the library
+    posts. They follow the same rule -- one of the tier's variants, never the one it just played --
+    but in v4.4 each is its own DRAW, so next_letter() no longer predicts pick() the way it did while
+    the variants rotated a -> b -> c. That the two disagree is not free: see
+    test_preparing_the_same_clip_twice_does_not_regenerate_it, which is red over it."""
     s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, manifest=manifest_v2(bpms=(120,)))
-    for _ in range(4):
-        want = s.next_letter("groove")
-        got = s.pick("groove", 120).rsplit("_", 1)[1]
-        assert got == want
-    assert s.next_letter("hype") == "a"
-    s.last_variant["hype"] = "c"
-    assert s.next_letter("hype") == "a"
+    s.rng = random.Random(11)
+    assert {s.next_letter("groove") for _ in range(60)} == {"a", "b", "c"}     # nothing played yet: all three
+    s.last_variant["groove"] = "c"
+    assert {s.next_letter("groove") for _ in range(60)} == {"a", "b"}          # never the one just played
+    s.last_variant["hype"] = "a"
+    assert {s.next_letter("hype") for _ in range(60)} == {"b", "c"}
+    assert s.next_letter("waltz") in ("a", "b", "c")                           # a tier never played: free choice
+    # pick() commits what it chose, and the next draw of either function excludes it
+    s.last_variant.clear()
+    for _ in range(30):
+        played = s.pick("groove", 120).rsplit("_", 1)[1]
+        assert s.last_variant["groove"] == played
+        assert s.next_letter("groove") != played
 
 
 def fake_make(calls=None, ok=True, frames=149):
@@ -982,9 +1161,10 @@ def test_live_generation_failure_falls_back_to_library_and_disables_for_60s(tmp_
     tr = L.BeatTracker()
     ks = kicks(120, 16)
     for k in ks: tr.feed(k)
-    s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
-                        status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)), live=lv)
+    s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                               status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
+                               start_latency_ns=350_000_000, log=lambda *_: None,
+                               manifest=manifest_v2(bpms=(120,)), live=lv))
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
     s.not_before_ns = now + 2_000_000_000                          # the hold behind home: the first clip is prepared ...
@@ -1028,9 +1208,10 @@ def test_scheduler_posts_live_clips_with_the_library_timing(tmp_path):
     tr = L.BeatTracker()
     ks = kicks(120, 16)
     for k in ks: tr.feed(k)
-    s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
-                        status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)), live=lv)
+    s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                               status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
+                               start_latency_ns=350_000_000, log=lambda *_: None,
+                               manifest=manifest_v2(bpms=(120,)), live=lv))
     now = ks[-1]
     assert s.has_tier("build")                                       # the generator makes every tier
     s.not_before_ns = now + 2_000_000_000                            # in the hold behind home: prepare groove a
@@ -1094,12 +1275,16 @@ def test_scheduler_posts_live_clips_with_the_library_timing(tmp_path):
 def test_prepare_does_not_chase_the_pll_wobble(tmp_path):
     """The tracker's PLL trims the bpm continuously; with real kick jitter it leaves a +-0.5 band several
     times per clip. A ready clip within the scheduler's take-time band (LIVE_BPM_TOL) is the right clip:
-    no regeneration (a worker job, a CSV write with fsync and a listing poll each), until a real re-lock."""
+    no regeneration (a worker job, a CSV write with fsync and a listing poll each), until a real re-lock.
+
+    The dice are held still here so the BPM BAND is what is under test. The variant re-draw does cause
+    a regeneration of its own, and that is a production bug rather than a fact about the band -- it has
+    its own (red) test, test_preparing_the_same_clip_twice_does_not_regenerate_it, right below."""
     import time as _t
     calls = []
     lv, pack = live_for(tmp_path, calls)
-    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
-                        manifest=manifest_v2(bpms=(128,)), live=lv)
+    s = steady(L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
+                               manifest=manifest_v2(bpms=(128,)), live=lv))
     now = L.time.monotonic_ns()
     post_at = now + 5_000_000_000
     s.prepare("groove", 128.0, post_at, now)
@@ -1115,6 +1300,44 @@ def test_prepare_does_not_chase_the_pll_wobble(tmp_path):
     s.prepare("groove", 130.6, post_at, now)
     assert wait_for(lambda: lv.peek() is not None and lv.peek().bold == 0.3, 3.0)
     assert len(calls) == 3
+
+
+def test_preparing_the_same_clip_twice_does_not_regenerate_it(tmp_path):
+    """RED ON PURPOSE. This is a live bug in ClipScheduler.prepare(), not a stale test -- do not pin
+    the rng here to make it pass, and do not delete it. It goes green on its own once the scheduler
+    latches the variant it decided on.
+
+    prepare() runs on EVERY pass of the show loop (~3 ms) for the whole window before a post, and it
+    opens with `letter = self.next_letter(tier)` -- a fresh random draw each time. LiveClips.covers()
+    then compares that letter with what is ready / being made / queued, so roughly two passes in three
+    disagree with the clip already in hand and ask the generator for a different variant instead. The
+    design says one posted clip costs one generation; LIVE_BPM_TOL's own comment spells it out: "only
+    a bold/tier/variant change (or a real tempo re-lock) costs a worker job, a CSV write and a listing
+    check."
+
+    MEASURED on this Mac with a 100 ms stand-in generator over one 4 s window at 120 bpm: 872 loop
+    passes produced 33 generations for the single clip that gets posted. On the Pi 5 that is 33 numpy
+    clip builds, 33 CSV writes with fsync into the runtime's animation pack and 33 listing polls,
+    back to back, against the 50 fps panel thread and the audio decode -- for one clip.
+
+    The fix belongs in prepare(), not here: choose the letter once per upcoming post (latch it beside
+    last_variant, clear it when the clip is taken), and next_letter() becomes the preview its
+    docstring still claims it is."""
+    import time as _t
+    calls = []
+    lv, pack = live_for(tmp_path, calls)
+    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
+                        manifest=manifest_v2(bpms=(128,)), live=lv)
+    s.rng = random.Random(3)                                         # seeded: the churn below is not a flake
+    now = L.time.monotonic_ns()
+    post_at = now + 5_000_000_000
+    for _ in range(40):                                              # forty loop passes, nothing changed
+        s.prepare("groove", 128.0, post_at, now)
+        _t.sleep(0.002)                                              # ... at something like the loop's cadence
+    assert wait_for(lambda: lv.peek() is not None, 3.0)
+    assert wait_for(lambda: lv.busy is None and lv.wanted is None, 3.0)
+    _t.sleep(0.05)
+    assert len(calls) == 1, f"one clip, {len(calls)} generations: variants {[c[1] for c in calls]}"
 
 
 @pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
@@ -1310,8 +1533,10 @@ class _Lamp:
 
 
 def follow_on(monkeypatch, tmp_path, track="phone"):
-    show = bare_show(monkeypatch, [])
+    posts = []
+    show = bare_show(monkeypatch, posts)
     lamp = _Lamp(show, monkeypatch, tmp_path)
+    lamp.posts = posts                                            # what the runtime was asked to play
     lamp.control(mode="follow", track=track)
     assert wait_for(lambda: lamp.popens == [track]) and show.follow_track == track
     return show, lamp
@@ -1364,10 +1589,18 @@ def test_two_quick_track_changes_end_on_the_newest_track_once(monkeypatch, tmp_p
 
 
 # ---- v4.2: the dance faces the person ---------------------------------------------------------------
+# Where the dance may wander when it has nothing to face: home, and half and all of WANDER_UNITS
+# either side of it (Show.update_facing). 20 units is MEASURED on the model, 2026-09-20 -- every tier
+# and variant still clears the head_y and ZMP tipping margins with the whole clip rotated 20 off home,
+# while at 25 the drop's crossing diagonal breaches them and at 45 most of hype does.
+WANDER_HEADINGS = {-20.0, -10.0, 0.0, 10.0, 20.0}
+
+
 def test_the_dance_faces_the_target_past_the_margin_then_holds_it_and_lets_go(monkeypatch, tmp_path):
     """The watch-only follower's solved yaw reaches the scheduler through target.json. A move under
     FACING_MARGIN is not worth a regenerated clip; nothing seen holds the last facing (people look
-    away, and are walked in front of) until FACING_HOLD_S, and then the dance faces home again."""
+    away, and are walked in front of) until FACING_HOLD_S, and then -- v4.4 -- the dance stops facing
+    the person and starts wandering instead of parking on the home heading."""
     show = bare_show(monkeypatch, [], mode="dance")
     path = tmp_path / "target.json"
     show.targets = L.TargetFile(str(path))
@@ -1405,16 +1638,21 @@ def test_the_dance_faces_the_target_past_the_margin_then_holds_it_and_lets_go(mo
     assert s.facing == pytest.approx(48.9)
     tick(100.2 + L.FACING_HOLD_S)                                  # held to the timeout, not one tick less
     assert s.facing == pytest.approx(48.9)
+    s.rng = random.Random(5)
     tick(100.2 + L.FACING_HOLD_S + 0.1)
-    assert s.facing == 0.0                                         # gone: back to the lamp's home heading
+    # v4.4: the person is gone, so the dance lets their heading go -- and wanders rather than parking
+    # on home and repeating its three phrases there (it used to set the facing to 0.0 and stay).
+    assert s.facing in WANDER_HEADINGS                             # ... and it is no longer aimed at them
+    parked = s.facing
     # only in dance mode: elsewhere no clip is playing and there is nothing to aim
     show.mode = "light"
     write(yaw=-30.0)
     tick(200.0)
-    assert s.facing == 0.0
+    assert s.facing == parked
     # and a follower that died stops steering it: `seen` carries the file's freshness, the yaw does not
     show2 = bare_show(monkeypatch, [], mode="dance")
     show2.targets = L.TargetFile(str(path))
+    show2.scheduler.rng = random.Random(5)
     tick(300.0, show2)
     assert show2.scheduler.facing == -30.0
     write(yaw=-80.0)
@@ -1423,7 +1661,37 @@ def test_the_dance_faces_the_target_past_the_margin_then_holds_it_and_lets_go(mo
     assert show2.lamp_status()["target"] == {"kind": "flashlight", "seen": False, "center": 1.0,
                                              "aim_deg": 1.0, "yaw": -80.0, "age_s": 10.0}
     tick(300.0 + L.FACING_HOLD_S + 0.1, show2)
-    assert show2.scheduler.facing == 0.0
+    assert show2.scheduler.facing in WANDER_HEADINGS and show2.scheduler.facing != -30.0
+
+
+def test_with_nothing_to_face_the_dance_wanders_instead_of_parking_on_home(monkeypatch, tmp_path):
+    """v4.4, the operator's "keep damn moving": with no target the dance used to sit on the home
+    heading and repeat the same three phrases there. Now it takes a new heading every WANDER_EVERY_S,
+    drawn inside the measured box (WANDER_HEADINGS) and never within FACING_MARGIN of the one it is
+    already on -- a smaller move is not worth a regenerated clip. Where the dance happens changes;
+    how it moves does not, because the clip is built around that heading."""
+    show = bare_show(monkeypatch, [], mode="dance")
+    show.targets = L.TargetFile(str(tmp_path / "no-follower.json"), poll=0.0)   # nothing is ever seen
+    s = show.scheduler
+    s.rng = random.Random(2026)                                    # seeded: the box and the rules, not one draw
+    assert (L.WANDER_UNITS, L.WANDER_EVERY_S) == (20.0, 7.0)
+    assert WANDER_HEADINGS == {-L.WANDER_UNITS, -L.WANDER_UNITS / 2, 0.0, L.WANDER_UNITS / 2, L.WANDER_UNITS}
+    headings, now = [], 1000.0
+    for _ in range(40):
+        now += L.WANDER_EVERY_S + 0.1
+        show.update_facing(now)
+        headings.append(s.facing)
+    assert set(headings) == WANDER_HEADINGS                        # over forty moves it uses the whole box
+    assert all(abs(b - a) >= L.FACING_MARGIN for a, b in zip(headings, headings[1:]))
+    assert len(set(headings[:6])) > 1                              # and it travels from the first few moves
+    # only every WANDER_EVERY_S: the loop ticks at 20 Hz and must not re-aim on every pass, or every
+    # clip would be regenerated at a new heading before the one before it had played
+    here = s.facing
+    for i in range(20):
+        show.update_facing(now + i * (L.WANDER_EVERY_S / 40))
+    assert s.facing == here
+    show.update_facing(now + L.WANDER_EVERY_S + 0.1)
+    assert s.facing != here
 
 
 def test_dance_watches_with_a_dry_run_follower_and_never_a_commanding_one(monkeypatch, tmp_path, capsys):
@@ -1440,7 +1708,12 @@ def test_dance_watches_with_a_dry_run_follower_and_never_a_commanding_one(monkey
     out = capsys.readouterr().out
     assert "--dry-run (watching only" in out
     assert out.index("follow: stopped") < out.index("--dry-run")    # the commanding one went first
-    assert out.index("home") < out.index("--dry-run") if "home" in out else True
+    # ... and the arm is homed on the way in, before any clip. Whether the home's log line lands
+    # before or after the watcher's is NOT an invariant and must not be asserted: scheduler.home()
+    # and start_follow() each post from their own worker thread (it used to read home-then-watcher
+    # and now usually reads the other way round). It does not need to be one, either -- the watcher
+    # is --dry-run, so it can never fight the home for the arm.
+    assert wait_for(lambda: lamp.posts == ["home"])
     # the dashboard's track choice reaches the watcher too, and it stays watch-only
     lamp.control(mode="dance", track="phone")
     assert wait_for(lambda: lamp.popens == ["flashlight", "flashlight", "phone"])
@@ -1456,7 +1729,9 @@ def test_dance_watches_with_a_dry_run_follower_and_never_a_commanding_one(monkey
 
 def test_a_facing_change_regenerates_the_prepared_clip(tmp_path):
     """The facing is part of what makes a clip the right clip, like bold: the scheduler hands it to the
-    generator, and a clip prepared at the old facing no longer covers the request."""
+    generator, and a clip prepared at the old facing no longer covers the request. The dice are held
+    still so the FACING is what decides here (the variant re-draw's own regeneration is the red test
+    test_preparing_the_same_clip_twice_does_not_regenerate_it, above)."""
     made = []
 
     def make(tier, variant, bpm, bold, gains=None, model=None, facing=0.0):
@@ -1464,8 +1739,8 @@ def test_a_facing_change_regenerates_the_prepared_clip(tmp_path):
         return [(0.0, -49.0, -22.0, 0.0, 30.0)] * 149, {"ok": True, "reasons": []}
 
     lv, pack = live_for(tmp_path, make_fn=make)
-    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
-                        manifest=manifest_v2(bpms=(128,)), live=lv)
+    s = steady(L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
+                               manifest=manifest_v2(bpms=(128,)), live=lv))
     now = L.time.monotonic_ns()
     post_at = now + 5_000_000_000
     assert s.facing == 0.0
@@ -1609,53 +1884,81 @@ def test_a_locked_tracker_still_lands_its_clips_on_the_beat():
     assert len(posts) == 1 and posts[0].endswith("_124") and s.phase_ms and abs(s.phase_ms[-1]) < 5.0
 
 
-def test_show_dance_posts_without_music_or_a_conductor_clock_and_no_other_mode_moves_the_arm(monkeypatch):
+def test_dance_posts_without_a_lock_or_a_conductor_clock_but_stops_with_the_music(monkeypatch):
+    """The gate is dance mode AND MUSIC -- the beat LOCK is not part of it, and neither is the
+    conductor's clock. v4.1 needed both a lock and an offset, so a track the tracker could not follow
+    left the arm sitting still; now that case free-runs on this process's own monotonic clock at
+    FREE_RUN_BPM. Real silence is what stops the dance (Show.schedule: `self.music` comes from
+    KICK/SNARE events, never the bass envelope, which reads 1.0 in silence)."""
     import time as _t
     posts = []
     show = bare_show(monkeypatch, posts, mode="light", library=("beat_groove_128", "home"))
-    s = show.scheduler
+    s = steady(show.scheduler)
     s.log = lambda *_: None
     show.mode = "dance"                                        # straight in: the home hold has its own test
-    show.music, show.offset_ns = False, None                   # no music, and nothing from the conductor yet
+    show.music, show.offset_ns = True, None                    # music playing, nothing from the conductor yet
+    assert show.tracker.locked(L.time.monotonic_ns()) is False  # ... and no beat it could lock on to
     post_at = s.plan(L.time.monotonic_ns(), show.tracker)[0]
     show.schedule(post_at + 2_000_000)
     assert wait_for(lambda: len(posts) == 1) and posts[0].endswith("_128")   # at the free tempo
     assert wait_for(lambda: not s.inflight)
+    # the music stops: the arm is homed once, and then nothing, however long the show runs on
+    show.music = False
+    show.schedule(L.time.monotonic_ns())
+    assert wait_for(lambda: posts[-1] == "home") and len(posts) == 2
+    show.schedule(L.time.monotonic_ns() + 5_000_000_000)
+    _t.sleep(0.05)
+    assert len(posts) == 2 and s.boundary_ns is None
     # the safety rule: only dance (and follow, which has no scheduler) may move the arm
+    show.music = True
     for mode in ("light", "off", "follow"):
         show.mode, s.boundary_ns, s.not_before_ns = mode, None, 0
         show.schedule(L.time.monotonic_ns() + 5_000_000_000)
     _t.sleep(0.05)
-    assert len(posts) == 1                                     # nothing more was posted
+    assert len(posts) == 2                                     # nothing more was posted
 
 
-# ---- v4.3: a phone in the middle of the view turns the lamp green -------------------------------------
-def test_the_light_goes_green_only_for_a_centred_seen_phone():
+# ---- v4.3: a phone the lamp can see turns it green -----------------------------------------------------
+def test_a_phone_anywhere_in_the_picture_turns_the_light_green():
+    """Operator's call, 2026-09-20: a phone the camera can SEE at all scores, not only one held in the
+    middle of the frame. PhoneGreen.ON and OFF are therefore both 0.0 -- every reading clears them --
+    and the state is down to "a fresh sighting whose kind is phone". They were 0.74 and 0.56: the
+    middle third of the picture to latch on, the middle half to let go."""
+    assert (L.PhoneGreen.ON, L.PhoneGreen.OFF) == (0.0, 0.0)
     g = L.PhoneGreen()
     assert g.update({"kind": "phone", "seen": True, "center": 1.0}) is True
     assert g.update({"kind": "phone", "seen": False, "center": 1.0}) is False    # gone: no hysteresis on `seen`
     assert g.update({"kind": "face", "seen": True, "center": 1.0}) is False      # a face in the middle is not it
     assert g.update({"kind": "flashlight", "seen": True, "center": 1.0}) is False
     assert g.update(dict(L.TargetFile.EMPTY)) is False                           # no follower at all
-    assert g.update({"kind": "phone", "seen": True, "center": L.PhoneGreen.ON - 0.01}) is False   # off to one side
-    assert g.update({"kind": "phone", "seen": True, "center": L.PhoneGreen.ON}) is True
-    assert g.update({"kind": "phone", "seen": True, "center": None}) is False    # a reading with no centre
-    # ON is the middle third of the picture and OFF the middle half, through follow.center_score
+    # anywhere in frame: dead centre, off to one side, hard against the edge, or not reported at all
+    for centre in (1.0, 0.75, 0.5, 0.2, 0.05, 0.0, None, "junk"):
+        assert g.update({"kind": "phone", "seen": True, "center": centre}) is True, centre
+    assert g.update({"kind": "face", "seen": True, "center": 1.0}) is False      # and the kind still decides
+    # follow.center_score still measures how central the phone is -- the lamp turns by it, and it is
+    # still reported to the conductor; it just no longer decides whether the game approves
     import follow
-    assert follow.center_score(0.5 + 1 / 6, 0.5) == pytest.approx(L.PhoneGreen.ON, abs=0.005)
-    assert follow.center_score(0.5, 0.5 + 0.25) == pytest.approx(L.PhoneGreen.OFF, abs=0.005)
+    assert follow.center_score(0.5 + 1 / 6, 0.5) == pytest.approx(0.74, abs=0.005)   # the old ON
+    assert follow.center_score(0.5, 0.5 + 0.25) == pytest.approx(0.56, abs=0.005)    # the old OFF
 
 
-def test_the_green_latch_holds_across_a_marginal_reading():
-    g = L.PhoneGreen()
-    marginal = {"kind": "phone", "seen": True, "center": (L.PhoneGreen.ON + L.PhoneGreen.OFF) / 2}
+def test_the_middle_only_game_can_be_had_back_by_constructing_the_thresholds():
+    """The thresholds stayed constructor parameters instead of being deleted, so the middle-only game
+    is one PhoneGreen(0.74, 0.56) away. Two of them and not one because a single threshold strobed the
+    panel at 20 Hz when a phone came to rest on the boundary."""
+    g = L.PhoneGreen(0.74, 0.56)
+    marginal = {"kind": "phone", "seen": True, "center": (0.74 + 0.56) / 2}
     assert g.update(marginal) is False                      # not centred enough to turn it on
     assert g.update({"kind": "phone", "seen": True, "center": 0.95}) is True
     for _ in range(5):
         assert g.update(marginal) is True                   # ... and the same reading now holds it, every frame
-    assert g.update({"kind": "phone", "seen": True, "center": L.PhoneGreen.OFF}) is True
-    assert g.update({"kind": "phone", "seen": True, "center": L.PhoneGreen.OFF - 0.01}) is False
+    assert g.update({"kind": "phone", "seen": True, "center": 0.56}) is True
+    assert g.update({"kind": "phone", "seen": True, "center": 0.55}) is False
     assert g.update(marginal) is False                      # and it takes ON, not OFF, to come back
+    # the shipped default is the same machinery with both thresholds on the floor, so it never latches off
+    d = L.PhoneGreen()
+    assert d.on_at == d.off_at == 0.0
+    assert all(d.update({"kind": "phone", "seen": True, "center": c / 20}) for c in range(21))
 
 
 def test_green_replaces_the_hue_and_leaves_the_flashes_and_the_burst_alone():
@@ -1681,7 +1984,7 @@ def test_green_replaces_the_hue_and_leaves_the_flashes_and_the_burst_alone():
     assert rgb[1] > rgb[0] and rgb[1] > rgb[2]                      # and what reaches the panel is green
 
 
-def test_a_centred_phone_turns_the_panel_green_and_the_telemetry_says_so(monkeypatch, tmp_path):
+def test_a_phone_in_view_turns_the_panel_green_and_the_telemetry_says_so(monkeypatch, tmp_path):
     show = bare_show(monkeypatch, [])
     path = tmp_path / "target.json"
     show.targets = L.TargetFile(str(path), poll=0.0)                # every read stats (the poll has its own test)
@@ -1711,16 +2014,16 @@ def test_a_centred_phone_turns_the_panel_green_and_the_telemetry_says_so(monkeyp
         assert k in status                                          # every existing key is still there
     show.send_lamp()
     assert json.loads(show.sock.sent[-1][1:])["green"] is True      # and it goes out on the wire
-    write(center=(L.PhoneGreen.ON + L.PhoneGreen.OFF) / 2)          # the phone drifts off the middle a little
+    write(center=0.5)                                               # the phone drifts off the middle a little
     tick(100.05)
     assert show.green is True and show.lamp_status()["green"] is True
-    write(center=0.2)                                               # ... and then to the edge of the frame
+    write(center=0.0)                                               # ... and then right out to the frame's edge
     tick(100.1)
-    assert show.green is False and show.panel.model.green is False
-    assert show.panel.model.step(100.1)[0] != L.GREEN_HUE
-    write(kind="face")
+    assert show.green is True and show.panel.model.green is True    # still green: anywhere in view counts
+    write(kind="face")                                              # what the lamp is looking at is what decides
     tick(100.15)
-    assert show.green is False
+    assert show.green is False and show.panel.model.green is False
+    assert show.panel.model.step(100.15)[0] != L.GREEN_HUE
     write()                                                         # green again ...
     tick(100.2)
     assert show.green is True

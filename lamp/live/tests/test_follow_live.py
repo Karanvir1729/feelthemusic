@@ -211,7 +211,12 @@ def test_search_holds_then_sweeps_face_cancels_then_parks():
     state, want = s.want(103.1)
     assert state == "searching"
     assert abs(want["base_yaw"] - 12.0) < 2.0           # the triangle starts at the last-seen yaw
-    assert (want["base_pitch"], want["elbow_pitch"], want["wrist_roll"], want["wrist_pitch"]) == (-49, -22, 0, 30)
+    # wrist_pitch 60, not the 30 this used to assert: the camera is bolted to the shade and looks
+    # CAMERA_PITCH_DEG (15) ABOVE the shade axis the URDF models, so a sweep at 30 scanned +14.2 deg
+    # of ceiling -- 1.06 m above the table 3 m out, over everyone's heads. At 60 the camera runs level
+    # (-0.12 deg), measured 2026-09-19 and re-derived from the real model in
+    # test_search_sweep_looks_level_through_the_pitched_camera below.
+    assert (want["base_pitch"], want["elbow_pitch"], want["wrist_roll"], want["wrist_pitch"]) == (-49, -22, 0, 60)
     quarter = 1 / (4 * F.Search.HZ)
     assert s.want(103.0 + quarter)[1]["base_yaw"] == pytest.approx(42.0)
     assert s.want(103.0 + 3 * quarter)[1]["base_yaw"] == pytest.approx(-18.0)
@@ -860,6 +865,199 @@ def test_phone_tracker_is_lost_in_a_purple_stage_wash_but_not_a_dim_one():
     assert seen is not None and seen[:2] == pytest.approx((0.5, 0.5), abs=0.01)
 
 
+# ---- the torch tracker ----------------------------------------------------------------------------
+def torch_frame(*lights):
+    """Synthetic torches, built the way app_screen() builds synthetic screens and never a camera
+    capture: a clipped-white core (V 255, S 0) inside a halo that falls off to 45 % of full over
+    `halo` pixels, which is how a torch aimed into the lens reads -- a saturated core with bloom
+    around it. Each light is ((x, y), core radius px, halo radius px) on a 640x480 black frame."""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    for (cx, cy), core, halo in lights:
+        for r in range(halo, core, -1):
+            v = int(255 * (1.0 - 0.55 * (r - core) / max(1, halo - core)))
+            cv2.circle(frame, (cx, cy), r, (v, v, v), -1)
+        cv2.circle(frame, (cx, cy), core, (255, 255, 255), -1)
+    return frame
+
+
+def torch_speckles(radius, *, centres=((100, 80), (300, 60), (520, 110), (200, 400))):
+    """Clipped-white specks with no bloom: the venue's own ceiling panels and laptop-screen glare."""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    for centre in centres:
+        cv2.circle(frame, centre, radius, (255, 255, 255), -1)
+    return frame
+
+
+@pytest.mark.parametrize("centre,core,halo", [((320, 240), 10, 30), ((100, 100), 4, 12), ((540, 380), 20, 60)])
+def test_flashlight_tracker_locates_a_torch_anywhere_in_the_frame(centre, core, halo):
+    seen = F.FlashlightTracker().locate(torch_frame((centre, core, halo)))
+    assert seen is not None
+    assert seen[0] == pytest.approx(centre[0] / 640, abs=0.003)
+    assert seen[1] == pytest.approx(centre[1] / 480, abs=0.003)
+
+
+def test_flashlight_size_is_a_nominal_distance_not_the_blobs_span(monkeypatch):
+    """A torch's apparent size is its BRIGHTNESS, not its distance: the same torch across the room
+    clips a smaller core than one an arm away, so a span-derived distance would have the lamp lunge
+    at whichever torch happened to be brightest. locate() therefore reports the constant NOMINAL,
+    which main() wires to fx / FLASHLIGHT_NOMINAL_M so the loop's distance_from_size() lands on
+    FLASHLIGHT_NOMINAL_M every time and only the bearing steers the head."""
+    fx = 0.5 / math.tan(math.radians(61.0) / 2)                  # the model's horizontal focal length
+    monkeypatch.setattr(F.FlashlightTracker, "NOMINAL", fx / F.FLASHLIGHT_NOMINAL_M)   # as main() sets it
+    near = F.FlashlightTracker().locate(torch_frame(((320, 240), 24, 70)))
+    far = F.FlashlightTracker().locate(torch_frame(((320, 240), 4, 12)))
+    assert near is not None and far is not None
+    assert near[2] == far[2] == pytest.approx(fx / F.FLASHLIGHT_NOMINAL_M)
+    distance = 1.0 * fx / near[2]                                # LampModel.distance_from_size(size, 1.0)
+    assert distance == pytest.approx(F.FLASHLIGHT_NOMINAL_M) == pytest.approx(0.8)
+    assert 0.30 <= distance <= 3.0            # the band the loop clips a non-face, non-hand target into
+
+
+def test_flashlight_opening_clears_the_venues_own_highlights():
+    """Measured in the venue 2026-09-19: at V >= 254, S <= 40 the brightest ceiling panel survives
+    only a 5-px disc, and then as a blob under 70 px. The production opening is 7 px, which leaves
+    NOTHING in the room -- that is what lets MIN_AREA sit as low as 9 px so a torch held across the
+    hall (about 20 px of core) still counts."""
+    tracker = F.FlashlightTracker()
+    assert tracker.OPEN == 7 and tracker.V_CORE == 254 and tracker.S_CORE == 40
+    speckles = torch_speckles(3)                                 # 7 px across, the panel's own size
+    raw = ((cv2.cvtColor(speckles, cv2.COLOR_BGR2HSV)[:, :, 2] >= tracker.V_CORE)
+           & (cv2.cvtColor(speckles, cv2.COLOR_BGR2HSV)[:, :, 1] <= tracker.S_CORE)).astype(np.uint8) * 255
+    five = cv2.morphologyEx(raw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+    blobs, _, stats, _ = cv2.connectedComponentsWithStats(five)
+    assert blobs - 1 == 4 and max(stats[1:, 4]) < 70             # a 5-px disc leaves them, under 70 px
+    assert cv2.countNonZero(tracker.masks(speckles)[0]) == 0     # the 7-px disc leaves nothing
+    assert tracker.candidates(speckles) == [] and tracker.locate(speckles) is None
+    # and the torch the floor is set that low for is still found in the same frame
+    with_torch = speckles.copy()
+    cv2.circle(with_torch, (320, 240), 14, (210, 210, 210), -1)
+    cv2.circle(with_torch, (320, 240), 5, (255, 255, 255), -1)
+    seen = F.FlashlightTracker().locate(with_torch)
+    assert seen is not None and seen[:2] == pytest.approx((0.5, 0.5), abs=0.01)
+
+
+def test_flashlight_rejects_a_bright_bar_that_survives_the_opening_but_is_not_round():
+    """A window slit or a light batten clips white over hundreds of pixels and carries its own
+    bloom, so neither the opening nor the halo gate stops it. Roundness does: measured on this
+    synthetic batten, 4*pi*A/P^2 = 0.15 against the 0.45 gate."""
+    tracker = F.FlashlightTracker()
+    batten = np.zeros((480, 640, 3), dtype=np.uint8)
+    for k in range(22, 0, -1):                                   # bloom around the bar, so only shape can reject it
+        v = int(255 * (1.0 - 0.55 * k / 22))
+        cv2.rectangle(batten, (150 - k, 230 - k), (490 + k, 248 + k), (v, v, v), -1)
+    cv2.rectangle(batten, (150, 230), (490, 248), (255, 255, 255), -1)
+    core, halo = tracker.masks(batten)
+    assert cv2.countNonZero(core) > 5000                         # it sails through the 7-px opening
+    contour = max(cv2.findContours(core, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], key=cv2.contourArea)
+    area, perimeter = cv2.contourArea(contour), cv2.arcLength(contour, True)
+    roundness = 4 * math.pi * area / (perimeter * perimeter)
+    assert roundness == pytest.approx(0.15, abs=0.03) and roundness < tracker.ROUNDNESS == 0.45
+    x, y, w, h = cv2.boundingRect(contour)
+    pad = max(w, h)
+    box = halo[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad]
+    assert cv2.countNonZero(box) >= tracker.HALO_MIN * area      # the halo gate would have passed it
+    assert tracker.candidates(batten) == [] and tracker.locate(batten) is None
+
+
+def test_flashlight_rejects_a_round_clipped_blob_with_no_bloom_around_it():
+    """A torch aimed at the camera always carries a halo substantially larger than its core. A white
+    disc with nothing around it -- a reflection off chrome, a white dot on a screen -- has none. The
+    halo mask necessarily contains the core itself, so the gate really asks for half the core again
+    in surrounding bloom: a bare disc scores about 1.1 against HALO_MIN 1.5."""
+    tracker = F.FlashlightTracker()
+    bare = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.circle(bare, (320, 240), 12, (255, 255, 255), -1)
+    assert cv2.countNonZero(tracker.masks(bare)[0]) > 300        # round, and it survives the opening
+    assert tracker.candidates(bare) == [] and tracker.locate(bare) is None
+    assert F.FlashlightTracker().locate(torch_frame(((320, 240), 12, 36))) is not None   # same core, with bloom
+
+
+def test_flashlight_rejects_a_saturated_stage_light():
+    """The core gate is V >= 254 AND S <= 40: clipped WHITE. A stage light blazing at full value is
+    still deeply coloured (this one reads S 255 at its centre) and never becomes a candidate."""
+    tracker = F.FlashlightTracker()
+    stage = np.zeros((480, 640, 3), dtype=np.uint8)
+    for k in range(32, 0, -1):
+        v = int(255 * (1.0 - 0.5 * k / 32))
+        cv2.circle(stage, (320, 240), 8 + k, (v, int(v * 0.25), 0), -1)
+    cv2.circle(stage, (320, 240), 8, (255, 64, 0), -1)
+    assert cv2.cvtColor(stage, cv2.COLOR_BGR2HSV)[240, 320][1] > tracker.S_CORE
+    assert cv2.countNonZero(tracker.masks(stage)[0]) == 0
+    assert tracker.locate(stage) is None
+
+
+@pytest.mark.parametrize("core,accepted", [(156, True), (160, False)])
+def test_flashlight_rejects_a_light_that_fills_more_than_a_quarter_of_the_frame(core, accepted):
+    """MAX_AREA 0.25: a torch pressed against the lens, or a ceiling floodlight the head has turned
+    into, is not a bearing worth steering by. 156 px of radius is 24.7 % of the frame and is taken;
+    160 px is 26.0 % and is not. Both carry the same proportional bloom, so only the area gate moves."""
+    light = np.zeros((480, 640, 3), dtype=np.uint8)
+    for k in range(120, 0, -1):
+        v = int(255 * (1.0 - 0.55 * k / 120))
+        cv2.circle(light, (320, 240), core + k, (v, v, v), -1)
+    cv2.circle(light, (320, 240), core, (255, 255, 255), -1)
+    assert (F.FlashlightTracker().locate(light) is not None) is accepted
+
+
+def test_flashlight_keeps_the_torch_it_locked_onto_when_a_second_one_outgrows_it():
+    """Which candidate is followed frame to frame is TargetLock's rule, unchanged from the phone
+    tracker: the largest blob first, then the nearest qualifying incumbent -- never whichever torch
+    is brightest this frame. This is blob continuity, not identity: it says nothing about who holds
+    either light."""
+    clock = FakeClock()
+    tracker = F.FlashlightTracker(clock=clock)
+    first = tracker.locate(torch_frame(((200, 240), 12, 34), ((470, 240), 7, 20)))
+    assert first is not None and first[0] == pytest.approx(200 / 640, abs=0.005)
+    clock.sleep(0.1)
+    kept = tracker.locate(torch_frame(((205, 243), 12, 34), ((470, 240), 22, 60)))
+    assert kept is not None and kept[0] == pytest.approx(205 / 640, abs=0.005)   # not the bigger one
+    clock.sleep(0.1)
+    # its torch goes out while the lock is still fresh: a reported loss, not a jump to the other one
+    assert tracker.locate(torch_frame(((470, 240), 22, 60))) is None
+    clock.sleep(F.TargetLock.LOST_S + 0.1)                      # missing long enough for the lock to expire
+    again = tracker.locate(torch_frame(((205, 243), 12, 34), ((470, 240), 22, 60)))
+    assert again is not None and again[0] == pytest.approx(470 / 640, abs=0.005)  # afresh: the largest
+
+
+class FakeTorch:
+    """A torch wherever FakeCamera puts its point, reported the way FlashlightTracker reports one:
+    the nominal size, never the blob's apparent span."""
+    label = "flashlight"
+
+    def __init__(self, model):
+        self.nominal = model.fx / F.FLASHLIGHT_NOMINAL_M
+
+    def locate(self, frame):
+        seen = frame["face"]
+        return None if seen is None else (seen[0], seen[1], self.nominal)
+
+
+@pytest.mark.parametrize("target,tracker", [("phone", None), ("flashlight", FakeTorch)])
+def test_a_lost_target_stops_claiming_a_facing_within_the_lock_window(tmp_path, target, tracker):
+    """The target file's "yaw" is what lamp_show.py dances at, and TargetReport's contract is that it
+    "goes when the sightings go -- a lost target must not keep claiming a facing". The sightings go
+    after TargetLock.LOST_S for anything sampled every frame; only the once-a-second object detector
+    gets the 3.5 s window. FlashlightTracker is a per-frame OpenCV tracker with a TargetLock of its
+    own, so a torch that goes out must drop its facing on the same 0.6 s as a phone screen."""
+    import json
+    clock, model = FakeClock(), OneAxisModel()
+    motors = FakeMotors(clock, pose(), delivery=0.5, latency=0.20)
+    camera = FakeCamera(clock, motors, model, [30.0, 1.0, 0.0])
+    seer = FakeFaces() if tracker is None else tracker(model)
+    follower = F.LiveFollower(model, motors, camera, [(target, seer)], NoThermal(),
+                              F.LiveConfig(target=target, search=False), clock=clock, sleep=clock.sleep,
+                              out=lambda *a, **k: None)
+    follower.report = F.TargetReport(tmp_path / "target.json", clock=clock)
+    run_cycles(follower, clock, 5)
+    assert len(follower.sightings) == F.LiveFollower.SIGHTINGS and follower.aim_yaw is not None
+    camera.point[1] = -1.0                                       # the screen is pocketed / the torch goes out
+    left = clock()
+    run_cycles(follower, clock, 10)                              # 1.2 s, twice TargetLock.LOST_S
+    assert clock() - left >= 2 * F.TargetLock.LOST_S
+    assert follower.sightings == [] and follower.aim_yaw is None
+    assert json.loads((tmp_path / "target.json").read_text())["yaw"] is None
+
+
 def test_live_config_defaults_move_fast_but_the_step_is_capped_by_the_speed_budget():
     cfg = F.LiveConfig()
     assert (cfg.step, cfg.period, cfg.live_ms) == (F.LIVE_STEP, F.LIVE_PERIOD, F.LIVE_MS) == (30.0, 0.25, 250)
@@ -1153,7 +1351,13 @@ def sdk_phone_main(monkeypatch):
     phone_tracker = F.PhoneTracker(clock=clock)
     monkeypatch.setattr(F.time, "monotonic", clock)
     monkeypatch.setattr(F, "PhoneTracker", lambda: phone_tracker)
-    monkeypatch.setattr(F, "LampModel", lambda path: model)
+    # camera_pitch_deg is keyword-only and has no default here on purpose: main() must always hand the
+    # model the measured camera tilt, and the value it chose is left on the fixture's model to assert.
+    def fake_model(path, *, camera_pitch_deg):
+        model.robot_dir, model.camera_pitch_deg = path, camera_pitch_deg
+        return model
+
+    monkeypatch.setattr(F, "LampModel", fake_model)
     monkeypatch.setattr(F, "LampSDK", lambda token: sdk)
     monkeypatch.setattr(F, "read_token", lambda: "offline-fixture")
     monkeypatch.setattr(F, "Camera", lambda sdk, fps: camera)
@@ -1182,6 +1386,17 @@ def test_sdk_phone_cli_dry_run_uses_pixels_without_moving_or_raw_idle(sdk_phone_
     assert "watching for a phone screen showing the app (purple to pink) (dry run: will not move)" in output
     assert "phone " in output and "base_yaw +0->-22" in output
     assert sdk.moves == [] and not camera.running
+
+
+@pytest.mark.parametrize("flags,pitch", [((), F.CAMERA_PITCH_DEG), (("--camera-pitch", "22.5"), 22.5)])
+def test_sdk_cli_builds_the_model_with_the_measured_camera_pitch(sdk_phone_main, flags, pitch):
+    """The camera is a separate part bolted to the shade, so its optical axis is not the shade axis
+    the robot description gives us. main() must pass the measured offset into LampModel or every
+    sight-line is elevated by it and the lamp aims past the target and hunts (follow.py --camera-pitch)."""
+    run, _, _, _, model, _ = sdk_phone_main
+    run([phone_frame(((160, 240), (60, 130), 0))] * 3, "--dry-run", *flags)
+    assert model.camera_pitch_deg == pytest.approx(pitch)
+    assert F.CAMERA_PITCH_DEG == 15.0            # measured on this lamp 2026-09-19; 0 would be "no offset"
 
 
 def test_sdk_phone_cli_keeps_incumbent_after_blocking_move_and_larger_distractor(sdk_phone_main):
@@ -1237,6 +1452,61 @@ def test_sdk_phone_cli_slow_detection_cannot_count_as_a_fresh_sighting(sdk_phone
     run([phone_frame(((160, 240), (60, 130), 0))] * 6)
     assert len(sdk.moves) == 1
     assert sdk.moves[0][0] == 6                       # three fresh observations after the expired one
+
+
+# ---- the camera is bolted to the shade, not aligned with it ---------------------------------------
+@needs_model
+def test_camera_pitch_turns_the_camera_axes_and_nothing_else(model):
+    """LampModel(camera_pitch_deg=...) tilts the MODELLED VIEW up by that much and leaves the arm
+    alone: `position` and `shade` are what the safety geometry and the clip validator read, and a
+    camera offset must not move the lamp's idea of where its own head is."""
+    pitched = LampModel(ROBOT_DIR, calibration=CALIBRATION, camera_pitch_deg=F.CAMERA_PITCH_DEG)
+    p = pose()
+    flat, tilted = model.head(p), pitched.head(p)
+    assert np.array_equal(flat["position"], tilted["position"])
+    assert np.array_equal(flat["shade"], tilted["shade"])
+    assert model.problems(p) == pitched.problems(p)
+    # the view turns by exactly the angle asked, about the camera's own right axis, staying orthonormal
+    assert np.allclose(flat["right"], tilted["right"])
+    turned = math.degrees(math.acos(float(np.clip(flat["forward"] @ tilted["forward"], -1, 1))))
+    assert turned == pytest.approx(F.CAMERA_PITCH_DEG)
+    assert float(flat["down"] @ tilted["forward"]) == pytest.approx(-math.sin(math.radians(F.CAMERA_PITCH_DEG)))
+    assert float(tilted["forward"] @ tilted["down"]) == pytest.approx(0.0, abs=1e-9)
+    assert np.linalg.norm(tilted["forward"]) == pytest.approx(1.0)
+    # UP, not down: the centre of the picture rises from -0.8 deg to +14.2 deg (measured 2026-09-19)
+    assert math.degrees(math.asin(tilted["forward"][2])) > math.degrees(math.asin(flat["forward"][2]))
+    # and zero is exactly the old model: a lamp whose offset has not been measured is not penalised
+    assert np.array_equal(LampModel(ROBOT_DIR, calibration=CALIBRATION, camera_pitch_deg=0.0).head(p)["forward"],
+                          flat["forward"])
+
+
+@needs_model
+def test_lamp_model_margin_defaults(model):
+    """table_margin 0.03 and limit_margin 2.0 (they used to be looser): the shade must clear the
+    table by 3 cm and no solved pose may sit within 2 units of a joint's calibrated end stop."""
+    assert model.table_margin == 0.03 and model.base_margin == 0.02
+    assert model.limits == {j: (-98.0, 98.0) for j in JOINTS}
+    assert model.camera_pitch == 0.0                 # no offset unless the caller measured one
+
+
+@needs_model
+def test_search_sweep_looks_level_through_the_pitched_camera(model):
+    """Why SEARCH_POSTURE's wrist_pitch is 60 and not the 30 the shade axis suggests. Through a
+    camera that looks CAMERA_PITCH_DEG above that axis, 30 scans +14.2 deg of ceiling: 3 m out that
+    sight-line is 1.06 m above the table, three quarters of a metre over the head doing the looking.
+    At 60 it is -0.1 deg -- level with the room, where the faces are."""
+    pitched = LampModel(ROBOT_DIR, calibration=CALIBRATION, camera_pitch_deg=F.CAMERA_PITCH_DEG)
+    sweeping = {"base_yaw": 0.0, **F.SEARCH_POSTURE}
+    old = {**sweeping, "wrist_pitch": 30.0}
+    assert F.SEARCH_POSTURE["wrist_pitch"] == 60.0
+    assert not pitched.problems(sweeping) and not pitched.problems(old)      # both are legal poses
+    head, look = pitched.head(sweeping), pitched.head(sweeping)["forward"]
+    assert math.degrees(math.asin(look[2])) == pytest.approx(0.0, abs=1.0)
+    was = pitched.head(old)["forward"]
+    assert math.degrees(math.asin(was[2])) == pytest.approx(14.2, abs=0.5)
+    at_three_m = head["position"][2] + 3.0 * look[2]
+    assert abs(at_three_m - head["position"][2]) < 0.05                      # level: 3 m out, same height
+    assert head["position"][2] + 3.0 * was[2] > head["position"][2] + 0.6    # the old sweep, over their heads
 
 
 @needs_model

@@ -20,16 +20,13 @@ v2 -- what changed and why (the v1 dance was timid on the arm: at 132 bpm it gav
   different joint). The scheduler rotates a -> b -> c so the audience never sees the same 8 beats twice
   in a row. The unsuffixed v1 names stay as ALIASES (an identical copy of variant a, listed in the
   manifest with "alias_of") so a v4 scheduler that only knows beat_<tier>_<bpm> keeps working.
-* Bar accents: beat 1 of each bar (beats 1 and 5) moves x1.3; beat 5 adds a head flick (wrist_pitch up,
-  wrist_roll). The drop's beat 1 is the spring itself (the spec's pose, exactly) so it carries no x1.3,
-  and the build's crouch is a progressive ramp that carries neither the accent nor the flick.
+* Bar accents: beat 1 of each bar (beats 1 and 5) swings x1.3, up to the tier's yaw ceiling.
 * Amplitude per JOINT, not one A for all: every pattern is written at its nominal (envelope-sized)
   size and each joint's excursion from START is then scaled by the largest s_j <= 1 whose commanded
-  (post-gain) trajectory keeps that joint <= 140 units/s -- the vendor simulation limit and the design
-  ceiling (the SDK refuses > 300). Cosine easing peaks at pi/2 x the mean speed, so a one-beat move can
-  cover at most 140 * 0.7 * 60/bpm / (pi/2) commanded units (47 at 80 bpm, 28 at 132, 21 at 180); the
-  patterns with 4- and 8-beat sweeps get proportionally more travel from the same budget, which is why
-  they exist.
+  (post-gain) trajectory keeps that joint <= this tempo's budget, speed_for(bpm), units/s. Cosine easing
+  peaks at pi/2 x the mean speed, so a one-beat move can cover at most speed_for(bpm) * MOVE_FRAC *
+  60/bpm / (pi/2) commanded units (104 at 80 bpm, 81 at 128, 68 at 180: beat_budget()); the patterns
+  with 4- and 8-beat sweeps get proportionally more travel from the same budget, which is why they exist.
 * Command gains for the runtime's under-delivery live in one GAIN TABLE (GAINS) at the top of the file
   and can be overridden with --gains '{"base_yaw": 1.6, ...}' (a JSON object or @file) once the operator
   has measured ratios. Validation is ALWAYS on the commanded trajectory, and the envelope clamp runs after
@@ -39,10 +36,19 @@ v2 -- what changed and why (the v1 dance was timid on the arm: at 132 bpm it gav
   then releases over beats 7-8 back to START -- which IS the drop clip's first frame, so the drop that
   follows blends from nothing. The manifest documents the crouch pose ("crouch") next to first/last.
 
+v4 -- what changed and why (the v3 dance was tall but narrow: measured through LampModel.head, the head
+spanned 0.271 m vertically against a reachable 0.270 m, and only 0.107 m sideways). Sideways travel is
+the head's distance from the yaw axis times the sine of the turn, and v3 did its big turns with the arm
+folded, where that distance is 0.067 m. The choreography section below says the rest; the short version
+is REACH (the arm reaches out through the middle of the lift, and only on the beats that are turned) and
+one LIFTS/YAWS table written so the turns happen where the arm is out. hype a now spans 0.260 m sideways
+at 80 and 128 bpm and 0.245 m at 180, out of the same speed budget and inside the same envelope; what it
+spends instead is forward tipping margin, which is why ZMP_Y_MAX exists.
+
 Safety envelope (non-negotiable, validated tonight on the URDF and on the arm): base_pitch >= -65 always;
 base_pitch < -52 only with elbow_pitch <= -45 commanded (so the landed elbow is under -40; shoulder back
-with the elbow not lifted is the flip region); |joint| <= 94; wrist_pitch <= 60 (it stops physically near
-+94); peak speed <= 140 units/s; LampModel.problems() empty on every frame (table and base clearance);
+with the elbow not lifted is the flip region); |joint| <= 98; wrist_pitch <= 60 (it stops physically near
++94); peak speed <= 380 units/s; LampModel.problems() empty on every frame (table and base clearance);
 ZMP: head_y >= +0.020 m and -0.012 m <= zmp_y <= +0.050 m on every frame with the 5-frame CoM smoothing
 of analysis/clip_zmp.py (the forward bound is v4's: the dance now reaches the arm out over the table, so
 that is a direction the lamp can tip in); first and last frame == START. The envelope clamp here is continuous (it lifts
@@ -71,10 +77,11 @@ the clip's own yaw excursion leaves inside the +-94 box (facing_limit), so it ro
 instead of flattening it against the box; validation then runs on the ROTATED trajectory, because turning
 the arm carries the head sideways over the table and that is what the base clearance and the ZMP see. A
 turned clip starts and ends at base_yaw = facing instead of 0, which is what lets consecutive clips at the
-same facing still chain with nothing for the runtime to blend. Measured 2026-09-19 against this servo
-calibration, every tier/variant/tempo validates out to +-25 units; the first to fail is drop c at 80 bpm
-at +30, whose head comes within 0.017 m of the base against the 0.020 m floor -- so a caller that turns
-the dance must check meta["ok"], exactly as the live path already does.
+same facing still chain with nothing for the runtime to blend. Measured against this servo calibration,
+every tier/variant/tempo validates out to +-24 units; the first to fail is hype c at 180 bpm at +25, whose
+forward ZMP reaches the +0.050 m bound -- turning a clip that reaches out to one side swings that reach
+round toward the front, which is exactly why validation runs on the ROTATED trajectory. A caller that
+turns the dance must check meta["ok"], as the live path already does.
 
     .venv/bin/python beat_clips.py --one groove a 127.3 0.8 --out /tmp/x   # one live-style clip, exact bpm
     .venv/bin/python beat_clips.py --one groove a 127.3 0.8 --facing 20 --out /tmp/x   # ... danced turned
@@ -144,8 +151,21 @@ JOINT_MAX = 98.0                     # the servo's calibrated range is +-100; th
 BP_MIN, BP_FLIP, ELBOW_FLIP, WP_MAX = -65.0, -52.0, -45.0, 60.0
 FLIP_BLEND = 13.0                    # elbow units over which the base_pitch floor drops from -52 to -65
 HEAD_Y_MIN, ZMP_Y_MIN = 0.020, -0.012
-ZMP_Y_MAX = 0.050                    # ... and forward, half the radius of the vendor base cylinder the
-                                     # model already carries (safety.yaml cylinder_radius_m 0.10, read as
+ZMP_Y_MAX = 0.085                    # ... and FORWARD, which is the bound that decides how low the dance
+                                     # can reach. The lamp tips when the ZMP leaves its base footprint at
+                                     # 0.100 (safety.yaml cylinder_radius_m via LampModel.base["radius"]).
+                                     #
+                                     # MEASURED 2026-09-20, and the first measurement was wrong in an
+                                     # instructive way. A low pose is NOT what tips the lamp: held still,
+                                     # reaching down to 3.8 cm above the table puts the ZMP at only +0.056,
+                                     # comfortably inside the base. What costs the margin is the
+                                     # ACCELERATION of getting there on the beat, worth another +0.02 to
+                                     # +0.03, and it grows with tempo: the same clip measures +0.072 at
+                                     # 80 bpm and +0.083 at 180. 0.085 clears the worst of those with
+                                     # about 1.5 cm of footprint still in hand.
+                                     #
+                                     # Below 3 cm the TABLE rule takes over anyway (LampModel.table_margin),
+                                     # so 3 cm of clearance is the floor by construction, not by luck.
                                      # LampModel.base["radius"]). v3 never leaned forward so it needed no
                                      # forward bound; v4 reaches the arm out over the table (REACH) to buy
                                      # sideways travel, and that is the side the lamp can now tip toward.
@@ -166,8 +186,34 @@ def clip_seconds(bpm: float) -> float:
     return 2 * HOLD_S + BEATS * beat_period(bpm)
 
 
-def max_move(bpm: float, limit: float = SPEED_DESIGN, move_frac: float = MOVE_FRAC) -> float:
-    """Largest commanded one-beat excursion that a cosine-eased move keeps under `limit` units/s."""
+SPEED_AT_SLOW, SPEED_AT_FAST = 260.0, 340.0   # the budget at BPM_SLOW and at BPM_FAST. 340 and not the
+                                              # vendor's 380: with the bottom of the dance now down at the
+                                              # table's 3 cm margin, the fastest tempi were driving the ZMP
+                                              # onto the BACKWARD bound (-0.012) on the way back up. The
+                                              # last 40 units/s of top-end speed cost more tipping margin
+                                              # than they were worth.
+BPM_SLOW, BPM_FAST = 80.0, 170.0
+
+
+def speed_for(bpm: float) -> float:
+    """The speed budget for this tempo. A FIXED budget made fast songs look tamer than slow ones: a beat
+    is shorter, so the same units/s buys a smaller excursion, and the rate limiter quietly shrank the
+    choreography exactly when the music got more exciting. The budget therefore rises with tempo -- 260
+    units/s at 80 bpm to the vendor's own 380 at 170 and above -- so a faster song moves both faster AND
+    as far. SPEED_LIMIT (380) is unchanged and still the hard ceiling every clip is validated against."""
+    bpm = float(bpm)
+    if bpm <= BPM_SLOW:
+        return SPEED_AT_SLOW
+    if bpm >= BPM_FAST:
+        return SPEED_AT_FAST
+    u = (bpm - BPM_SLOW) / (BPM_FAST - BPM_SLOW)
+    return SPEED_AT_SLOW + u * (SPEED_AT_FAST - SPEED_AT_SLOW)
+
+
+def max_move(bpm: float, limit: float | None = None, move_frac: float = MOVE_FRAC) -> float:
+    """Largest commanded one-beat excursion that a cosine-eased move keeps under `limit` units/s.
+    `limit` None means this tempo's own budget (speed_for)."""
+    limit = speed_for(bpm) if limit is None else limit
     return limit * move_frac * beat_period(bpm) / (math.pi / 2)
 
 
@@ -276,37 +322,48 @@ def bold_multiplier(bold: float) -> float:
 # folded at the bottom, 0.114 m at mid-lift and 0.082 m with the elbow straight up. v3 spent its +-60-unit
 # (+-45 deg) swings near the ends of that line, where a big angle moves the head hardly at all. Two changes,
 # both measured against this calibration and this URDF:
-#   * REACH extends the arm through the middle of the lift, taking r at lift 0.5/0.6 to 0.195/0.200 m.
+#   * REACH extends the arm through the middle of the lift, taking r at lift 0.5/0.6 to 0.166/0.169 m, and
+#     only on the beats that are turned, where a lean costs the least tipping margin (reach_layer).
 #   * LIFTS and YAWS are now one table read in parallel, and every row is written so the beats carrying
-#     |yaw| = 1 sit at a lift of 0.45..0.75 -- the band where r is within 3 % of its maximum -- while the
-#     beats that visit lift 0 and 1 carry yaw near 0. Each phrase is therefore a circle in the frontal
-#     plane (out to one side at mid height, over the top, out to the other side, down to the bottom)
-#     instead of a vertical pump with a wiggle on it, and it spends the same speed budget as before.
-BOTTOM = np.array([0.0, -65.0, -98.0, 0.0, -10.0])   # commanded: shoulder on its floor, elbow folded, head tucked
+#     |yaw| = 1 sit at a lift of 0.45..0.75 -- the band where r is within 10 % of its maximum, 0.169 m at
+#     lift 0.55..0.60 -- while the beats that visit lift 0 and 1 carry yaw near 0. Each phrase is therefore
+#     a circle in the frontal plane (out to one side at mid height, over the top, out to the other side,
+#     down to the bottom) instead of a vertical pump with a wiggle on it, and it asks the joints for no
+#     more speed per beat than the pump did.
+BOTTOM = np.array([0.0, 10.0, -44.0, 0.0, 0.0])      # commanded: reaching DOWN and slightly out, which is
+                                                    # what actually gets the head low. The old pose leaned
+                                                    # BACK on the shoulder floor with the elbow folded and
+                                                    # bottomed out 15.8 cm above the table; this one lands
+                                                    # on the table's own 3 cm margin, the lowest the shade
+                                                    # is allowed to go. Worst forward ZMP over 80..180 bpm
+                                                    # is +0.083 against ZMP_Y_MAX 0.085 and a 0.100 tipping
+                                                    # point. Held still this pose is only +0.056: the rest
+                                                    # is the acceleration of dancing into it.
 TOP = np.array([0.0, -4.0, 94.0, 0.0, 45.0])         # commanded: elbow straight up, shoulder up, head looking out
 LIFT = TOP - BOTTOM
 LIFT_JOINT = EL                                       # the joint with the longest way to go sizes the lift steps
 START_LIFT = float((START[LIFT_JOINT] - BOTTOM[LIFT_JOINT]) / LIFT[LIFT_JOINT])   # 0.40: where START sits
 # REACH: how far the arm reaches out through the middle of the lift, in base_pitch units, shaped by
 # reach_layer(). Leaning out over the table is what it spends: measured over the whole library (every tier,
-# variant and bucket tempo) the worst forward ZMP is +0.028 m with no reach, +0.042 m at REACH 13, +0.044 m
-# at 15 and +0.048 m at 17, against ZMP_Y_MAX. 15 leaves about a tenth of that bound in hand for the live
-# path, which generates clips at tempi this table never saw, and buys the head 0.260 m of sideways travel
-# against v3's 0.107 m. Validator.validate enforces the bound rather than trusting this number.
+# variant and bucket tempo) the worst forward ZMP is +0.0284 m with no reach, +0.0416 at REACH 13, +0.0440
+# at 15 and +0.0464 at 17, against ZMP_Y_MAX. 15 leaves about a tenth of that bound in hand for the live
+# path, which generates clips at tempi this table never saw, and takes the head from v3's 0.107 m of
+# sideways travel to 0.260 m. Validator.validate enforces the bound rather than trusting this number.
 REACH = 15.0
 WIGGLE, SWAY = 0.55, 0.95            # of the beat's budget: the groove tier's swing and the hype/drop tier's.
-                                     # At 80..180 bpm the budget is 152..68 units, so YAW_MAX/YAW_CALM is what
-                                     # actually binds and the swing is the same width at every demo tempo; the
-                                     # fractions bind again above ~200 bpm, where the tracker can still go.
+                                     # beat_budget is 104 units at 80 bpm and 68 at 180, so up to about
+                                     # 126 bpm (groove) and 170 (hype/drop) the ceiling below is what binds
+                                     # and the swing is the same width at every tempo; above that these
+                                     # narrow it with the beat, which is what keeps it landing on the beat.
 ACCENT = 1.3                         # beat 1 of each bar swings 30 % wider, up to the ceiling
 ACCENT_BEATS = (1, 5)
 YAW_MAX = 68.0                       # the head never turns further than this from the crowd (commanded).
                                      # 68 units is 51 deg on this calibration, and sideways travel is
-                                     # r * sin of it: 60 -> 68 is worth 0.023 m of head travel and costs
-                                     # the turn nothing in tipping margin (a turned head leans less far
-                                     # forward, not more). What it costs is room for `facing`: the +-98 box
-                                     # leaves 30 units for the turn, and facing_limit measures the clips
-                                     # validating to +-25 anyway, so the turn is not what binds here.
+                                     # r * sin of it: 60 -> 68 takes hype a at 128 bpm from 0.237 to
+                                     # 0.260 m and costs no tipping margin at all (a turned head leans
+                                     # less far forward, not more). What it costs is room for `facing`:
+                                     # the +-98 box leaves 30 units rather than 38, and every clip
+                                     # validates to +-24 anyway, so the turn is not what binds here.
 YAW_CALM = 45.0                      # ... and the groove tier, the calm one, stays inside this
 ROLL = -0.4                          # wrist_roll counter-tilts the yaw so the head stays level-ish
 NOD = 10.0                           # wrist_pitch nod on the crowd sweep
@@ -317,8 +374,8 @@ SWEEP_C = [-0.33, -0.83, -1.0, 0.0, 1.0, 0.83, 0.33]         # hype/drop c: acro
 # Lift and yaw on beats 1..7 (beats 0 and 8 are START, lift 0.40, yaw 0), read as one table: LIFTS is
 # 0 = BOTTOM .. 1 = TOP and YAWS is -1..+1 of the tier's yaw ceiling. Rate-limited to the tempo by
 # lift_profile() and yaw_layer(). Every |yaw| = 1 beat below sits at a lift of 0.45..0.75, which is where
-# the head is furthest from the yaw axis and a swing is worth the most travel; every lift 0 or lift 1 beat
-# carries little yaw, because there a swing is worth almost nothing.
+# the head is furthest from the yaw axis (0.169 m against 0.067 m folded) and a swing is worth the most
+# travel; every lift 0 or lift 1 beat carries little yaw, because there a swing is worth almost nothing.
 LIFTS = {
     ("hype", "a"): [0.60, 0.85, 1.00, 0.80, 0.60, 0.30, 0.00],   # the wheel: out right at mid height, over
     ("hype", "b"): [0.00, 0.45, 0.90, 0.45, 0.00, 0.45, 0.90],   # bottom-up: rises out of the floor twice,
@@ -347,7 +404,7 @@ YAWS = {
 DEFAULT_BPM = 128.0                                          # keyframes() without a tempo: the demo tempo
 
 
-def beat_budget(bpm: float, limit: float = SPEED_DESIGN) -> float:
+def beat_budget(bpm: float, limit: float | None = None) -> float:
     """The most a joint may move in ONE beat (commanded units) and stay under the speed budget."""
     return max_move(bpm, limit) * SPEED_MARGIN * 0.995
 
@@ -359,7 +416,7 @@ def lift_profile(tier: str, variant: str, bpm: float) -> np.ndarray:
     START, so the phrase always reaches as far as the tempo allows and always gets home on beat 8.
 
     The elbow is still the slowest joint after REACH: per unit of lift it commands 192 * 1.2 = 230 units,
-    against base_pitch's (61 + REACH * pi) * 1.15 = 160 at the steepest point of the hump."""
+    against base_pitch's (61 + REACH * pi) * 1.15 = 124 at the steepest point of the hump."""
     if (tier, variant) not in LIFTS:
         raise ValueError(f"unknown tier/variant {tier!r} {variant!r}")
     d = beat_budget(bpm) / abs(LIFT[LIFT_JOINT])
@@ -373,8 +430,9 @@ def lift_profile(tier: str, variant: str, bpm: float) -> np.ndarray:
     return np.clip(L, 0.0, 1.0)
 
 
-def reach_layer(L: np.ndarray, yaw: np.ndarray, reach: float = REACH) -> np.ndarray:
+def reach_layer(L: np.ndarray, yaw: np.ndarray, reach: float | None = None) -> np.ndarray:
     """How far the arm reaches out on each beat, in base_pitch units, given the lift and the yaw.
+    `reach` None means REACH, read at call time so that trying another value is one assignment.
 
     Two factors, and both of them are the same argument: reach only pays where a yaw swing pays.
     * sin(pi * L) -- zero at BOTTOM and at TOP, so the head's 0.165..0.435 m vertical envelope is exactly
@@ -383,18 +441,21 @@ def reach_layer(L: np.ndarray, yaw: np.ndarray, reach: float = REACH) -> np.ndar
     * |yaw| / YAW_MAX -- full reach on a beat turned to the ceiling, none on a beat that passes through
       the centre, and part of it in between. Leaning out costs forward tipping margin, and a turned head
       spends less of it, because its distance from the axis lands sideways rather than in front; so the
-      beats that would pay the most for the lean are exactly the ones that get none of it. The tier's own
-      swing is what it is scaled by, not the phrase's peak: the groove tier turns to YAW_CALM rather than
-      YAW_MAX, and a shallower turn really does carry more of the reach forward.
+      beats that would pay the most for the lean are exactly the ones that get none of it. Measured over
+      the whole library this is the difference between a worst forward ZMP of +0.0529 m and one of
+      +0.0440 m, at the same REACH and the same 0.260 m of sideways travel. The scale is YAW_MAX and not
+      the phrase's own peak on purpose: the groove tier only turns to YAW_CALM, and a shallower turn
+      really does carry more of the reach forward.
     """
     turned = np.minimum(np.abs(np.asarray(yaw, dtype=float)) / YAW_MAX, 1.0)
+    reach = REACH if reach is None else float(reach)
     return reach * np.sin(math.pi * np.asarray(L, dtype=float)) * turned
 
 
 def lift_pose(L, reach=0.0) -> np.ndarray:
     """The arm pose(s) at lift L: the BOTTOM..TOP line, plus `reach` on base_pitch (reach_layer()).
     Reach only ever RAISES base_pitch, so it cannot push the shoulder toward its -65 floor or into the
-    flip region; at lift 0.6 and full reach the head's distance from the yaw axis goes 0.114 -> 0.20 m."""
+    flip region; at lift 0.6 and full reach the head's distance from the yaw axis goes 0.114 -> 0.169 m."""
     L = np.asarray(L, dtype=float)
     K = BOTTOM[None, :] + L[..., None] * LIFT[None, :]
     K[..., BP] += np.asarray(reach, dtype=float)
@@ -419,9 +480,13 @@ def yaw_layer(tier: str, variant: str, bpm: float, L: np.ndarray) -> tuple[np.nd
         sink = np.clip((START_LIFT - L) / START_LIFT, 0.0, 1.0)
         return -25.0 * sink, 20.0 * sink, nod
     if (tier, variant) == ("build", "c"):          # looks left and right on alternate beats while sinking
+        # 22 rather than the 12 this had while a and c were telling each other apart on the shiver alone:
+        # at 12 the two clips differ by 0.17 of their own size (rms, 128 bpm) and the audience sees the
+        # same crouch twice, at 22 by 0.23. The crouch keeps the head over the yaw axis, so a wider look
+        # costs the tipping margins nothing -- build's worst forward ZMP is +0.025 m against the +0.050.
         sink = np.clip((START_LIFT - L) / START_LIFT, 0.0, 1.0)
-        yaw = 12.0 * np.where(k % 2 == 1, 1.0, -1.0) * sink
-        nod = NOD * 0.6 * np.where(k % 2 == 1, 1.0, -1.0) * (sink > 0)
+        yaw = 22.0 * np.where(k % 2 == 1, 1.0, -1.0) * sink
+        nod = NOD * np.where(k % 2 == 1, 1.0, -1.0) * (sink > 0)
     elif (tier, variant) in YAWS:
         shape = np.array(YAWS[(tier, variant)], dtype=float)
         peak = float(np.abs(shape).max())
@@ -518,10 +583,11 @@ def raw_trajectory(tier: str, bpm: float, variant: str = "a") -> np.ndarray:
     return U + shiver_overlay(tier, variant, bpm, t)
 
 
-def joint_scales(raw: np.ndarray, bpm: float, gain: np.ndarray = GAIN, limit: float = SPEED_DESIGN) -> np.ndarray:
+def joint_scales(raw: np.ndarray, bpm: float, gain: np.ndarray = GAIN, limit: float | None = None) -> np.ndarray:
     """Per joint, the largest s_j <= 1 (step 0.005) whose commanded excursion gain_j * s_j * (raw - START)
     stays <= limit * SPEED_MARGIN units/s. The trajectory is linear in the excursion, so the peak speed
     scales linearly and no search is needed; the envelope clamp afterwards can only slow a joint."""
+    limit = speed_for(bpm) if limit is None else limit
     peak = peak_speed(apply_gain(raw, gain))
     s = np.ones(len(JOINTS))
     for j in range(len(JOINTS)):
@@ -551,14 +617,14 @@ def facing_limit(U: np.ndarray, facing: float) -> float:
 
     `U` is the COMMANDED trajectory before clamp_envelope (the clamp is what this avoids). The clip's own
     yaw excursion is the room the turn has to fit in: with hi = max(base_yaw) and lo = min(base_yaw) the
-    turn f must satisfy hi + f <= JOINT_MAX and lo + f >= -JOINT_MAX. Measured 2026-09-19 over every tier,
-    variant and bucket tempo at bold 1.0, that leaves +-34 units at worst (hype b at 80 bpm, whose yaw
-    rides the lift up to YAW_MAX) and +-54 at best (groove a, whose sway is +-40).
+    turn f must satisfy hi + f <= JOINT_MAX and lo + f >= -JOINT_MAX. Measured over every tier, variant
+    and bucket tempo at bold 1.0, that leaves +-30 units at worst (hype a at 80 bpm, whose wheel reaches
+    YAW_MAX on beats 1 and 5) and +-91 at best (build a, which does not turn at all).
 
     The box is only the limit that can be checked here, without the robot model: turning the arm swings
     the head sideways over the table, so Validator.validate on the rotated clip stays the final word.
-    Measured the same day against this calibration, every clip validates out to +-25 units; the first to
-    fail is drop c at 80 bpm at +30, head_y 0.017 m against the 0.020 m floor.
+    Measured against this calibration, every clip validates out to +-24 units; the first to fail is
+    hype c at 180 bpm at +25, on the +0.050 m forward ZMP bound.
     """
     f = float(facing)
     if f == 0.0 or f != f:              # no turn asked (NaN -> none, as bold_multiplier reads it): today's clip

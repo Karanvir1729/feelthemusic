@@ -159,6 +159,11 @@ FACING_HOLD_S = 8.0
 # rejects costs a wasted ~100 ms clip build and drops the dance back to the library, so the wander
 # stays inside what every clip can take.
 WANDER_UNITS, WANDER_EVERY_S, SURPRISE_TIER = 20.0, 7.0, 0.25
+# The moves grow with the BASS. The operator's "Bolder moves" slider stays the ceiling and the bass
+# rides underneath it: a quiet passage plays at BASS_FLOOR of the slider, a heavy one at all of it.
+# Quantised to BASS_STEP because every distinct boldness is a fresh ~100 ms clip build on the Pi, and
+# a value that drifted continuously would rebuild the clip several times a second and never post one.
+BASS_FLOOR, BASS_STEP = 0.55, 0.15
 # Restarting the follower on a track change: the outgoing follow.py settles the arm and restores the
 # runtime's idle on its way out (poster.wait_idle up to 5 s, a settle POST, idle_restore), so it is given
 # FOLLOW_EXIT_S after SIGTERM before the start is queued, the start polls another RESTART_WAIT_S for it to
@@ -586,7 +591,8 @@ class ClipScheduler:
         self.status_fn = status or (lambda: lamp("/api/animations/status", timeout=1.0))
         self.start_latency_ns, self.hold_ns, self.log = int(start_latency_ns), int(hold_ns), log
         self.available = available
-        self.live, self.bold = live, clamp(float(bold))
+        self.live, self.bold = live, clamp(float(bold))   # the operator's slider: the ceiling
+        self.bass = 1.0                            # 0..1, quantised; multiplies the slider (gen_bold)
         self.facing = 0.0                          # base_yaw the live clips are built around; 0 = the home heading
         self.rng = random.Random()                 # variant, tier surprise and the idle wander; seedable in tests
         self.live_posts = 0                        # clips posted from the live generator (the rest: the library)
@@ -663,6 +669,23 @@ class ClipScheduler:
         self.bold = b
         return True
 
+    def set_bass(self, level: float) -> bool:
+        """How hard the music is hitting, 0..1, quantised to BASS_STEP. Returns whether it changed, so
+        the caller can log it. Fed from the show's smoothed bass every tick; the quantisation is what
+        keeps it from rebuilding the prepared clip continuously."""
+        q = round(clamp(float(level)) / BASS_STEP) * BASS_STEP
+        q = round(min(1.0, max(0.0, q)), 2)
+        if q == self.bass:
+            return False
+        self.bass = q
+        return True
+
+    def gen_bold(self) -> float:
+        """The boldness a clip is actually generated at: the operator's slider scaled by the bass, never
+        above the slider. At BASS_FLOOR the quiet passages still move properly; the slider still means
+        what it says at its own top end when the bass is full."""
+        return round(clamp(self.bold * (BASS_FLOOR + (1.0 - BASS_FLOOR) * self.bass)), 2)
+
     def set_facing(self, facing: float) -> bool:
         """Where the dance points: the base_yaw the live clips are generated around, in joint units,
         0 being the lamp's home heading. Fed by Show.update_facing from the yaw follow.py reports
@@ -701,11 +724,11 @@ class ClipScheduler:
         if live is None or not live.usable(now_ns):
             return
         letter = self.next_letter(tier)
-        if live.covers(tier, letter, bpm, self.bold, self.facing):
+        if live.covers(tier, letter, bpm, self.gen_bold(), self.facing):
             return
         if post_at - now_ns < live.PREP_NS:
             return
-        live.request(tier, letter, bpm, self.bold, post_at, self.facing)
+        live.request(tier, letter, bpm, self.gen_bold(), post_at, self.facing)
 
     def take_live(self, tier: str, bpm: float):
         """The ready live clip to post now, or None (-> the library). Whatever is ready is posted even if
@@ -1962,6 +1985,9 @@ class Show:
         music = self.music
         loud = self.audio.now[2] if (self.audio and self.audio.now) else 0.0
         self.excite = excitement(sum(1 for t in self.hits if now - t < 2.0), loud)
+        # The dance grows with the music: the panel already uses this smoothed bass for its floor
+        # colour, so the light and the arm swell together instead of disagreeing.
+        self.scheduler.set_bass(self.panel.model.bass if self.music else 0.0)
         # A phone in the middle of the lamp's view turns the panel green. Read here, at 20 Hz, so it
         # works in every mode the panel is lit in -- follow mode, whose follower commands the arm, and
         # dance, whose watch-only one only reports -- and so the conductor's copy and the panel's are
