@@ -356,13 +356,23 @@ def test_parse_control_with_and_without_lamp_key():
     new = b"\x0d" + json.dumps({"lat": 280, "v": 2, "session": 4022250974,
                                 "lamp": {"mode": "dance", "lights": False, "gen": 7}}).encode()
     c = L.parse_control(new)
-    assert c["lat"] == 280.0 and c["lamp"] == {"mode": "dance", "lights": False, "gen": 7, "bold": None} and c["session"] == 4022250974
+    assert c["lat"] == 280.0 and c["session"] == 4022250974
+    assert c["lamp"] == {"mode": "dance", "lights": False, "gen": 7, "bold": None, "track": None}
     bad = b"\x0d" + json.dumps({"lamp": {"mode": "spin", "gen": 1}}).encode()
-    assert L.parse_control(bad)["lamp"] == {"mode": None, "lights": None, "gen": 1, "bold": None}
+    assert L.parse_control(bad)["lamp"] == {"mode": None, "lights": None, "gen": 1, "bold": None, "track": None}
     assert L.parse_control(b"\x0d{not json") == {"lat": None, "session": None, "lamp": None}
     odd = b"\x0d" + json.dumps({"lat": "x", "session": "y", "lamp": {"mode": "light", "gen": "z"}}).encode()
-    assert L.parse_control(odd) == {"lat": None, "session": None, "lamp": {"mode": "light", "lights": None, "gen": 0, "bold": None}}
+    assert L.parse_control(odd) == {"lat": None, "session": None,
+                                    "lamp": {"mode": "light", "lights": None, "gen": 0, "bold": None, "track": None}}
     assert L.parse_control(b"\x0d[1,2]") == {"lat": None, "session": None, "lamp": None}
+
+
+def test_parse_control_track_is_face_or_phone_and_missing_keeps_current():
+    def lamp_of(**kw):
+        return L.parse_control(b"\x0d" + json.dumps({"lamp": {"mode": "follow", "gen": 1, **kw}}).encode())["lamp"]
+    assert lamp_of(track="phone")["track"] == "phone" and lamp_of(track="face")["track"] == "face"
+    assert lamp_of()["track"] is None                                # missing -> keep the current target
+    assert lamp_of(track="hand")["track"] is None and lamp_of(track=3)["track"] is None and lamp_of(track=None)["track"] is None
 
 
 def test_hello_contents_for_the_new_conductor():
@@ -1153,3 +1163,194 @@ def test_beat_tracker_rarely_locks_on_random_intervals():
             t += int(rnd.uniform(0.30, 0.74) * 1e9); tr.feed(t)
         locks += tr.locked(t + 10_000_000)
     assert locks <= 1, locks
+
+
+# ---- the follower's target: telemetry, cadence and the conductor's track choice --------------------
+def test_target_file_is_read_by_mtime_with_one_stat_per_poll(tmp_path):
+    path = tmp_path / "target.json"
+    tf = L.TargetFile(str(path), poll=0.1)
+    assert tf.read(0.0) == L.TargetFile.EMPTY
+    path.write_text(json.dumps({"t": 1.0, "kind": "phone", "seen": True, "x": 0.5, "y": 0.5, "aim_deg": 2.34,
+                                "center": 0.8, "state": "tracking"}))
+    os.utime(path, ns=(1_000_000_000_000, 1_000_000_000_000))     # mtime = 1000.0 s wall
+    assert tf.read(0.05) == L.TargetFile.EMPTY                     # inside the poll: no stat yet
+    seen = tf.read(0.1, wall=1000.5)
+    assert seen == {"kind": "phone", "seen": True, "center": 0.8, "aim_deg": 2.3, "age_s": 0.5}
+    assert tf.read(0.15, wall=1003.0)["seen"] is False             # stale for FRESH_S: no target claimed
+    assert tf.read(0.15, wall=1003.0)["age_s"] == 3.0
+    path.write_text(json.dumps({"kind": "face", "seen": False, "center": 0.3, "aim_deg": None}))
+    os.utime(path, ns=(1_001_000_000_000, 1_001_000_000_000))
+    assert tf.read(0.19, wall=1001.0)["kind"] == "phone"           # unchanged until the next poll
+    assert tf.read(0.2, wall=1001.0) == {"kind": "face", "seen": False, "center": 0.3, "aim_deg": None, "age_s": 0.0}
+    path.write_text(json.dumps({"kind": 7, "seen": True, "center": "x", "aim_deg": "nan"}))
+    os.utime(path, ns=(1_002_000_000_000, 1_002_000_000_000))
+    assert tf.read(0.31, wall=1002.0) == {"kind": None, "seen": True, "center": 0.0, "aim_deg": None, "age_s": 0.0}
+    path.write_text("{not json")
+    os.utime(path, ns=(1_003_000_000_000, 1_003_000_000_000))
+    assert tf.read(0.42) == L.TargetFile.EMPTY
+    path.unlink()
+    assert tf.read(0.53) == L.TargetFile.EMPTY
+
+
+def test_lamp_telemetry_carries_the_target_and_goes_to_5hz_while_it_is_seen(monkeypatch, tmp_path):
+    show = bare_show(monkeypatch, [])
+    path = tmp_path / "target.json"
+    show.targets = L.TargetFile(str(path), poll=0.0)               # every read stats (the poll has its own test)
+    status = show.lamp_status()
+    assert status["target"] == L.TargetFile.EMPTY and show.lamp_period() == 1.0
+    stamp = [1_700_000_000_000_000_000]
+
+    def write(**body):
+        path.write_text(json.dumps({"t": 1.0, "kind": "phone", "seen": True, "x": 0.52, "y": 0.5, "aim_deg": 2.34,
+                                    "center": 1.0, "state": "tracking", **body}))
+        stamp[0] += 1_000_000                                      # a distinct mtime whatever the filesystem
+        os.utime(path, ns=(stamp[0], stamp[0]))
+
+    write()
+    monkeypatch.setattr(L.time, "time", lambda: stamp[0] / 1e9 + 0.1)
+    status = show.lamp_status()
+    assert status["target"] == {"kind": "phone", "seen": True, "center": 1.0, "aim_deg": 2.3, "age_s": 0.1}
+    assert show.lamp_period() == 0.2
+    show.send_lamp()
+    sent = json.loads(show.sock.sent[-1][1:])
+    assert sent["t"] == "lamp" and sent["target"]["seen"] is True and sent["target"]["center"] == 1.0
+    for k in ("state", "mode", "locked", "piC", "sdk", "moves", "refused", "lights", "bpm"):
+        assert k in sent                                           # everything else in the packet is unchanged
+    assert sent["mode"] == "light" and sent["sdk"] == L.SDK
+    write(seen=False, center=0.4)
+    assert show.lamp_status()["target"]["seen"] is False and show.lamp_period() == 1.0
+    write()
+    monkeypatch.setattr(L.time, "time", lambda: stamp[0] / 1e9 + 10.0)   # the follower died 10 s ago
+    t = show.lamp_status()["target"]
+    assert t["seen"] is False and t["age_s"] == 10.0 and show.lamp_period() == 1.0
+
+
+def test_track_change_restarts_the_follower_on_the_new_target(monkeypatch, tmp_path, capsys):
+    calls, popens, running = [], [], []
+
+    def run(args, **kw):
+        calls.append(args[0])
+        if args[0] == "pkill":
+            running.clear()
+            return _types.SimpleNamespace(returncode=0)
+        return _types.SimpleNamespace(returncode=0 if running else 1)         # pgrep
+
+    def popen(args, **kw):
+        assert args[0] == "setsid" and args[1].endswith("run_face.sh")
+        popens.append(kw["env"]["FOLLOW_TARGET"]); running.append(1)
+        return _types.SimpleNamespace(pid=4242 + len(popens), wait=lambda timeout=None: 0, poll=lambda: None)
+
+    show = bare_show(monkeypatch, [])
+    monkeypatch.setattr(L.subprocess, "run", run)
+    monkeypatch.setattr(L.subprocess, "Popen", popen)
+    monkeypatch.setattr(L, "FOLLOW_LOG", str(tmp_path / "follow.log"))
+    import time as _t
+
+    def control(**lamp):
+        show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"gen": 1, **lamp}}).encode(), _t.monotonic())
+
+    assert show.track == "face"
+    control(mode="light", track="phone")                           # remembered; nothing to restart
+    assert show.track == "phone" and popens == []
+    control(mode="follow")                                         # no track key: keeps phone, starts on it
+    assert wait_for(lambda: popens == ["phone"])
+    control(mode="follow", track="phone")                          # same track: no restart
+    _t.sleep(0.05)
+    assert popens == ["phone"] and "pkill" not in calls
+    control(mode="follow", track="face")                           # a change while following: stop, start on face
+    assert wait_for(lambda: popens == ["phone", "face"])
+    assert calls.index("pkill") > calls.index("pgrep") and show.track == "face"
+    control(mode="follow", track="hand")                           # unknown: ignored
+    _t.sleep(0.05)
+    assert show.track == "face" and popens == ["phone", "face"]
+    out = capsys.readouterr().out
+    assert "track face -> phone" in out and "track phone -> face" in out and "follow: restarting on face" in out
+    assert "started run_face.sh --target phone" in out and "started run_face.sh --target face" in out
+    show2 = bare_show(monkeypatch, [], mode="light")
+    assert L.Show.__init__.__defaults__[-1] == "face" and show2.track == "face"
+
+
+class _Lamp:
+    """A lamp whose follow.py is a flag: pgrep reads it, pkill clears it (unless the follower is told
+    to linger, then only SIGKILL does, or nothing at all). Popen sets it and records FOLLOW_TARGET."""
+    def __init__(self, show, monkeypatch, tmp_path):
+        self.show, self.alive, self.linger, self.immortal = show, False, False, False
+        self.pkills, self.popens = [], []
+        monkeypatch.setattr(L.subprocess, "run", self.run)
+        monkeypatch.setattr(L.subprocess, "Popen", self.popen)
+        monkeypatch.setattr(L, "FOLLOW_LOG", str(tmp_path / "follow.log"))
+        monkeypatch.setattr(L, "FOLLOW_EXIT_S", 0.01)
+        monkeypatch.setattr(L, "RESTART_WAIT_S", 0.06)
+        monkeypatch.setattr(L, "FOLLOW_KILL_GRACE_S", 0.06)
+        monkeypatch.setattr(L, "FOLLOW_POLL_S", 0.005)
+
+    def run(self, args, **kw):
+        if args[0] == "pkill":
+            self.pkills.append(args)
+            if self.immortal: pass
+            elif "-KILL" in args or not self.linger: self.alive = False
+            return _types.SimpleNamespace(returncode=0)
+        return _types.SimpleNamespace(returncode=0 if self.alive else 1)          # pgrep
+
+    def popen(self, args, **kw):
+        assert args[0] == "setsid" and args[1].endswith("run_face.sh")
+        self.popens.append(kw["env"]["FOLLOW_TARGET"]); self.alive = True
+        return _types.SimpleNamespace(pid=4242 + len(self.popens), wait=lambda timeout=None: 0, poll=lambda: None)
+
+    def control(self, **lamp):
+        import time as _t
+        self.show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"gen": 1, **lamp}}).encode(), _t.monotonic())
+
+
+def follow_on(monkeypatch, tmp_path, track="phone"):
+    show = bare_show(monkeypatch, [])
+    lamp = _Lamp(show, monkeypatch, tmp_path)
+    lamp.control(mode="follow", track=track)
+    assert wait_for(lambda: lamp.popens == [track]) and show.follow_track == track
+    return show, lamp
+
+
+def test_restart_sigkills_a_follower_that_lingers_past_the_wait(monkeypatch, tmp_path, capsys):
+    show, lamp = follow_on(monkeypatch, tmp_path)
+    lamp.linger = True                                             # SIGTERM does not end it (settling, idle restore)
+    lamp.control(mode="follow", track="face")
+    assert wait_for(lambda: lamp.popens == ["phone", "face"])
+    assert [a for a in lamp.pkills if "-KILL" in a] == [["pkill", "-KILL", "-f", "[f]ollow.py"]]
+    assert lamp.pkills[0] == ["pkill", "-f", "[f]ollow.py"]        # SIGTERM first, SIGKILL only after the wait
+    assert show.follow_track == "face" and lamp.alive
+    out = capsys.readouterr().out
+    assert "still running" in out and "SIGKILL" in out and "started run_face.sh --target face" in out
+
+
+def test_failed_restart_is_loud_and_the_next_control_retries(monkeypatch, tmp_path, capsys):
+    show, lamp = follow_on(monkeypatch, tmp_path)
+    lamp.linger = lamp.immortal = True                             # nothing ends the old follower
+    lamp.control(mode="follow", track="face")
+    assert wait_for(lambda: show.follow_track is None)             # gave up: the running track is unknown
+    assert lamp.popens == ["phone"] and show.track == "face"       # ... and nothing was spawned on top of it
+    out = capsys.readouterr().out
+    assert "COULD NOT RESTART on face" in out and "next Control retries" in out
+    kills = len(lamp.pkills)
+    lamp.immortal = False                                          # the old follower can be killed now
+    lamp.control(mode="follow", track="face")                      # the same track again: a retry, not a no-op
+    assert wait_for(lambda: lamp.popens == ["phone", "face"])
+    assert len(lamp.pkills) > kills and show.follow_track == "face"
+    assert "follow: restarting on face (retry)" in capsys.readouterr().out
+    lamp.control(mode="follow", track="face")                      # now a no-op
+    import time as _t; _t.sleep(0.05)
+    assert lamp.popens == ["phone", "face"]
+
+
+def test_two_quick_track_changes_end_on_the_newest_track_once(monkeypatch, tmp_path, capsys):
+    show, lamp = follow_on(monkeypatch, tmp_path)
+    lamp.linger = True                                             # the old follower takes its time to leave
+    lamp.control(mode="follow", track="face")
+    lamp.control(mode="follow", track="phone")                     # ... and the operator changed their mind
+    import time as _t; _t.sleep(0.03)                              # both restarts are queued, the old one lingers
+    assert show.track == "phone" and show.follow_track == "phone"
+    lamp.alive = False                                             # the old follower finally exits
+    assert wait_for(lambda: lamp.popens == ["phone", "phone"])     # one spawn, on the newest track
+    _t.sleep(0.1)
+    assert lamp.popens == ["phone", "phone"] and show.follow_track == "phone"
+    out = capsys.readouterr().out
+    assert "superseded" in out and "--target face" not in out

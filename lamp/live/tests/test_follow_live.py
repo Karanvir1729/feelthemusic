@@ -596,7 +596,7 @@ def test_slow_post_gets_a_full_landing_allowance_after_completion(one_axis_follo
     follower.cycle()
     assert follower.pending == [] and follower.guard.last
     assert follower.guard.misses == 0 and not follower.guard.stalled
-    assert motors.positions()[0]["base_yaw"] == pytest.approx(5.0)
+    assert motors.positions()[0]["base_yaw"] == pytest.approx(follower.cfg.step * motors.delivery)  # one step landed
     assert len(motors.posts) == 1 and follower.settles == 0
 
 
@@ -780,16 +780,177 @@ def test_phone_tracker_locates_pink_screen_and_uses_its_narrow_span(angle):
 
 
 @pytest.mark.parametrize("color", [(0, 0, 255), (0, 128, 255), (0, 255, 0),
-                                  (255, 0, 0), (200, 200, 220), (40, 10, 60)])
+                                  (255, 110, 0), (200, 200, 220), (40, 10, 60)])
 def test_phone_tracker_rejects_nonpink_unsaturated_or_dark_regions(color):
+    # (255, 110, 0) is a cyan-blue (hue ~107): pure blue (hue 120) is inside the measured screen
+    # gradient's low end (118) and is accepted by design.
     assert F.PhoneTracker().locate(phone_frame(((320, 240), (60, 130), 0), color=color)) is None
 
 
-@pytest.mark.parametrize("center,size", [((320, 240), (4, 9)), ((320, 240), (90, 90)),
+@pytest.mark.parametrize("center,size", [((320, 240), (4, 9)), ((320, 240), (30, 140)),
                                        ((320, 240), (10, 150)), ((10, 240), (60, 130)),
                                        ((320, 30), (60, 130)), ((320, 240), (430, 600))])
 def test_phone_tracker_rejects_small_wrong_shape_or_clipped_regions(center, size):
+    # (30, 140) is a stick (aspect 4.7): a square is inside the 0.3..3.5 aspect gate (a screen seen
+    # foreshortened, or the app's purple filling only part of it) and is accepted by design.
     assert F.PhoneTracker().locate(phone_frame((center, size, 0))) is None
+
+
+def app_screen(width=300, height=260, hue=(118, 165), sat=190, val=200, glyphs=True):
+    """A synthetic Feel the Music screen: the blue-violet-to-pink gradient measured on the lamp's
+    camera (OpenCV hue 118..165, S ~190, V ~200) with white UI text and a white dot."""
+    hsv = np.zeros((height, width, 3), dtype=np.uint8)
+    hsv[..., 0] = np.linspace(hue[0], hue[1], width).astype(np.uint8)[None, :]
+    hsv[..., 1], hsv[..., 2] = sat, val
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    if glyphs:
+        for i, text in enumerate(("FEEL THE MUSIC", "128 bpm", "KICK  SNARE", "vibe 0.8")):
+            cv2.putText(bgr, text, (18, 50 + 52 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+        cv2.circle(bgr, (240, 215), 10, (255, 255, 255), -1)
+    return bgr
+
+
+def frame_with_screen(center, screen, angle=0.0):
+    """`screen` pasted into a black 640x480 frame, its centre at `center`, turned by `angle` degrees."""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    h, w = screen.shape[:2]
+    m = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    m[:, 2] += (center[0] - w / 2, center[1] - h / 2)
+    return cv2.warpAffine(screen, m, (640, 480), dst=frame, borderMode=cv2.BORDER_TRANSPARENT)
+
+
+@pytest.mark.parametrize("center,angle", [((200, 200), 0), ((320, 240), 0), ((450, 300), 0), ((320, 240), 48)])
+def test_phone_tracker_locates_the_apps_purple_gradient_screen_with_white_text(center, angle):
+    frame = frame_with_screen(center, app_screen(), angle)
+    seen = F.PhoneTracker().locate(frame)
+    assert seen is not None
+    assert abs(seen[0] - center[0] / 640) <= 0.02                # within 0.02 of the frame width ...
+    assert abs(seen[1] * 480 - center[1]) <= 0.02 * 640         # ... on both axes
+
+
+@pytest.mark.parametrize("hue", [(134, 134), (118, 122), (160, 165)])
+def test_phone_tracker_accepts_the_measured_median_and_both_ends_of_the_gradient(hue):
+    seen = F.PhoneTracker().locate(frame_with_screen((320, 240), app_screen(hue=hue, sat=190, val=199)))
+    assert seen is not None and seen[:2] == pytest.approx((0.5, 0.5), abs=0.01)
+
+
+def test_phone_mask_closes_the_text_holes_but_not_a_real_hole():
+    tracker = F.PhoneTracker()
+    frame = frame_with_screen((320, 240), app_screen())
+    inside = tracker.mask(frame)[110:370, 170:470]
+    assert cv2.countNonZero(inside) / inside.size >= 0.97        # the glyphs are closed over
+    cv2.rectangle(frame, (230, 150), (410, 330), (0, 0, 0), -1)  # a 180x180 hole (fill < 65 %): not a screen
+    assert tracker.locate(frame) is None
+
+
+def test_phone_tracker_is_lost_in_a_purple_stage_wash_but_not_a_dim_one():
+    """Documents the limit: the colour gate cannot tell the screen from surroundings lit the same
+    purple (measured on the real frame: with the background recoloured to hue 140 and its saturation
+    raised, the mask floods 56 % of the frame and nothing screen-shaped is left). A wash below the
+    gate's saturation (80) is fine."""
+    screen = app_screen()
+    washed = np.zeros((480, 640, 3), dtype=np.uint8)
+    washed[:] = cv2.cvtColor(np.uint8([[[140, 150, 140]]]), cv2.COLOR_HSV2BGR)[0, 0]
+    frame = frame_with_screen((320, 240), screen)
+    frame[np.all(frame == 0, axis=2)] = washed[0, 0]
+    assert F.PhoneTracker().locate(frame) is None                  # the screen merges with the wash
+    dim = frame_with_screen((320, 240), screen)
+    dim[np.all(dim == 0, axis=2)] = cv2.cvtColor(np.uint8([[[140, 60, 140]]]), cv2.COLOR_HSV2BGR)[0, 0]
+    seen = F.PhoneTracker().locate(dim)
+    assert seen is not None and seen[:2] == pytest.approx((0.5, 0.5), abs=0.01)
+
+
+def test_live_config_defaults_move_fast_but_the_step_is_capped_by_the_speed_budget():
+    cfg = F.LiveConfig()
+    assert (cfg.step, cfg.period, cfg.live_ms) == (F.LIVE_STEP, F.LIVE_PERIOD, F.LIVE_MS) == (30.0, 0.25, 250)
+    assert cfg.speed == pytest.approx(120.0) and cfg.speed <= F.LIVE_SPEED_CAP < 300  # the runtime refuses above 300
+    big = F.LiveConfig(step=100.0, live_ms=250)                    # FOLLOW_ARGS="--live-step 100": clamped
+    assert big.step == pytest.approx(35.0) and big.step_asked == 100.0 and big.speed == pytest.approx(140.0)
+    assert F.LiveConfig(step=100.0, live_ms=1000).step == 100.0    # a slow move may take a big step
+    cfg = F.LiveConfig(step=30.0)
+    assert cfg.limit_speed(300.0 / 2) is False and cfg.step == 30.0   # the SDK reports 300: half of it, no change
+    assert cfg.limit_speed(80.0) is True and cfg.step == pytest.approx(20.0) and cfg.speed == pytest.approx(80.0)
+    assert cfg.limit_speed(1000.0) is True and cfg.step == pytest.approx(20.0)  # a cap never loosens
+
+
+def test_center_score_is_one_in_the_dead_zone_and_falls_linearly_to_the_edge():
+    assert F.center_score(0.5, 0.5) == 1.0
+    assert F.center_score(0.54, 0.46) == 1.0 and F.center_score(0.549, 0.5) == 1.0
+    assert F.center_score(0.551, 0.5) < 1.0
+    assert F.center_score(0.25, 0.5) == pytest.approx((0.5 - 0.25) / 0.45)      # a quarter of the way in
+    assert F.center_score(0.5, 0.75) == pytest.approx((0.5 - 0.25) / 0.45)
+    assert F.center_score(0.5, 0.125) == pytest.approx((0.5 - 0.375) / 0.45)
+    assert F.center_score(1.0, 0.5) == 0.0 and F.center_score(0.0, 0.0) == 0.0 and F.center_score(0.5, 1.2) == 0.0
+
+
+def test_target_report_writes_atomically_with_the_fields_and_reuses_the_last_sighting(tmp_path, monkeypatch):
+    import json
+    clock = FakeClock()
+    path = tmp_path / "deep" / "target.json"
+    replaced, real_replace = [], os.replace
+
+    def replace(src, dst):
+        assert os.path.exists(src) and str(src).endswith(".tmp") and not os.path.exists(dst) or replaced
+        replaced.append((str(src), str(dst)))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(F.os, "replace", replace)
+    report = F.TargetReport(path, clock=clock)
+    body = report.write("phone", (0.52, 0.49), 3.2, "tracking")
+    assert json.loads(path.read_text()) == body == {"t": 1000.0, "kind": "phone", "seen": True, "x": 0.52, "y": 0.49,
+                                                     "aim_deg": 3.2, "center": 1.0, "state": "tracking"}
+    assert replaced == [(str(path) + ".tmp", str(path))] and not (tmp_path / "deep" / "target.json.tmp").exists()
+    clock.sleep(0.1)
+    body = report.write(None, None, None, "holding")             # unseen: the last sighting still gives the centre
+    assert json.loads(path.read_text()) == body
+    assert body == {"t": pytest.approx(1000.1), "kind": "phone", "seen": False, "x": 0.52, "y": 0.49,
+                    "aim_deg": None, "center": 1.0, "state": "holding"}
+    clock.sleep(0.1)
+    body = report.write("face", (0.2, 0.5), float("nan"), "tracking")
+    assert body["kind"] == "face" and body["aim_deg"] is None and body["center"] == pytest.approx((0.5 - 0.3) / 0.45)
+    fresh = F.TargetReport(tmp_path / "t2.json", clock=clock)     # before any sighting
+    assert fresh.write(None, None, None, "searching") == {"t": pytest.approx(1000.2), "kind": None, "seen": False,
+                                                          "x": None, "y": None, "aim_deg": None, "center": 0.0,
+                                                          "state": "searching"}
+    assert report.writes == 3 and report.errors == 0
+
+
+def test_target_report_writes_at_most_twenty_times_a_second(tmp_path):
+    import json
+    clock = FakeClock()
+    report = F.TargetReport(tmp_path / "target.json", clock=clock)
+    for k in range(5):                                            # cycles at 33 Hz
+        clock.t = 1000.0 + k * 0.03
+        report.write("face", (0.5, 0.5), 0.0, "tracking")
+    assert report.writes == 3                                     # t = 1000.00, 1000.06, 1000.12
+    assert json.loads((tmp_path / "target.json").read_text())["t"] == pytest.approx(1000.12)
+
+
+def test_target_report_survives_an_unwritable_path(tmp_path, capsys):
+    report = F.TargetReport(tmp_path / "file.txt" / "target.json", clock=FakeClock())
+    (tmp_path / "file.txt").write_text("not a directory")
+    for _ in range(3):
+        assert report.write("face", (0.5, 0.5), 0.0, "tracking")["seen"] is True
+    assert report.writes == 0 and report.errors == 1              # throttled: one attempt in this 50 ms
+    assert "cannot write" in capsys.readouterr().out
+
+
+def test_live_follower_reports_the_target_every_cycle(one_axis_follow, tmp_path):
+    import json
+    follower, clock, motors, camera = one_axis_follow
+    path = tmp_path / "target.json"
+    follower.report = F.TargetReport(path, clock=clock)
+    run_cycles(follower, clock, 3)
+    body = json.loads(path.read_text())
+    assert body["kind"] == "face" and body["seen"] is True and body["state"] == "tracking"
+    assert 0.5 < body["x"] < 1.0 and body["y"] == 0.5 and body["t"] == pytest.approx(clock() - 0.12)
+    assert body["aim_deg"] == pytest.approx(follower.aim_error) and 0.0 <= body["center"] < 1.0
+    assert body["center"] == pytest.approx(F.center_score(body["x"], body["y"]))
+    camera.point[1] = -1.0                                        # the face leaves
+    run_cycles(follower, clock, 1)
+    gone = json.loads(path.read_text())
+    assert gone["seen"] is False and gone["kind"] == "face" and (gone["x"], gone["y"]) == (body["x"], body["y"])
+    assert gone["t"] == pytest.approx(clock() - 0.12) and follower.report.writes == 4
 
 
 def test_phone_tracker_rejects_blank_irregular_and_hollow_regions():
@@ -993,7 +1154,7 @@ def test_sdk_phone_cli_dry_run_uses_pixels_without_moving_or_raw_idle(sdk_phone_
     frame = phone_frame(((160, 240), (60, 130), 0))
     run([frame] * 3, "--dry-run")
     output = capsys.readouterr().out
-    assert "watching for a bright pink phone screen (dry run: will not move)" in output
+    assert "watching for a phone screen showing the app (purple to pink) (dry run: will not move)" in output
     assert "phone " in output and "base_yaw +0->-22" in output
     assert sdk.moves == [] and not camera.running
 

@@ -34,8 +34,15 @@ Wire facts, from a byte capture of the real conductor:
   Anchor     09 | u32 seqBase | u64 pts | u16 frames | u32 sampleRate | u8 codec (0 pcm, 1 aac-eld, 2 opus)
   Compact    08 | u16 seq16 | u16 sendLag100us | opus/aac payload (one 10 ms access unit, 480 frames)
   Control    0d + JSON; the new conductor adds "lamp": {"mode": off|light|follow|dance, "lights": bool, "gen": int,
-             "bold": 0..1 (the operator's "Bolder moves" slider)}
-  Telemetry we send: hello, `cs` and `lamp` (once a second). Never `au`.
+             "bold": 0..1 (the operator's "Bolder moves" slider), "track": face|phone (what follow mode looks for;
+             missing keeps the current one, default face; a change while following restarts the follower:
+             stop, wait for the old one to leave (FOLLOW_EXIT_S + RESTART_WAIT_S, then SIGKILL), start; a
+             newer restart supersedes a pending one, and one that still finds the old follower alive gives
+             up loudly and forgets the running track so the next Control with a lamp key retries)}
+  Telemetry we send: hello, `cs` and `lamp` (once a second; 5 times a second while the follower sees its
+             target). `lamp` carries "target": {kind, seen, center 0..1, aim_deg, age_s} read from follow.py's
+             target.json (TargetReport), so the conductor can vibrate the phone harder the nearer the middle
+             of the lamp's view it is. Never `au`.
 
   python3 lamp_show.py --conductor <conductor-ip>                 # light only, safe with follow.py
   python3 lamp_show.py --conductor <conductor-ip> --dance --audio # + beat-locked clips + the show on the speaker
@@ -86,6 +93,17 @@ DEFAULT_BOLD = 0.6                            # the dashboard slider's default
 # same band when it takes a ready clip and when it decides whether one must be regenerated, so only a
 # bold/tier/variant change (or a real tempo re-lock) costs a worker job, a CSV write and a listing check.
 LIVE_BPM_TOL = 2.0
+# follow.py --live (run_face.sh) writes what it sees here every cycle; see TargetFile.
+TARGET_FILE = os.path.expanduser("~/feelthemusic-lamp/target.json")
+TRACKS = ("face", "phone")                    # Control lamp.track: what follow mode looks for
+FOLLOW_LOG = "/tmp/follow-face.log"
+# Restarting the follower on a track change: the outgoing follow.py settles the arm and restores the
+# runtime's idle on its way out (poster.wait_idle up to 5 s, a settle POST, idle_restore), so it is given
+# FOLLOW_EXIT_S after SIGTERM before the start is queued, the start polls another RESTART_WAIT_S for it to
+# disappear, then SIGKILLs it and waits FOLLOW_KILL_GRACE_S. run_face.sh inherits FOLLOW_ARGS (extra
+# follow.py options, e.g. the step and period) from this process's environment.
+FOLLOW_EXIT_S, RESTART_WAIT_S, FOLLOW_KILL_GRACE_S, FOLLOW_POLL_S = 6.0, 3.0, 2.0, 0.2
+LAMP_PERIOD_S, LAMP_PERIOD_SEEN_S = 1.0, 0.2  # `lamp` telemetry cadence: idle, and while a target is seen
 
 
 def lamp(path: str, body: dict | None = None, timeout: float = 4.0):
@@ -1016,10 +1034,12 @@ def parse_event(d: bytes) -> dict | None:
 
 
 def parse_control(d: bytes) -> dict:
-    """Control JSON; returns {"lat": float|None, "session": int|None, "lamp": {"mode","lights","gen","bold"}|None}.
+    """Control JSON; returns {"lat": float|None, "session": int|None,
+    "lamp": {"mode","lights","gen","bold","track"}|None}.
     The old conductor sends no lamp key (then the CLI flags stay in charge). `session` is the
     conductor's per-launch random id: a new one means its seq counters start again from 0. `bold` is
-    the "Bolder moves" slider, clamped to 0..1; missing or unreadable -> None (keep the current value)."""
+    the "Bolder moves" slider, clamped to 0..1; missing or unreadable -> None (keep the current value).
+    `track` is what follow mode looks for ("face" | "phone"); missing or unknown -> None (keep the current)."""
     out = {"lat": None, "session": None, "lamp": None}
     try:
         j = json.loads(d[1:] if d and d[0] == 13 else d)
@@ -1044,9 +1064,10 @@ def parse_control(d: bytes) -> dict:
                 bold = clamp(float(l["bold"]))                  # NaN -> 0 by clamp(); strings that parse are fine
             except (TypeError, ValueError):
                 bold = None
+        track = l.get("track")
         out["lamp"] = {"mode": mode if mode in MODES else None,
                        "lights": bool(l["lights"]) if "lights" in l else None,
-                       "gen": gen, "bold": bold}
+                       "gen": gen, "bold": bold, "track": track if track in TRACKS else None}
     return out
 
 
@@ -1069,6 +1090,52 @@ def pi_temperature() -> float | None:
 
 
 # ---- hardware-facing pieces ---------------------------------------------------------------------
+class TargetFile:
+    """follow.py --live writes ~/feelthemusic-lamp/target.json every cycle (follow.TargetReport): what it
+    sees and how centred it is. Read here by mtime: at most one stat every `poll` seconds on the UDP
+    loop, a read and a parse (a ~150 B file) only when it changed. `seen` is true only while the file
+    is fresh (FRESH_S), so a follower that died does not keep claiming a target."""
+    FRESH_S = 2.0
+    EMPTY = {"kind": None, "seen": False, "center": 0.0, "aim_deg": None, "age_s": None}
+
+    def __init__(self, path: str = TARGET_FILE, poll: float = 0.1):
+        self.path, self.poll = path, poll
+        self.mtime_ns, self.next_stat, self.body = None, float("-inf"), None
+
+    def read(self, now: float, wall: float | None = None) -> dict:
+        """{kind, seen, center, aim_deg, age_s}; `now` is monotonic (the poll throttle), `wall` time.time()."""
+        if now >= self.next_stat:
+            self.next_stat = now + self.poll
+            try:
+                st = os.stat(self.path)
+            except OSError:
+                self.mtime_ns, self.body = None, None
+            else:
+                if st.st_mtime_ns != self.mtime_ns:
+                    self.mtime_ns = st.st_mtime_ns
+                    try:
+                        with open(self.path, "rb") as f:
+                            self.body = json.loads(f.read())
+                    except (OSError, ValueError):
+                        self.body = None
+        b = self.body
+        if self.mtime_ns is None or not isinstance(b, dict):
+            return dict(self.EMPTY)
+        age = max(0.0, (time.time() if wall is None else wall) - self.mtime_ns / 1e9)
+        try:
+            center = clamp(float(b.get("center") or 0.0))
+        except (TypeError, ValueError):
+            center = 0.0
+        try:
+            aim = b.get("aim_deg")
+            aim = None if aim is None or not math.isfinite(float(aim)) else round(float(aim), 1)
+        except (TypeError, ValueError):
+            aim = None
+        kind = b.get("kind")
+        return {"kind": kind if isinstance(kind, str) else None, "seen": bool(b.get("seen")) and age <= self.FRESH_S,
+                "center": round(center, 3), "aim_deg": aim, "age_s": round(age, 2)}
+
+
 class Panel(threading.Thread):
     """Renders at 50 fps. State is written by the network thread under a lock; this thread only reads
     it and talks to the LEDs. Direct NeoPixel if the runtime has released the panel, else HTTP."""
@@ -1263,10 +1330,12 @@ class Show:
 
     def __init__(self, conductor: str, mode: str, audio: bool, vendor_clips: bool = False,
                  start_latency_ms: float = 350.0, lights: bool = True, manifest: str | None = None,
-                 live_clips: bool = True, bold: float = DEFAULT_BOLD, pack_dir: str = PACK_DIR):
+                 live_clips: bool = True, bold: float = DEFAULT_BOLD, pack_dir: str = PACK_DIR, track: str = "face"):
         self.dst = (conductor, 47300)
         self.cli_mode, self.cli_lights, self.vendor_clips = mode, lights, vendor_clips
         self.mode, self.lights, self.gen = mode, lights, None
+        self.track = track if track in TRACKS else "face"     # what follow.py looks for (Control lamp.track)
+        self.targets, self.target = TargetFile(), dict(TargetFile.EMPTY)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)
         self.sock.setblocking(False)
@@ -1286,6 +1355,10 @@ class Show:
         self.scheduler = ClipScheduler(start_latency_ns=int(start_latency_ms * 1e6), manifest=load_manifest_file(manifest),
                                        live=live, bold=bold)
         self.follow_proc, self.follow_lock, self.follow_atexit = None, threading.Lock(), False
+        # what the running (or queued) follower looks for; None = unknown after a failed restart, so the
+        # next Control with a lamp key restarts it. follow_gen numbers start requests: a start that finds
+        # a newer one queued gives up (the newer one spawns the newest track).
+        self.follow_track, self.follow_gen = None, 0
         self.seq, self.index, self.session = 0, None, None
         self.seen_event, self.seen_bass = set(), set()
         self.sent_at, self.rtts, self.min_rtt = {}, [], float("inf")
@@ -1334,12 +1407,18 @@ class Show:
                  else "music" if self.music else "idle")
         s = self.scheduler
         moves = s.moves + (self.counts["clips"] if self.vendor_clips else 0)
+        self.target = self.targets.read(time.monotonic())
         return {"t": "lamp", "state": state, "mode": self.mode, "locked": self.tracker.locked(time.monotonic_ns()),
                 "piC": pi_temperature(), "sdk": SDK, "moves": moves, "refused": s.refused, "lights": self.lights,
-                "bpm": round(self.tracker.bpm, 1)}
+                "bpm": round(self.tracker.bpm, 1), "target": self.target}
 
     def send_lamp(self):
         self.send(b"\x04" + json.dumps(self.lamp_status(), sort_keys=True, separators=(",", ":")).encode())
+
+    def lamp_period(self) -> float:
+        """Seconds until the next `lamp` telemetry: 5 Hz while the follower sees its target (the
+        conductor drives the phone's vibration from it live), 1 Hz otherwise."""
+        return LAMP_PERIOD_SEEN_S if self.target.get("seen") else LAMP_PERIOD_S
 
     def handle(self, d: bytes, now: float):
         t = d[0]
@@ -1422,7 +1501,18 @@ class Show:
         """The dashboard's word wins over the CLI whenever the conductor sends a lamp key."""
         mode = l["mode"] or self.mode
         lights = self.lights if l["lights"] is None else l["lights"]
+        track = l.get("track")
+        retrack = track in TRACKS and track != self.track
+        if retrack:
+            print(f"{time.strftime('%H:%M:%S')} track {self.track} -> {track}", flush=True)
+            self.track = track                                   # before set_mode: a follower it starts looks for it
         changed = self.set_mode(mode, now)   # before the gen reset: leaving dance must see what is playing
+        if self.mode == "follow" and not changed and self.follow_track != self.track:
+            # already following, on another target (or on an unknown one after a failed restart): restart
+            print(f"{time.strftime('%H:%M:%S')} follow: restarting on {self.track}"
+                  + ("" if retrack else " (retry)"), flush=True)
+            self.follow_track = self.track                       # the queued start is for it: no second restart
+            self.stop_follow(then=lambda: self.start_follow(wait_s=RESTART_WAIT_S), exit_s=FOLLOW_EXIT_S)
         if l["gen"] != self.gen:
             self.gen = l["gen"]
             self.scheduler.reset()                               # drop work queued for the old mode
@@ -1484,23 +1574,60 @@ class Show:
             self.scheduler.home(int(self.HOME_HOLD_S * 1e9),
                                 self.load_clip_library if self.scheduler.available is None else None)
 
-    def start_follow(self):
-        """Spawns ./run_face.sh (setsid, log /tmp/follow-face.log) on a worker thread: process spawns
-        take tens of ms on the Pi and must not stall the UDP loop."""
+    def start_follow(self, wait_s: float = 0.0):
+        """Spawns ./run_face.sh (setsid, log FOLLOW_LOG, FOLLOW_TARGET = the track at spawn time) on a
+        worker thread: process spawns take tens of ms on the Pi and must not stall the UDP loop. With
+        `wait_s` (a restart, after stop_follow) a follower still on its way out gets that long to
+        disappear, then SIGKILL and FOLLOW_KILL_GRACE_S more; one that is still there after that is
+        given up on loudly and follow_track is forgotten (the next Control with a lamp key retries).
+        Without `wait_s` a follower already running (mode.sh, a hand start) is left alone. A start
+        that finds a newer start queued (follow_gen moved on) gives up: that one spawns the newest
+        track, so two quick track changes never leave the lamp on the older one."""
         here = os.path.dirname(os.path.abspath(__file__))
+        with self.follow_lock:
+            self.follow_gen += 1
+            gen = self.follow_gen
+            self.follow_track = self.track
+        def superseded() -> bool:
+            if gen == self.follow_gen: return False
+            print(f"follow: start #{gen} superseded by #{self.follow_gen}", flush=True); return True
         def go():
             try:
-                if subprocess.run(["pgrep", "-f", "[f]ollow.py"], capture_output=True).returncode == 0:
-                    print("follow: already running", flush=True); return
-                log = open("/tmp/follow-face.log", "ab")
+                deadline, killed = time.monotonic() + wait_s, False
+                while True:
+                    if superseded(): return
+                    if subprocess.run(["pgrep", "-f", "[f]ollow.py"], capture_output=True).returncode != 0:
+                        break
+                    with self.follow_lock:
+                        ours, on = self.follow_proc, self.follow_track
+                    if ours is not None and ours.poll() is None:  # a sibling start spawned it, on the newest track
+                        print(f"follow: already running on {on} (pid {ours.pid})", flush=True); return
+                    if time.monotonic() >= deadline:
+                        if wait_s <= 0:
+                            print("follow: already running", flush=True); return
+                        if not killed:                              # the one we stopped will not leave: SIGKILL
+                            print(f"follow: the old follower is still running {wait_s:g} s after the stop: SIGKILL", flush=True)
+                            subprocess.run(["pkill", "-KILL", "-f", "[f]ollow.py"], capture_output=True)
+                            killed, deadline = True, time.monotonic() + FOLLOW_KILL_GRACE_S
+                            continue
+                        print(f"follow: COULD NOT RESTART on {self.track}: the old follower survived SIGKILL; "
+                              "the next Control retries", flush=True)
+                        with self.follow_lock:
+                            if gen == self.follow_gen: self.follow_track = None
+                        return
+                    time.sleep(FOLLOW_POLL_S)
+                if superseded(): return
+                track = self.track                                   # the newest wish, not the one at the call
+                log = open(FOLLOW_LOG, "ab")
                 proc = subprocess.Popen(["setsid", os.path.join(here, "run_face.sh")], cwd=here,
+                                        env={**os.environ, "FOLLOW_TARGET": track},
                                         stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
                 with self.follow_lock:
-                    self.follow_proc = proc
+                    self.follow_proc, self.follow_track = proc, track
                     if not self.follow_atexit:                # our tracker dies with us (systemctl stop, a crash)
                         self.follow_atexit = True
                         atexit.register(self.stop_follow_at_exit)
-                print(f"follow: started run_face.sh (pid {proc.pid}, log /tmp/follow-face.log)", flush=True)
+                print(f"follow: started run_face.sh --target {track} (pid {proc.pid}, log {FOLLOW_LOG})", flush=True)
             except Exception as exc:
                 print(f"follow: could not start ({exc})", flush=True)
         threading.Thread(target=go, daemon=True).start()
@@ -1509,11 +1636,12 @@ class Show:
         if self.follow_proc is not None:
             self.stop_follow(sync=True)
 
-    def stop_follow(self, wait_s: float = 0.0, then=None, sync: bool = False):
+    def stop_follow(self, wait_s: float = 0.0, then=None, sync: bool = False, exit_s: float = 2.0):
         """pkill -f '[f]ollow.py' on a worker thread ('[f]ollow.py' matches run_face.sh's exec'd
         `python follow.py ...` and neither this process nor the pkill itself), reap our own child so
-        it is not left a zombie, then optionally wait and run `then` (the dance pre-move). `sync`
-        runs it inline (atexit: a daemon thread would not get to finish)."""
+        it is not left a zombie (up to `exit_s`), then optionally wait and run `then` (the dance
+        pre-move, or the restart's start). `sync` runs it inline (atexit: a daemon thread would not
+        get to finish)."""
         with self.follow_lock:
             proc, self.follow_proc = self.follow_proc, None
         def go():
@@ -1522,7 +1650,7 @@ class Show:
             except Exception as exc:
                 print(f"follow: pkill failed ({exc})", flush=True)
             if proc is not None:
-                try: proc.wait(timeout=2)
+                try: proc.wait(timeout=exit_s)
                 except Exception: pass
             print("follow: stopped", flush=True)
             if then is not None:
@@ -1635,7 +1763,7 @@ class Show:
             if now >= nxt["sync"]:  self.sync(); self.send_cs(); nxt["sync"] = now + 2.0
             if now >= nxt["hello"]: self.hello(); nxt["hello"] = now + 10.0
             if now - self.last_sync_rx > 15.0 and now >= self.rediscover_at: self.rediscover(now)
-            if now >= nxt["lamp"]:  self.send_lamp(); nxt["lamp"] = now + 1.0
+            if now >= nxt["lamp"]:  self.send_lamp(); nxt["lamp"] = now + self.lamp_period()
             drained = 0
             while drained < 512:
                 try: d, _ = self.sock.recvfrom(4096)
@@ -1724,6 +1852,8 @@ if __name__ == "__main__":
     ap.add_argument("--bold", type=float, default=DEFAULT_BOLD, help="\"Bolder moves\" 0..1 until the dashboard sends lamp.bold")
     ap.add_argument("--no-live-clips", action="store_true", help="never generate clips on the lamp; the pre-generated library only")
     ap.add_argument("--pack-dir", default=PACK_DIR, help="the runtime's animation pack, where live clips are written")
+    ap.add_argument("--track", choices=TRACKS, default="face",
+                    help="what follow mode looks for until the dashboard sends lamp.track (default face)")
     ap.add_argument("--burst-test", action="store_true")
     a = ap.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
@@ -1735,6 +1865,6 @@ if __name__ == "__main__":
     try:
         Show(a.conductor, mode, a.audio, vendor_clips=a.vendor_clips, start_latency_ms=a.start_latency_ms,
              lights=not a.no_lights, manifest=a.manifest, live_clips=not a.no_live_clips, bold=a.bold,
-             pack_dir=a.pack_dir).run()
+             pack_dir=a.pack_dir, track=a.track).run()
     except KeyboardInterrupt:
         sys.exit(0)
