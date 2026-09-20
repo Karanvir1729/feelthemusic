@@ -30,6 +30,8 @@ import urllib.request
 
 BPM, BEAT0, BEATS = 123.05, 0.336, 516
 PERIOD = 60.0 / BPM
+TEMPO = 1.0                 # --tempo 0.75: the song slowed to 75 % with ffmpeg atempo (same pitch) and the grid stretched to match;
+                            # the clips must then be built at CHA_TEMPO_BPM = 123.05 * 0.75 (operator: "too fast", "slow the audio and the actions")
 LEAD_BEATS = 1.0            # the head start a follower needs; see the module docstring
 START_LATENCY_S = 0.35      # the runtime's own, measured on this lamp
 LAMP = "http://lelamp-bfc5eta0.local:8081"
@@ -128,10 +130,14 @@ def main():
     ap.add_argument("--from", dest="start", type=int, default=0, help="first beat to play from")
     ap.add_argument("--to", dest="stop", type=int, default=BEATS, help="last cue beat to fire; the song stops a bar later")
     ap.add_argument("--lead-beats", type=float, default=LEAD_BEATS)
+    ap.add_argument("--tempo", type=float, default=1.0, help="play the song at this speed (0.75 = 25 %% slower); clips must match")
     args = ap.parse_args()
+    global PERIOD, BEAT0, TEMPO
+    TEMPO = args.tempo
+    PERIOD, BEAT0 = PERIOD / TEMPO, BEAT0 / TEMPO
 
     cues = [c for c in read_sheet(args.sheet) if args.start <= c[0] <= args.stop]
-    print(f"{len(cues)} cues, {BPM:g} bpm, beat 0 at {BEAT0:.3f} s")
+    print(f"{len(cues)} cues, {BPM * TEMPO:.1f} bpm, beat 0 at {BEAT0:.3f} s")
     if args.dry_run:
         for b, clip, note in cues:
             print(f"  beat {b:4d}  t={BEAT0 + b * PERIOD:7.2f}s  {clip:18s} {note}")
@@ -146,6 +152,12 @@ def main():
 
     seek = BEAT0 + args.start * PERIOD if args.start else 0.0
     song = SONG
+    if abs(TEMPO - 1.0) > 1e-6:
+        slowed = os.path.join(tempfile.gettempdir(), f"cha_tempo_{TEMPO:.3f}.mp3")
+        if not os.path.exists(slowed):
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", SONG, "-filter:a", f"atempo={TEMPO}", slowed], check=True)
+        song = slowed
+        print(f"song at {TEMPO:.0%} speed ({slowed})")
     if seek > 0:
         song = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{seek:.3f}", "-i", SONG, "-c", "copy", song], check=True)

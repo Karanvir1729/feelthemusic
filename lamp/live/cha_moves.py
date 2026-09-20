@@ -50,7 +50,7 @@ FPS = bc.FPS
 # The Cha Cha Slide runs at about 124 bpm. EVERY duration below is written in BEATS and multiplied by
 # BEAT here, so changing this one constant retimes the whole vocabulary -- including the sleep table
 # in move.sh, which derives its seconds the same way from the same number.
-TEMPO_BPM = 124.0
+TEMPO_BPM = float(os.environ.get("CHA_TEMPO_BPM", 124.0))   # CHA_TEMPO_BPM=92.3 builds the set for the song slowed to 75 % (operator: "too fast")
 BEAT = 60.0 / TEMPO_BPM                 # 0.4839 s; a four-beat call is 1.935 s
 GLIDE_RAMP = 0.22                       # of a glide spent getting up to speed (and the same slowing
                                         # down). A glide's peak speed is 1/(1 - 0.22) = 1.28x its
