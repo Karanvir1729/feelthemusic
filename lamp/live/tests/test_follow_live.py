@@ -172,12 +172,12 @@ def test_step_with_the_real_model_never_returns_a_problem_pose(model):
 
 
 # ---- stall guard ----------------------------------------------------------------------------------
-def test_stall_guard_trips_on_the_third_under_delivery_and_resets_on_a_big_aim_change():
+def test_stall_guard_trips_on_the_fourth_under_delivery_and_resets_on_a_big_aim_change():
     g = F.StallGuard()
     before, asked = pose(), pose(base_yaw=10)
-    barely = pose(base_yaw=1.5)                         # 15 % of what was asked
-    assert not g.record(before, asked, barely, 20.0)
-    assert not g.record(before, asked, barely, 20.0)
+    barely = pose(base_yaw=1.0)                         # 10 % of what was asked (the runtime's honest 40-60 % is fine)
+    for _ in range(3):
+        assert not g.record(before, asked, barely, 20.0)
     assert g.record(before, asked, barely, 20.0)
     assert g.stalled and g.blocked(22.0)                # 2 deg is not "the target moved"
     assert not g.blocked(36.0)                          # 16 deg is
@@ -186,7 +186,8 @@ def test_stall_guard_trips_on_the_third_under_delivery_and_resets_on_a_big_aim_c
 
 def test_stall_guard_needs_consecutive_misses_and_ignores_tiny_asks():
     g = F.StallGuard()
-    before, asked, barely, fine = pose(), pose(base_yaw=10), pose(base_yaw=1.5), pose(base_yaw=5)
+    before, asked, barely, fine = pose(), pose(base_yaw=10), pose(base_yaw=1.0), pose(base_yaw=5)
+    g.record(before, asked, barely, 10.0)
     g.record(before, asked, barely, 10.0)
     g.record(before, asked, barely, 10.0)
     assert not g.record(before, asked, fine, 10.0)      # a good delivery resets the count
@@ -197,7 +198,7 @@ def test_stall_guard_needs_consecutive_misses_and_ignores_tiny_asks():
 
 def test_stall_guard_tripped_without_an_aim_takes_the_first_aim_as_reference():
     g = F.StallGuard()
-    for _ in range(3):
+    for _ in range(4):
         g.record(pose(), pose(base_yaw=10), pose(base_yaw=0.5), None)
     assert g.blocked(None) and g.blocked(30.0) and g.blocked(40.0)
     assert not g.blocked(46.0)
@@ -547,7 +548,11 @@ def test_slow_post_gets_a_full_landing_allowance_after_completion(one_axis_follo
     follower, clock, motors, camera = one_axis_follow
 
     def slow_post(commanded, ms):
-        clock.sleep(0.8)                              # runtime accepts only after the original deadline
+        # The runtime accepts only after the original deadline. Written against the allowance itself
+        # rather than a number: it was 0.30 s + duration when this test was authored and is 0.65 s +
+        # duration now (measured: the tracking route starts 140-250 ms after the POST and the servos
+        # lag ~150 ms after the move ends).
+        clock.sleep(follower.cfg.land_settle + 0.25)
         motors.post(commanded, ms)
 
     follower.poster = F.LivePoster(slow_post, follower.cfg.period, clock=clock)

@@ -33,12 +33,23 @@ Wire facts, from a byte capture of the real conductor:
   Bass       0c | u32 seq | u64 startTs | u8 stepMs | u8 N | N x u8; arrives 2x
   Anchor     09 | u32 seqBase | u64 pts | u16 frames | u32 sampleRate | u8 codec (0 pcm, 1 aac-eld, 2 opus)
   Compact    08 | u16 seq16 | u16 sendLag100us | opus/aac payload (one 10 ms access unit, 480 frames)
-  Control    0d + JSON; the new conductor adds "lamp": {"mode": off|light|follow|dance, "lights": bool, "gen": int}
+  Control    0d + JSON; the new conductor adds "lamp": {"mode": off|light|follow|dance, "lights": bool, "gen": int,
+             "bold": 0..1 (the operator's "Bolder moves" slider)}
   Telemetry we send: hello, `cs` and `lamp` (once a second). Never `au`.
 
   python3 lamp_show.py --conductor <conductor-ip>                 # light only, safe with follow.py
   python3 lamp_show.py --conductor <conductor-ip> --dance --audio # + beat-locked clips + the show on the speaker
   python3 lamp_show.py --conductor <conductor-ip> --dance --vendor-clips   # v3.1's clips instead (fallback)
+  python3 lamp_show.py --conductor <conductor-ip> --dance --no-live-clips  # the pre-generated library only
+
+v4.1: LIVE clips. The dance clips are generated on the lamp, one ahead, at the tracker's exact bpm and the
+dashboard's "Bolder moves" slider (Control lamp.bold, 0..1, default 0.6): beat_clips.make_clip() on a worker
+thread, validated with the lamp's own calibration (~70 ms on the Pi 5), written atomically into the runtime's
+animation pack under one of six pooled names live_0..live_5 (never the one playing or in flight, so the pack
+never grows), md5-verified and confirmed in GET /api/animations before it is posted. The post instants, the
+one-in-flight rule, the tail-hold re-post and the home on stop are the library's, unchanged; whenever the
+live clip is not ready (generation, validation or write failed, no model, no time) the pre-generated
+library is posted exactly as before (nearest bucket, a/b/c rotation).
   python3 lamp_show.py --burst-test                             # 5 white bursts, prints the 5 V rail (Pi only)
 """
 from __future__ import annotations
@@ -65,6 +76,16 @@ CLIP_BEATS = 8
 DEFAULT_MANIFEST = os.path.expanduser("~/feelthemusic-lamp/beat_clips/MANIFEST.json")
 MANIFEST_CANDIDATES = (DEFAULT_MANIFEST,
                        os.path.join(os.path.dirname(os.path.abspath(__file__)), "beat_clips", "MANIFEST.json"))
+# The runtime's animation pack: a CSV written here is listed by GET /api/animations without a restart, but a
+# half-written one blocks the runtime at boot (hence the atomic writes and the startup sweep of live_*).
+PACK_DIR = os.path.expanduser("~/lelamp-hackathon-2026/static/robots/lelamp_v1/pi5_feetech_r1/animations/factory_v1")
+DEFAULT_BOLD = 0.6                            # the dashboard slider's default
+# A live clip made within this of the tracker's bpm is the right clip: the beat tracker's PLL trims the
+# period continuously (with real kick jitter the bpm wanders +-1 several times per 8-beat cycle), and a
+# 2 bpm mismatch over 8 beats is ~60 ms at the last beat, well inside the hold. The scheduler uses the
+# same band when it takes a ready clip and when it decides whether one must be regenerated, so only a
+# bold/tier/variant change (or a real tempo re-lock) costs a worker job, a CSV write and a listing check.
+LIVE_BPM_TOL = 2.0
 
 
 def lamp(path: str, body: dict | None = None, timeout: float = 4.0):
@@ -333,12 +354,14 @@ class BeatTracker:
     for a skipped or doubled kick; phase by a PLL: each kick pulls the beat grid 30 % of the way to it
     and trims the period. Four consistent kicks at a clearly different tempo re-lock at once, so a
     tempo change is followed within a bar instead of being averaged away."""
-    LO, HI, MAX_KICKS, EXPIRE_NS = 0.28, 0.75, 16, 2_500_000_000
+    LO, HI, MAX_KICKS, EXPIRE_NS = 0.28, 0.75, 16, 4_000_000_000
+    ON_GRID = 0.15                 # a kick within this fraction of a period of the grid counts as on the beat
 
     def __init__(self):
         self.kicks: list[int] = []
         self.period, self.grid, self.last_ns = None, None, None
         self.errors: list[float] = []
+        self.on_grid: list[bool] = []   # per kick since the period was set: landed within ON_GRID of the grid
 
     @classmethod
     def fold(cls, ioi_s: float):
@@ -368,7 +391,8 @@ class BeatTracker:
         beats = max(1, round((t_ns - self.grid) / (self.period * 1e9)))
         predicted = self.grid + beats * self.period * 1e9
         error = (t_ns - predicted) / 1e9
-        if abs(error) <= 0.3 * self.period:
+        self.on_grid = (self.on_grid + [abs(error) <= self.ON_GRID * self.period])[-8:]
+        if abs(error) <= 0.2 * self.period:
             # On or near the beat: pull the grid and trim the period. A kick further off (a half-beat
             # of double time, a syncopation) is not a beat and must not drag the grid toward it.
             self.errors = (self.errors + [error])[-16:]
@@ -378,7 +402,7 @@ class BeatTracker:
         if len(recent) >= 4 and max(recent) - min(recent) <= 0.06 * min(recent):
             m = sorted(recent)[2]
             if abs(m - self.period) > 0.04 * self.period:            # a real tempo change: re-lock now
-                self.period, self.grid, self.errors = m, t_ns, []
+                self.period, self.grid, self.errors, self.on_grid = m, t_ns, [], []
 
     @property
     def bpm(self) -> float:
@@ -388,14 +412,14 @@ class BeatTracker:
         return self.stable() and self.last_ns is not None and now_ns - self.last_ns <= self.EXPIRE_NS
 
     def stable(self) -> bool:
-        if self.period is None or len(self.kicks) < 4:
+        """Locked when the kicks land on the grid, not when they are evenly spaced: real drum patterns
+        skip beats and add off-beat kicks (measured tonight: a 120 bpm track sat at a +-14 ms phase
+        error for three minutes while the old uniform-spacing test refused to lock). Four of the last
+        six kicks within ON_GRID of a beat, after at least four kicks, is a lock."""
+        if self.period is None or len(self.kicks) < 4 or not self.on_grid:
             return False
-        iois = self.iois(last=8)
-        if len(iois) < 3:
-            return False
-        mean = sum(iois) / len(iois)
-        std = math.sqrt(sum((x - mean) ** 2 for x in iois) / len(iois))
-        return std < 0.08 * mean
+        recent = self.on_grid[-8:]
+        return sum(recent) >= math.ceil(0.6 * len(recent))   # 5 of 8 once warm; cleaner while few kicks
 
     def next_beats(self, after_ns: int, n: int) -> list[int]:
         if not self.locked(after_ns):
@@ -424,12 +448,18 @@ class ClipScheduler:
     LATE_NS = 100_000_000
     START_JITTER_NS = 100_000_000      # POST -> first frame is 250-450 ms; plan for the early end
 
+    LIVE_BPM_TOL = LIVE_BPM_TOL        # a ready live clip within this of the tracker's bpm is still the right clip
+    VARIANTS = ("a", "b", "c")         # the live rotation (the library's letters come from the manifest)
+
     def __init__(self, post=None, status=None, start_latency_ns: int = 350_000_000, hold_ns: int = HOLD_NS,
-                 available: set | None = None, log=print, manifest: dict | None = None):
+                 available: set | None = None, log=print, manifest: dict | None = None,
+                 live: "LiveClips | None" = None, bold: float = DEFAULT_BOLD):
         self.post_fn = post or (lambda name: lamp("/api/animations/play", {"name": name}))
         self.status_fn = status or (lambda: lamp("/api/animations/status", timeout=1.0))
         self.start_latency_ns, self.hold_ns, self.log = int(start_latency_ns), int(hold_ns), log
         self.available = available
+        self.live, self.bold = live, clamp(float(bold))
+        self.live_posts = 0                        # clips posted from the live generator (the rest: the library)
         self.variants: dict[str, list[str]] = {}   # beat_<tier>_<bpm> -> its a/b/c clip names (v2 manifest)
         self.last_variant: dict[str, str] = {}     # tier -> the variant letter played last (rotation state)
         self.build_until_ns = None                 # a BUILD event is pending until this instant
@@ -473,9 +503,52 @@ class ClipScheduler:
         return len(self.variants)
 
     def has_tier(self, tier: str) -> bool:
+        if self.live is not None and self.live.usable():      # the generator makes every tier
+            return True
         prefix = f"beat_{tier}_"
         return any(b.startswith(prefix) for b in self.variants) or \
             (self.available is not None and any(n.startswith(prefix) for n in self.available))
+
+    def set_bold(self, bold: float) -> bool:
+        """The dashboard slider (Control lamp.bold); clamped to 0..1. Returns whether it changed. The
+        clip being prepared is regenerated by the next tick if there is time, else posted as it is."""
+        b = round(clamp(float(bold)), 2)
+        if b == self.bold:
+            return False
+        self.log(f"{time.strftime('%H:%M:%S')} bold {self.bold:.2f} -> {b:.2f}")
+        self.bold = b
+        return True
+
+    def next_letter(self, tier: str) -> str:
+        """The variant the a -> b -> c rotation of `tier` plays next (pick()'s rule), without committing."""
+        letters = list(self.VARIANTS)
+        last = self.last_variant.get(tier)
+        if last in letters:
+            return letters[(letters.index(last) + 1) % len(letters)]
+        return next((l for l in letters if last is not None and l > last), letters[0])
+
+    def prepare(self, tier: str, bpm: float, post_at: int, now_ns: int):
+        """Ahead of the post: ask the generator for this tier's next variant at the tracker's exact bpm and
+        the current bold, unless the ready (or in-progress) clip already is that, or there is no time
+        left before the post instant (then whatever is ready gets posted)."""
+        live = self.live
+        if live is None or not live.usable(now_ns):
+            return
+        letter = self.next_letter(tier)
+        if live.covers(tier, letter, bpm, self.bold):
+            return
+        if post_at - now_ns < live.PREP_NS:
+            return
+        live.request(tier, letter, bpm, self.bold, post_at)
+
+    def take_live(self, tier: str, bpm: float):
+        """The ready live clip to post now, or None (-> the library). Whatever is ready is posted even if
+        the tier moved since it was made (the spec's "else post what is ready"), except when a DROP wants
+        the drop tier -- the spring on the hit is worth the library's exact-tier clip -- or the tempo
+        re-locked more than LIVE_BPM_TOL away (8 beats at the wrong bpm would drift off the grid)."""
+        if self.live is None:
+            return None
+        return self.live.take(lambda r: not (tier == "drop" and r.tier != "drop") and abs(r.bpm - bpm) <= self.LIVE_BPM_TOL)
 
     def note_build(self, now_ns: int, dur_ms: int):
         """A BUILD event with a known duration: the build tier is chosen for clips whose first half lies
@@ -558,9 +631,13 @@ class ClipScheduler:
             if self.inflight:
                 return
         if now_ns < self.not_before_ns:
+            # The hold behind the home pre-move: no post, but the first clip can be made meanwhile (its
+            # content depends on tier, variant, bpm and bold, not on which beat it will land on).
+            if tracker.locked(now_ns):
+                self.prepare(self.tier_for(excite, self.drop_pending), tracker.bpm, self.not_before_ns, now_ns)
             return
         p = self.plan(now_ns, tracker)
-        if p is None or now_ns < p[0]:
+        if p is None:
             return
         post_at, beat, period_ns = p
         if self.build_until_ns is not None and now_ns >= self.build_until_ns:
@@ -570,7 +647,15 @@ class ClipScheduler:
         build = (self.build_until_ns is not None and self.has_tier("build")
                  and beat + (CLIP_BEATS // 2) * period_ns <= self.build_until_ns)
         tier = self.tier_for(excite, self.drop_pending, build)
-        name = self.pick(tier, tracker.bpm)
+        if now_ns < post_at:
+            self.prepare(tier, tracker.bpm, post_at, now_ns)      # the next clip, generated ahead of its post
+            return
+        live = self.take_live(tier, tracker.bpm)
+        if live is not None:
+            name = live.name
+            self.last_variant[live.tier] = live.variant             # the rotation moves on as pick() would
+        else:
+            name = self.pick(tier, tracker.bpm)
         if name is None:
             self.refused += 1; self.boundary_ns = beat + CLIP_BEATS * period_ns
             return
@@ -590,6 +675,9 @@ class ClipScheduler:
             self.moves += 1; self.playing = True
         else:
             self.refused += 1
+        if self.live is not None and self.live.is_pool_name(name):
+            self.live.posted(name, ok)
+            if ok: self.live_posts += 1
         self.log(f"{time.strftime('%H:%M:%S')} clip {name} for beat {beat_ns / 1e9:.3f}s posted {late_ns / 1e6:+.0f}ms "
                  f"after its instant -> {r.get('status') or r.get('error')}")
         if ok:
@@ -656,6 +744,242 @@ class ClipScheduler:
         threading.Thread(target=go, daemon=True).start()
 
 
+def animation_names(r) -> set[str]:
+    """The names in a GET /api/animations answer (a list of strings, or of {"name"|"stem": ...})."""
+    names = set()
+    try:
+        items = r.get("animations") if isinstance(r, dict) else r
+        for it in items or []:
+            n = it if isinstance(it, str) else (it.get("name") or it.get("stem") or "")
+            if n: names.add(n)
+    except Exception:
+        pass
+    return names
+
+
+class LiveClip:
+    """A clip the generator wrote into the pack: what it is and what it is called."""
+    __slots__ = ("tier", "variant", "bpm", "bold", "name", "md5", "meta")
+
+    def __init__(self, tier, variant, bpm, bold, name, md5, meta):
+        self.tier, self.variant, self.bpm, self.bold = tier, variant, float(bpm), float(bold)
+        self.name, self.md5, self.meta = name, md5, meta
+
+    def covers(self, tier, variant, bpm, bold, bpm_tol: float) -> bool:
+        return self.tier == tier and self.variant == variant and self.bold == float(bold) and abs(self.bpm - bpm) <= bpm_tol
+
+
+class LiveClips:
+    """Generates the scheduler's next clip AHEAD of its post, on one worker thread (never the UDP loop):
+    beat_clips.make_clip at the exact bpm and bold, validated with the lamp's own model, written atomically
+    into the pack dir under a pooled name live_<k> (six names, k rotating; never the name playing or in
+    flight, so the pack never grows), md5-verified, then confirmed in GET /api/animations within 300 ms.
+    One job at a time; a newer request replaces a queued one. Any exception in the worker is logged once
+    and disables generation for DISABLE_S (the library covers meanwhile); a failed clip (validation, write,
+    listing) just leaves nothing ready, so that post falls back to the library."""
+    POOL = 6
+    PREP_NS = 700_000_000              # generate + write + sync + listing check, with margin, on the Pi 5
+    LIST_NS = 300_000_000              # the runtime must list the name within this, or the clip is not used
+    DISABLE_S = 60.0
+    BPM_TOL = LIVE_BPM_TOL             # the tracker's PLL trims the period continuously: do not chase that (the
+                                       # scheduler's own take-time band; tighter and every wobble is a job)
+
+    def __init__(self, pack_dir: str = PACK_DIR, list_fn=None, make_fn=None, write_fn=None, model_fn=None,
+                 log=print, enabled: bool = True):
+        self.pack_dir, self.log = pack_dir, log
+        self.list_fn = list_fn or (lambda: animation_names(lamp("/api/animations", timeout=0.3)))
+        self.make_fn, self.write_fn, self.model_fn = make_fn, write_fn, model_fn
+        self.model = None
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.wanted = None                 # (tier, variant, bpm, bold, deadline_ns): the newest request
+        self.busy = None                   # the job the worker is on
+        self.ready: LiveClip | None = None
+        self.k = -1                        # the pool index used last
+        self.playing, self.inflight = None, None
+        self.disabled_until_ns, self.enabled = 0, enabled
+        self.generated, self.used, self.failed, self.disables = 0, 0, 0, 0
+        self.thread = None
+        if enabled and not os.path.isdir(pack_dir):
+            self.enabled = False
+            self.log(f"live clips: pack dir {pack_dir} missing -> library only")
+        if self.enabled:
+            self.clean_pack_dir()
+
+    # ---- pool ---------------------------------------------------------------------------
+    @classmethod
+    def pool_name(cls, k: int) -> str:
+        return f"live_{k % cls.POOL}"
+
+    @classmethod
+    def is_pool_name(cls, name: str) -> bool:
+        return name in {cls.pool_name(k) for k in range(cls.POOL)}
+
+    def next_name(self) -> str:
+        """The next pooled name that is not playing, in flight or ready (under the lock)."""
+        reserved = {self.playing, self.inflight, self.ready.name if self.ready else None}
+        for _ in range(self.POOL):
+            self.k = (self.k + 1) % self.POOL
+            name = self.pool_name(self.k)
+            if name not in reserved:
+                return name
+        raise RuntimeError("live clip pool exhausted")     # cannot happen: at most three names are reserved
+
+    def clean_pack_dir(self) -> int:
+        """Startup: stale live_*.csv (and any temp of ours) from an earlier run go, so a clip of an old bpm
+        or bold is never posted and the pack holds nothing half-written."""
+        n = 0
+        try:
+            for f in os.listdir(self.pack_dir):
+                if (f.startswith("live_") and f.endswith(".csv")) or (f.startswith(".live_") and f.endswith(".tmp")):
+                    try:
+                        os.unlink(os.path.join(self.pack_dir, f)); n += 1
+                    except OSError as exc:
+                        self.log(f"live clips: could not remove stale {f}: {exc}")
+            if n and hasattr(os, "sync"):
+                os.sync()
+        except OSError as exc:
+            self.log(f"live clips: cannot read {self.pack_dir}: {exc}")
+        if n:
+            self.log(f"live clips: removed {n} stale live_* file(s) from the pack")
+        return n
+
+    # ---- what the scheduler asks (UDP loop; cheap, one lock) ------------------------------
+    def usable(self, now_ns: int | None = None) -> bool:
+        if not self.enabled:
+            return False
+        now_ns = time.monotonic_ns() if now_ns is None else now_ns
+        return now_ns >= self.disabled_until_ns
+
+    def covers(self, tier, variant, bpm, bold) -> bool:
+        """Is that clip ready, being made, or queued already?"""
+        with self.lock:
+            if self.ready is not None and self.ready.covers(tier, variant, bpm, bold, self.BPM_TOL):
+                return True
+            for job in (self.busy, self.wanted):
+                if job is not None and job[0] == tier and job[1] == variant and job[3] == float(bold) \
+                        and abs(job[2] - bpm) <= self.BPM_TOL:
+                    return True
+        return False
+
+    def request(self, tier: str, variant: str, bpm: float, bold: float, deadline_ns: int):
+        with self.cond:
+            self.wanted = (tier, variant, float(bpm), float(bold), int(deadline_ns))
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._worker, name="live-clips", daemon=True)
+                self.thread.start()
+            self.cond.notify()
+
+    def cancel(self):
+        with self.cond:
+            self.wanted = None
+
+    def peek(self) -> LiveClip | None:
+        with self.lock:
+            return self.ready
+
+    def take(self, accept=None) -> LiveClip | None:
+        """The ready clip if `accept(clip)` says so, now in flight (its name stays reserved until posted()
+        says it is playing). Checked and taken under one lock: a regeneration cannot swap the clip
+        between the two."""
+        with self.lock:
+            r = self.ready
+            if r is None or (accept is not None and not accept(r)):
+                return None
+            self.ready, self.inflight = None, r.name
+            return r
+
+    def posted(self, name: str, ok: bool):
+        with self.lock:
+            if self.inflight == name:
+                self.inflight = None
+            if ok:
+                self.playing = name
+                self.used += 1
+
+    def state(self) -> str:
+        with self.lock:
+            if not self.enabled: return "off"
+            now = time.monotonic_ns()
+            if now < self.disabled_until_ns: return f"disabled{(self.disabled_until_ns - now) // 1_000_000_000}s"
+            if self.ready is not None: return f"ready({self.ready.name})"
+            if self.busy is not None: return "busy"
+            return "idle"
+
+    # ---- the worker -----------------------------------------------------------------------
+    def _worker(self):
+        while True:
+            with self.cond:
+                while self.wanted is None:
+                    self.cond.wait()
+                job, self.wanted = self.wanted, None
+                self.busy = job
+            try:
+                self._run(job)
+            except Exception as exc:
+                with self.lock:
+                    self.disabled_until_ns = time.monotonic_ns() + int(self.DISABLE_S * 1e9)
+                    self.ready, self.wanted, self.disables = None, None, self.disables + 1
+                self.log(f"{time.strftime('%H:%M:%S')} live clips: {type(exc).__name__}: {exc} -> library only for "
+                         f"{self.DISABLE_S:.0f}s")
+            finally:
+                with self.lock:
+                    self.busy = None
+
+    def _load(self):
+        """beat_clips + the lamp's model, once, on the worker (an import and ~10 ms of file reading)."""
+        if self.make_fn is None or self.write_fn is None:
+            import beat_clips
+            self.make_fn = self.make_fn or beat_clips.make_clip
+            self.write_fn = self.write_fn or beat_clips.write_clip_atomic
+            self.model_fn = self.model_fn or beat_clips.Validator.for_lamp
+        if self.model is None and self.model_fn is not None:
+            self.model = self.model_fn()
+
+    def _run(self, job):
+        tier, variant, bpm, bold, deadline = job
+        t0 = time.monotonic_ns()
+        self._load()
+        rows, meta = self.make_fn(tier, variant, bpm, bold, model=self.model)
+        if meta.get("ok") is not True:
+            with self.lock: self.failed += 1
+            self.log(f"{time.strftime('%H:%M:%S')} live clip {tier} {variant} {bpm:.1f}bpm bold {bold:.2f} FAILED "
+                     f"validation: {'; '.join(meta.get('reasons') or ['no verdict'])} -> library")
+            return
+        with self.lock:
+            name = self.next_name()
+        path = os.path.join(self.pack_dir, name + ".csv")
+        try:
+            md5 = self.write_fn(path, rows)
+        except Exception as exc:                              # a bad write is a failed clip, not a dead generator
+            with self.lock: self.failed += 1
+            self.log(f"{time.strftime('%H:%M:%S')} live clip {name}: write failed ({exc}) -> library")
+            return
+        t1 = time.monotonic_ns()
+        listed = False
+        while True:
+            try:
+                listed = name in self.list_fn()
+            except Exception:
+                listed = False
+            if listed or time.monotonic_ns() - t1 > self.LIST_NS:
+                break
+            time.sleep(0.03)
+        if not listed:
+            with self.lock: self.failed += 1
+            self.log(f"{time.strftime('%H:%M:%S')} live clip {name}: not listed by the runtime within "
+                     f"{self.LIST_NS // 1_000_000}ms -> library")
+            return
+        clip = LiveClip(tier, variant, bpm, bold, name, md5, meta)
+        with self.lock:
+            self.ready = clip
+            self.generated += 1
+        late = time.monotonic_ns() - deadline
+        self.log(f"{time.strftime('%H:%M:%S')} live clip {name} = {tier} {variant} {bpm:.1f}bpm bold {bold:.2f} "
+                 f"x{meta.get('multiplier', 0):.2f} A={meta.get('amplitude', 0):.1f} {meta.get('frames')}f md5 {md5[:8]} "
+                 f"in {(time.monotonic_ns() - t0) / 1e6:.0f}ms" + (f" ({late / 1e6:+.0f}ms past its post instant)" if late > 0 else ""))
+
+
 def load_manifest_file(path: str | None) -> dict | None:
     """The staged clips' MANIFEST.json (beat_clips v2), or None when absent or unreadable: the
     scheduler then behaves as v4 did (unsuffixed names, no build tier) -- and says so, once, so the
@@ -692,9 +1016,10 @@ def parse_event(d: bytes) -> dict | None:
 
 
 def parse_control(d: bytes) -> dict:
-    """Control JSON; returns {"lat": float|None, "session": int|None, "lamp": {"mode","lights","gen"}|None}.
+    """Control JSON; returns {"lat": float|None, "session": int|None, "lamp": {"mode","lights","gen","bold"}|None}.
     The old conductor sends no lamp key (then the CLI flags stay in charge). `session` is the
-    conductor's per-launch random id: a new one means its seq counters start again from 0."""
+    conductor's per-launch random id: a new one means its seq counters start again from 0. `bold` is
+    the "Bolder moves" slider, clamped to 0..1; missing or unreadable -> None (keep the current value)."""
     out = {"lat": None, "session": None, "lamp": None}
     try:
         j = json.loads(d[1:] if d and d[0] == 13 else d)
@@ -713,9 +1038,15 @@ def parse_control(d: bytes) -> dict:
         mode = l.get("mode")
         try: gen = int(l.get("gen", 0) or 0)
         except (TypeError, ValueError): gen = 0
+        bold = None
+        if "bold" in l:
+            try:
+                bold = clamp(float(l["bold"]))                  # NaN -> 0 by clamp(); strings that parse are fine
+            except (TypeError, ValueError):
+                bold = None
         out["lamp"] = {"mode": mode if mode in MODES else None,
                        "lights": bool(l["lights"]) if "lights" in l else None,
-                       "gen": gen}
+                       "gen": gen, "bold": bold}
     return out
 
 
@@ -931,7 +1262,8 @@ class Show:
     FOLLOW_SETTLE_S, HOME_HOLD_S = 1.0, 5.0   # entering dance: kill follow.py, wait, home, then clips after 5 s
 
     def __init__(self, conductor: str, mode: str, audio: bool, vendor_clips: bool = False,
-                 start_latency_ms: float = 350.0, lights: bool = True, manifest: str | None = None):
+                 start_latency_ms: float = 350.0, lights: bool = True, manifest: str | None = None,
+                 live_clips: bool = True, bold: float = DEFAULT_BOLD, pack_dir: str = PACK_DIR):
         self.dst = (conductor, 47300)
         self.cli_mode, self.cli_lights, self.vendor_clips = mode, lights, vendor_clips
         self.mode, self.lights, self.gen = mode, lights, None
@@ -950,7 +1282,9 @@ class Show:
                 print(f"audio: disabled ({exc})", flush=True)
         self.limiter = FlashLimiter()
         self.tracker = BeatTracker()
-        self.scheduler = ClipScheduler(start_latency_ns=int(start_latency_ms * 1e6), manifest=load_manifest_file(manifest))
+        live = LiveClips(pack_dir) if live_clips and not vendor_clips else None
+        self.scheduler = ClipScheduler(start_latency_ns=int(start_latency_ms * 1e6), manifest=load_manifest_file(manifest),
+                                       live=live, bold=bold)
         self.follow_proc, self.follow_lock, self.follow_atexit = None, threading.Lock(), False
         self.seq, self.index, self.session = 0, None, None
         self.seen_event, self.seen_bass = set(), set()
@@ -1097,6 +1431,8 @@ class Show:
         if lights != self.lights:
             self.lights = lights
             print(f"{time.strftime('%H:%M:%S')} lights -> {'on' if lights else 'off'}", flush=True)
+        if l.get("bold") is not None:
+            self.scheduler.set_bold(l["bold"])                   # logs on change; missing -> keep the current value
         self.apply_lights()
 
     def apply_lights(self):
@@ -1262,14 +1598,7 @@ class Show:
             self.scheduler.tick(now_ns, self.music and self.offset_ns is not None, self.tracker, self.excite)
 
     def load_clip_library(self):
-        r = lamp("/api/animations")
-        names = set()
-        try:
-            items = r.get("animations") if isinstance(r, dict) else r
-            for it in items or []:
-                names.add(it if isinstance(it, str) else (it.get("name") or it.get("stem") or ""))
-        except Exception:
-            pass
+        names = animation_names(lamp("/api/animations"))
         beat = sorted(n for n in names if n.startswith("beat_"))
         self.scheduler.available = names if names else None
         print(f"dance: {len(beat)} beat clips in the runtime's library" + (f" ({beat[0]} .. {beat[-1]})" if beat else
@@ -1333,11 +1662,14 @@ class Show:
                 note = NOTE_NAMES[m.note] if 0 <= m.note < 12 else "-"
                 s = self.scheduler
                 phase = (sum(s.phase_ms) / len(s.phase_ms)) if s.phase_ms else 0.0
+                lv = s.live
+                live = "off" if lv is None else f"{lv.state()} gen={lv.generated} used={lv.used} fail={lv.failed}"
                 print(f"{time.strftime('%H:%M:%S')} peer#{self.index} {self.mode} ev={c['events']} bass={c['bass']} "
                       f"flashes={c['flashes']} clips={c['clips'] + s.moves} level={m.bass:.2f} "
                       f"note={note} conf={m.conf:.2f} loud={m.loud:.2f} excite={self.excite:.2f} "
                       f"bpm={self.tracker.bpm:.1f}{'*' if self.tracker.locked(now_ns) else ''} beat_err={self.tracker.phase_error_ms():+.0f}ms "
-                      f"clip_phase={phase:+.0f}ms fps={self.panel.frames / 5:.0f} rtt={self.min_rtt if self.rtts else -1:.1f}ms{extra}", flush=True)
+                      f"clip_phase={phase:+.0f}ms bold={s.bold:.2f} live={live} fps={self.panel.frames / 5:.0f} "
+                      f"rtt={self.min_rtt if self.rtts else -1:.1f}ms{extra}", flush=True)
                 self.panel.frames = 0; nxt["report"] = now + 5.0
 
 
@@ -1389,6 +1721,9 @@ if __name__ == "__main__":
     ap.add_argument("--start-latency-ms", type=float, default=350.0, help="POST -> first frame on the servos")
     ap.add_argument("--manifest", default=None, help="beat_clips MANIFEST.json with the clip variants (default: "
                     + ", then ".join(MANIFEST_CANDIDATES) + ")")
+    ap.add_argument("--bold", type=float, default=DEFAULT_BOLD, help="\"Bolder moves\" 0..1 until the dashboard sends lamp.bold")
+    ap.add_argument("--no-live-clips", action="store_true", help="never generate clips on the lamp; the pre-generated library only")
+    ap.add_argument("--pack-dir", default=PACK_DIR, help="the runtime's animation pack, where live clips are written")
     ap.add_argument("--burst-test", action="store_true")
     a = ap.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
@@ -1399,6 +1734,7 @@ if __name__ == "__main__":
     mode = a.mode or ("dance" if a.dance else "light")
     try:
         Show(a.conductor, mode, a.audio, vendor_clips=a.vendor_clips, start_latency_ms=a.start_latency_ms,
-             lights=not a.no_lights, manifest=a.manifest).run()
+             lights=not a.no_lights, manifest=a.manifest, live_clips=not a.no_live_clips, bold=a.bold,
+             pack_dir=a.pack_dir).run()
     except KeyboardInterrupt:
         sys.exit(0)

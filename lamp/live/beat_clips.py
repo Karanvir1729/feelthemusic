@@ -53,6 +53,16 @@ dir always equals the manifest; the exit status is non-zero on any failure.
 Writes are atomic (temp name in the same dir, fsync, os.replace, os.sync, md5 re-read) because a corrupt
 CSV in the runtime's animations dir blocks the whole runtime at boot.
 
+LIVE generation (the operator's "Bolder moves" slider): lamp_show's ClipScheduler calls make_clip() on the
+lamp itself, at the tracker's exact bpm and the slider's `bold`, and writes the result into the runtime's
+pack with write_clip_atomic(). bold maps to an amplitude multiplier m = 0.35 + 0.65 * bold on every joint's
+excursion from START, applied BEFORE the per-joint speed-budget scale, so bold 1.0 is exactly the library
+(byte-identical files when the bpm equals a bucket) and 0.0 is about a third of it; the budget, the gains,
+the envelope clamp and the validation are the same code. Validator.for_lamp() builds the model from the
+lamp's own vendor checkout and servo calibration (10 ms; a 145-frame validation takes ~57 ms on the Pi 5).
+
+    .venv/bin/python beat_clips.py --one groove a 127.3 0.8 --out /tmp/x   # one live-style clip, exact bpm
+
     .venv/bin/python beat_clips.py                                  # all tiers, bpm 80..180 step 4, default out dir
     .venv/bin/python beat_clips.py --bpm 128 --tier drop --out /tmp/x --gains '{"base_yaw": 1.6}'
 
@@ -83,6 +93,7 @@ from spatial import JOINTS, LampModel, _rot_z  # noqa: E402
 SCRATCH = Path("/private/tmp/claude-501/-Users-meharkhanna-feelthemusic/a2b4cfc6-081d-4df6-b3d6-864bf6cf8fa1/scratchpad")
 DEFAULT_OUT = SCRATCH / "beat_clips"
 DEFAULT_ROBOTDESC = Path(os.environ.get("LAMP_ROBOTDESC", SCRATCH / "robotdesc"))
+LAMP_CALIBRATION = Path("/var/lib/lelamp/user-data/v1/calibration/lelamp.json")   # the lamp's own servo calibration
 
 # ----------------------------------------------------------------------------- GAIN TABLE
 # Command gain per joint: the runtime under-delivers step-like moves (base_yaw worst), so the commanded
@@ -107,6 +118,8 @@ SPEED_DESIGN = 140.0                 # per-joint amplitude is chosen against thi
 SPEED_LIMIT = 140.0                  # ... and the clip must pass this
 SPEED_MARGIN = 0.99                  # design to 99 % of the limit so rounding never trips the validator
 SCALE_STEP = 0.005
+BOLD_MIN = 0.35                      # bold 0.0 -> 35 % of the library's excursion; bold 1.0 -> the library itself
+BPM_RANGE = (40.0, 300.0)            # make_clip refuses tempi outside this (the tracker only reports 80-214)
 JOINT_MAX = 94.0
 BP_MIN, BP_FLIP, ELBOW_FLIP, WP_MAX = -65.0, -52.0, -45.0, 60.0
 FLIP_BLEND = 13.0                    # elbow units over which the base_pitch floor drops from -52 to -65
@@ -222,6 +235,15 @@ def peak_speed(U: np.ndarray, fps: float = FPS) -> np.ndarray:
     if len(U) < 2:
         return np.zeros(U.shape[1])
     return np.abs(np.diff(U, axis=0)).max(axis=0) * fps
+
+
+def bold_multiplier(bold: float) -> float:
+    """The "Bolder moves" slider as an excursion multiplier: BOLD_MIN + (1 - BOLD_MIN) * bold, clamped to
+    0..1 on the way in. Exactly 1.0 at bold 1.0 (0.35 + 0.65 is 1.0 in binary floating point too), so the
+    library clips are the bold-1.0 case and nothing else."""
+    b = float(bold)
+    b = 0.0 if b != b else min(1.0, max(0.0, b))          # NaN -> 0
+    return BOLD_MIN + (1.0 - BOLD_MIN) * b
 
 
 # ----------------------------------------------------------------------------- patterns
@@ -416,19 +438,30 @@ def scaled(raw: np.ndarray, scales: np.ndarray, start: np.ndarray = START) -> np
     return start + np.asarray(scales, dtype=float) * (np.asarray(raw, dtype=float) - start)
 
 
-def commanded(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
-              scales: np.ndarray | None = None) -> np.ndarray:
-    """The trajectory as the runtime will be asked to play it: per-joint scale, gain, then the clamp.
-    scales=None chooses them against the speed budget."""
+def bold_trajectory(tier: str, bpm: float, variant: str = "a", bold: float = 1.0) -> np.ndarray:
+    """The nominal pattern with the slider's multiplier on every joint's excursion from START. Applied
+    BEFORE the speed budget (joint_scales), so a bold clip is scaled down by the budget where it must be
+    and a timid one is simply smaller. At bold 1.0 the multiplier is 1.0 and the raw trajectory is
+    returned untouched -- not even a float round trip -- so the library stays byte-identical."""
     raw = raw_trajectory(tier, bpm, variant)
+    m = bold_multiplier(bold)
+    return raw if m == 1.0 else scaled(raw, m)
+
+
+def commanded(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
+              scales: np.ndarray | None = None, bold: float = 1.0) -> np.ndarray:
+    """The trajectory as the runtime will be asked to play it: bold, per-joint scale, gain, then the
+    clamp. scales=None chooses them against the speed budget."""
+    raw = bold_trajectory(tier, bpm, variant, bold)
     if scales is None:
         scales = joint_scales(raw, bpm, gain)
     return clamp_envelope(apply_gain(scaled(raw, scales), gain))
 
 
-def build_clip(tier: str, bpm: int, variant: str = "a", gain: np.ndarray = GAIN) -> tuple[np.ndarray, np.ndarray]:
-    """(scales, commanded trajectory)."""
-    raw = raw_trajectory(tier, bpm, variant)
+def build_clip(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
+               bold: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    """(scales, commanded trajectory). The batch library is bold 1.0; the live path passes the slider."""
+    raw = bold_trajectory(tier, bpm, variant, bold)
     scales = joint_scales(raw, bpm, gain)
     return scales, clamp_envelope(apply_gain(scaled(raw, scales), gain))
 
@@ -437,10 +470,17 @@ def build_clip(tier: str, bpm: int, variant: str = "a", gain: np.ndarray = GAIN)
 class Validator:
     """LampModel.problems() on every frame + the ZMP criterion of analysis/clip_zmp.py."""
 
-    def __init__(self, robotdesc: Path = DEFAULT_ROBOTDESC):
-        robotdesc = Path(robotdesc)
-        self.robot = robotdesc / "pi5_feetech_r1"
-        self.model = LampModel(self.robot, calibration=robotdesc / "lelamp-calibration.json")
+    def __init__(self, robotdesc: Path = DEFAULT_ROBOTDESC, *, model: LampModel | None = None,
+                 robot_dir: Path | None = None):
+        """From a robotdesc dir (the Mac: pi5_feetech_r1/ + lelamp-calibration.json read in place), or
+        from an existing LampModel plus the robot dir its URDF inertials come from (the lamp)."""
+        if model is not None:
+            self.model = model
+            self.robot = Path(robot_dir if robot_dir is not None else model.robot_dir)
+        else:
+            robotdesc = Path(robotdesc)
+            self.robot = robotdesc / "pi5_feetech_r1"
+            self.model = LampModel(self.robot, calibration=robotdesc / "lelamp-calibration.json")
         root = ET.parse(self.robot / "robot.urdf").getroot()
         self.inertials = []
         for link in root.findall("link"):
@@ -454,6 +494,14 @@ class Validator:
             if mass_value is None or xyz is None:
                 raise ValueError(f"{self.robot / 'robot.urdf'}: inertial requires mass value and origin xyz")
             self.inertials.append((float(mass_value), np.array([float(v) for v in xyz.split()])))
+
+    @classmethod
+    def for_lamp(cls, robot_dir: Path | None = None, calibration: Path = LAMP_CALIBRATION) -> "Validator":
+        """The validator lamp_show uses on the lamp itself: the vendor checkout at spatial.DEFAULT_ROBOT_DIR
+        and the lamp's own servo calibration (the calibrated span IS the physical span). Loads in ~10 ms."""
+        from spatial import DEFAULT_ROBOT_DIR
+        robot_dir = Path(robot_dir if robot_dir is not None else DEFAULT_ROBOT_DIR)
+        return cls(model=LampModel(robot_dir, calibration=Path(calibration)), robot_dir=robot_dir)
 
     def com_and_head(self, u) -> tuple[np.ndarray, np.ndarray]:
         model = self.model
@@ -499,6 +547,49 @@ class Validator:
                 "zmp_y_min": float(zmp_y.min()), "peak_speed": speed, "problem_frames": len(bad)}
 
 
+def validate_rows(rows, model) -> tuple[bool, dict]:
+    """(ok, report) for a clip given as rows (list of 5-tuples, or an (n, 5) array) -- the batch
+    generator's exact checks: envelope, START at both ends, LampModel.problems() per frame, peak speed,
+    ZMP. `model` is a Validator, or a LampModel whose robot_dir holds the URDF. The report is plain
+    Python (json-able) so the scheduler can log it."""
+    v = model if isinstance(model, Validator) else Validator(model=model)
+    U = np.asarray(rows, dtype=float)
+    if U.ndim != 2 or U.shape[1] != len(JOINTS) or len(U) < 2:
+        return False, {"ok": False, "reasons": [f"rows must be (n >= 2, {len(JOINTS)}), got {U.shape}"]}
+    r = v.validate(U)
+    report = {"ok": r["ok"], "reasons": list(r["reasons"]), "frames": int(len(U)),
+              "head_y_min": round(r["head_y_min"], 4), "zmp_y_min": round(r["zmp_y_min"], 4),
+              "peak_speed": {j: round(float(sp), 1) for j, sp in zip(JOINTS, r["peak_speed"])},
+              "problem_frames": int(r["problem_frames"])}
+    return bool(r["ok"]), report
+
+
+def make_clip(tier: str, variant: str, bpm: float, bold: float, gains: dict | None = GAINS,
+              model=None) -> tuple[list[tuple], dict]:
+    """ONE clip at an exact bpm and boldness, as (rows, meta): rows are 30 fps 5-tuples of commanded
+    joint values (csv_text() turns them into the runtime's CSV), meta describes it. Same maths as the
+    batch generator (build_clip), so bold 1.0 at a bucket bpm reproduces the library file byte for byte.
+    With `model` (a Validator or a LampModel) the clip is validated and meta carries ok/reasons/report;
+    without it meta["ok"] is None and the caller must validate before the file reaches the runtime."""
+    bpm = float(bpm)
+    if not (BPM_RANGE[0] <= bpm <= BPM_RANGE[1]):
+        raise ValueError(f"bpm {bpm} outside {BPM_RANGE[0]:.0f}..{BPM_RANGE[1]:.0f}")
+    gain = gain_vector(gains)
+    scales, U = build_clip(tier, bpm, variant, gain, bold)
+    rows = [tuple(float(x) for x in u) for u in U]
+    meta = {"tier": tier, "variant": variant, "bpm": bpm, "bold": float(bold), "multiplier": bold_multiplier(bold),
+            "frames": int(len(U)), "seconds": round(len(U) / FPS, 4), "first_beat_s": HOLD_S + beat_period(bpm),
+            "beats": BEATS, "amplitude": round(float(np.abs(U[:, YAW]).max()), 2),
+            "scale": {j: round(float(sc), 3) for j, sc in zip(JOINTS, scales)},
+            "gain": dict(zip(JOINTS, gain.tolist())),
+            "range": {j: [round(float(lo), 4), round(float(hi), 4)] for j, lo, hi in zip(JOINTS, U.min(axis=0), U.max(axis=0))},
+            "first": _pose_dict(U[0]), "last": _pose_dict(U[-1]), "ok": None, "reasons": []}
+    if model is not None:
+        ok, report = validate_rows(U, model)
+        meta.update(ok=ok, reasons=report["reasons"], report=report)
+    return rows, meta
+
+
 # ----------------------------------------------------------------------------- files
 def csv_text(U: np.ndarray, t0: float = T0, fps: float = FPS) -> str:
     lines = [CSV_HEADER]
@@ -508,22 +599,48 @@ def csv_text(U: np.ndarray, t0: float = T0, fps: float = FPS) -> str:
 
 
 def write_atomic(path: Path, text: str) -> str:
-    """Temp name in the same dir, fsync, os.replace, os.sync, then re-read and md5-verify."""
+    """Temp name in the same dir (starting with '.', so the runtime never lists it), fsync, os.replace,
+    os.sync, then re-read and md5-verify against the bytes written. Returns the md5. A failure anywhere
+    leaves neither the temp file nor a half-written target: the runtime's animations dir must only ever
+    hold complete CSVs (a corrupt one blocks the whole runtime at boot)."""
     path = Path(path)
     data = text.encode()
     want = hashlib.md5(data).hexdigest()
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp, "wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     if hasattr(os, "sync"):
         os.sync()
     got = hashlib.md5(path.read_bytes()).hexdigest()
     if got != want:
+        try:
+            os.unlink(path)                                  # not what we wrote: it must not be played
+        except OSError:
+            pass
         raise IOError(f"{path}: md5 mismatch after write ({got} != {want})")
     return want
+
+
+def write_clip_atomic(path: Path, rows) -> str:
+    """A clip (rows from make_clip) into the runtime's pack dir, atomically; returns the md5 of the
+    bytes written (and re-read). The caller checks the runtime lists the name before posting it."""
+    return write_atomic(path, csv_text(rows))
+
+
+def one_name(tier: str, variant: str, bpm: float, bold: float) -> str:
+    """File stem for a --one clip: live_<tier>_<variant>_<bpm>_<bold> with '.' -> 'p' (the runtime plays
+    by stem, so the stem must not look like an extension)."""
+    return f"live_{tier}_{variant}_{bpm:g}_{bold:.2f}".replace(".", "p")
 
 
 def remove_stale(path: Path) -> bool:
@@ -679,6 +796,29 @@ def write_manifest(out: Path, entries: list[dict], gains: dict | None = None,
     return path
 
 
+def one(spec: list[str], out: Path, robotdesc: Path, gains: dict | None = None, log=print) -> int:
+    """--one TIER VARIANT BPM BOLD: make_clip + validate + write_clip_atomic, one table row, exit status."""
+    tier, variant, bpm, bold = spec[0], spec[1], float(spec[2]), float(spec[3])
+    if tier not in TIERS or variant not in VARIANTS:
+        log(f"--one: tier must be one of {TIERS} and variant one of {VARIANTS}")
+        return 2
+    rows, meta = make_clip(tier, variant, bpm, bold, {**GAINS, **(gains or {})}, Validator(robotdesc))
+    name = one_name(tier, variant, bpm, bold)
+    r = meta["report"]
+    scales = "/".join(f"{meta['scale'][j]:.2f}" for j in JOINTS)
+    speeds = "".join(f"{r['peak_speed'][j]:>6.0f}" for j in JOINTS)
+    row = (f"{name:<28}{meta['frames']:>7}{meta['seconds']:>6.2f}{meta['amplitude']:>6.1f}  x{meta['multiplier']:.2f}  "
+           f"{scales:<26}{r['head_y_min']:>+7.3f}{r['zmp_y_min']:>+7.3f}  {speeds}")
+    if not meta["ok"]:
+        log(row + "  FAIL  " + "; ".join(meta["reasons"]))
+        return 1
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    md5 = write_clip_atomic(out / f"{name}.csv", rows)
+    log(row + f"  PASS  {out / name}.csv md5 {md5}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -689,6 +829,9 @@ def main(argv=None) -> int:
     ap.add_argument("--variant", nargs="*", default=list(VARIANTS), choices=VARIANTS)
     ap.add_argument("--gains", help='per-joint command gain override, JSON object or @file, e.g. \'{"base_yaw": 1.6}\'')
     ap.add_argument("--no-aliases", action="store_true", help="do not write the unsuffixed v1 names")
+    ap.add_argument("--one", nargs=4, metavar=("TIER", "VARIANT", "BPM", "BOLD"),
+                    help="ONE clip at an exact bpm and boldness (what lamp_show generates live), written to "
+                         "--out as live_<tier>_<variant>_<bpm>_<bold>.csv; no manifest")
     args = ap.parse_args(argv)
     if not (args.robotdesc / "pi5_feetech_r1" / "robot.urdf").exists():
         print(f"robot description not found under {args.robotdesc}", file=sys.stderr)
@@ -698,6 +841,8 @@ def main(argv=None) -> int:
     except (ValueError, OSError) as exc:
         print(f"--gains: {exc}", file=sys.stderr)
         return 2
+    if args.one:
+        return one(args.one, args.out, args.robotdesc, gains)
     print("gains: " + ", ".join(f"{j} x{g:.2f}" for j, g in zip(JOINTS, gain_vector(gains))))
     entries, failures = generate(args.out, args.tier, args.bpm, args.robotdesc, variants=args.variant,
                                  gains=gains, aliases=not args.no_aliases)

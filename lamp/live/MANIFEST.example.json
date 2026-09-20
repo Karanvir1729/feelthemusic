@@ -1,6 +1,6 @@
 {
  "version": 2,
- "generated": "2026-09-19T18:34:33",
+ "generated": "2026-09-19T20:01:36",
  "fps": 30,
  "hold_s": 0.6,
  "beats": 8,
@@ -8340,11 +8340,11 @@
    "bpm": 80,
    "tier": "hype",
    "frames": 216,
-   "md5": "55dd26ebfd2c3639d6e93fa6fdaee844",
+   "md5": "f046e01119ea304343d001ecae2c7332",
    "seconds": 7.2,
-   "amplitude": 46.33,
+   "amplitude": 35.1,
    "scale": {
-    "base_yaw": 0.66,
+    "base_yaw": 1.0,
     "base_pitch": 1.0,
     "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
@@ -8366,23 +8366,23 @@
    },
    "range": {
     "base_yaw": [
-     -35.64,
-     46.332
+     -35.1,
+     35.1
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -7.8,
+     10.14
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -8393,14 +8393,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0609,
+   "head_y_min": 0.0748,
    "zmp_y_min": 0.0064,
    "peak_speed": {
-    "base_yaw": 138.4,
-    "base_pitch": 17.2,
-    "elbow_pitch": 50.2,
-    "wrist_roll": 45.4,
-    "wrist_pitch": 72.1
+    "base_yaw": 104.8,
+    "base_pitch": 17.1,
+    "elbow_pitch": 65.2,
+    "wrist_roll": 30.3,
+    "wrist_pitch": 51.2
    },
    "gain": {
     "base_yaw": 1.8,
@@ -8417,7 +8417,7 @@
    "bpm": 80,
    "tier": "hype",
    "frames": 216,
-   "md5": "1133d443d80c9f4c6ffb11b120de3397",
+   "md5": "347e7ada13099e5af95e24141f02b411",
    "seconds": 7.2,
    "amplitude": 46.33,
    "scale": {
@@ -8443,24 +8443,24 @@
    },
    "range": {
     "base_yaw": [
-     -35.64,
+     -46.332,
      46.332
     ],
     "base_pitch": [
-     -51.3,
-     -37.04
+     -51.99,
+     -43.25
     ],
     "elbow_pitch": [
-     -41.2,
-     12.32
+     -43.84,
+     -5.2
     ],
     "wrist_roll": [
      -11.7,
      15.21
     ],
     "wrist_pitch": [
-     16.8,
-     58.16
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 1.35,
@@ -8470,14 +8470,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0463,
-   "zmp_y_min": 0.0036,
+   "head_y_min": 0.068,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.4,
-    "base_pitch": 39.1,
-    "elbow_pitch": 136.2,
+    "base_pitch": 17.2,
+    "elbow_pitch": 65.2,
     "wrist_roll": 45.4,
-    "wrist_pitch": 97.2
+    "wrist_pitch": 51.2
    },
    "gain": {
     "base_yaw": 1.8,
@@ -8649,7 +8649,84 @@
    "bpm": 84,
    "tier": "hype",
    "frames": 207,
-   "md5": "862e116b0f8eb3f048f1c8360e8d5b78",
+   "md5": "9e9857482414bed788d3792a5b8d5f8c",
+   "seconds": 6.9,
+   "amplitude": 35.1,
+   "scale": {
+    "base_yaw": 1.0,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -35.1,
+     35.1
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.3142857142857143,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0748,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 110.0,
+    "base_pitch": 18.0,
+    "elbow_pitch": 68.5,
+    "wrist_roll": 31.7,
+    "wrist_pitch": 53.8
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_84_c",
+   "base": "beat_hype_84",
+   "variant": "c",
+   "bpm": 84,
+   "tier": "hype",
+   "frames": 207,
+   "md5": "8a6dd9755300269b162dd6628e264de4",
    "seconds": 6.9,
    "amplitude": 43.88,
    "scale": {
@@ -8675,23 +8752,23 @@
    },
    "range": {
     "base_yaw": [
-     -33.75,
+     -43.875,
      43.875
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -8702,91 +8779,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0627,
+   "head_y_min": 0.0692,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.5,
     "base_pitch": 18.0,
-    "elbow_pitch": 52.7,
+    "elbow_pitch": 68.5,
     "wrist_roll": 47.7,
-    "wrist_pitch": 75.6
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_84_c",
-   "base": "beat_hype_84",
-   "variant": "c",
-   "bpm": 84,
-   "tier": "hype",
-   "frames": 207,
-   "md5": "5fccdc8edc28b78c0c01313978069d1c",
-   "seconds": 6.9,
-   "amplitude": 43.88,
-   "scale": {
-    "base_yaw": 0.625,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.965,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -33.75,
-     43.875
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -40.528,
-     11.1188
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.8,
-     58.16
-    ]
-   },
-   "first_beat_s": 1.3142857142857143,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0493,
-   "zmp_y_min": 0.0042,
-   "peak_speed": {
-    "base_yaw": 137.5,
-    "base_pitch": 41.1,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 47.7,
-    "wrist_pitch": 102.1
+    "wrist_pitch": 53.8
    },
    "gain": {
     "base_yaw": 1.8,
@@ -8958,7 +8958,84 @@
    "bpm": 88,
    "tier": "hype",
    "frames": 200,
-   "md5": "48a5b135deb4adf826c7fcd897f9ba55",
+   "md5": "ed3bb9648546139de8dc2373870e4970",
+   "seconds": 6.6667,
+   "amplitude": 35.1,
+   "scale": {
+    "base_yaw": 1.0,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -35.1,
+     35.1
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.2818181818181817,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0748,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 115.2,
+    "base_pitch": 18.9,
+    "elbow_pitch": 71.7,
+    "wrist_roll": 33.3,
+    "wrist_pitch": 56.3
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_88_c",
+   "base": "beat_hype_88",
+   "variant": "c",
+   "bpm": 88,
+   "tier": "hype",
+   "frames": 200,
+   "md5": "25c6119f36aca0ca9c2dfc3d6a40188c",
    "seconds": 6.6667,
    "amplitude": 42.12,
    "scale": {
@@ -8984,23 +9061,23 @@
    },
    "range": {
     "base_yaw": [
-     -32.4,
+     -42.12,
      42.12
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -9011,91 +9088,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.064,
+   "head_y_min": 0.07,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.3,
     "base_pitch": 18.9,
-    "elbow_pitch": 55.2,
+    "elbow_pitch": 71.7,
     "wrist_roll": 49.9,
-    "wrist_pitch": 79.5
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_88_c",
-   "base": "beat_hype_88",
-   "variant": "c",
-   "bpm": 88,
-   "tier": "hype",
-   "frames": 200,
-   "md5": "6614a41e7a725087fcd54be7be07b3cd",
-   "seconds": 6.6667,
-   "amplitude": 42.12,
-   "scale": {
-    "base_yaw": 0.6,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.93,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -32.4,
-     42.12
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -39.856,
-     9.9176
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.8,
-     58.16
-    ]
-   },
-   "first_beat_s": 1.2818181818181817,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0518,
-   "zmp_y_min": 0.0048,
-   "peak_speed": {
-    "base_yaw": 138.2,
-    "base_pitch": 42.9,
-    "elbow_pitch": 138.5,
-    "wrist_roll": 49.9,
-    "wrist_pitch": 106.6
+    "wrist_pitch": 56.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -9267,7 +9267,84 @@
    "bpm": 92,
    "tier": "hype",
    "frames": 193,
-   "md5": "71c6cfb26569561ec08b138629fae815",
+   "md5": "e75ca56c43774ad6800f24bd1bbbdbd6",
+   "seconds": 6.4333,
+   "amplitude": 35.1,
+   "scale": {
+    "base_yaw": 1.0,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -35.1,
+     35.1
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.2521739130434781,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0748,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 120.4,
+    "base_pitch": 19.7,
+    "elbow_pitch": 75.0,
+    "wrist_roll": 34.8,
+    "wrist_pitch": 58.8
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_92_c",
+   "base": "beat_hype_92",
+   "variant": "c",
+   "bpm": 92,
+   "tier": "hype",
+   "frames": 193,
+   "md5": "5c4fca8e62031806aaa040649fc0ee9f",
    "seconds": 6.4333,
    "amplitude": 40.37,
    "scale": {
@@ -9293,23 +9370,23 @@
    },
    "range": {
     "base_yaw": [
-     -31.05,
+     -40.365,
      40.365
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -9320,91 +9397,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0652,
+   "head_y_min": 0.0708,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.6,
     "base_pitch": 19.7,
-    "elbow_pitch": 57.7,
+    "elbow_pitch": 75.0,
     "wrist_roll": 52.2,
-    "wrist_pitch": 83.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_92_c",
-   "base": "beat_hype_92",
-   "variant": "c",
-   "bpm": 92,
-   "tier": "hype",
-   "frames": 193,
-   "md5": "64555f9f6c1eb010b3c5ea30b65f14ed",
-   "seconds": 6.4333,
-   "amplitude": 40.37,
-   "scale": {
-    "base_yaw": 0.575,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.885,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -31.05,
-     40.365
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -38.992,
-     8.3732
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.8,
-     58.16
-    ]
-   },
-   "first_beat_s": 1.2521739130434781,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0547,
-   "zmp_y_min": 0.0057,
-   "peak_speed": {
-    "base_yaw": 138.4,
-    "base_pitch": 44.7,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 52.2,
-    "wrist_pitch": 111.1
+    "wrist_pitch": 58.8
    },
    "gain": {
     "base_yaw": 1.8,
@@ -9576,7 +9576,84 @@
    "bpm": 96,
    "tier": "hype",
    "frames": 186,
-   "md5": "d1e0dd4390d88d6ce772add4cd69b020",
+   "md5": "19fd6f0e03769e2a7ce60c8ac8ba2546",
+   "seconds": 6.2,
+   "amplitude": 35.1,
+   "scale": {
+    "base_yaw": 1.0,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -35.1,
+     35.1
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.225,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0748,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 125.4,
+    "base_pitch": 20.6,
+    "elbow_pitch": 78.0,
+    "wrist_roll": 36.2,
+    "wrist_pitch": 61.3
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_96_c",
+   "base": "beat_hype_96",
+   "variant": "c",
+   "bpm": 96,
+   "tier": "hype",
+   "frames": 186,
+   "md5": "79abcad4d7ec98ffc959d95855874f8e",
    "seconds": 6.2,
    "amplitude": 38.61,
    "scale": {
@@ -9602,23 +9679,23 @@
    },
    "range": {
     "base_yaw": [
-     -29.7,
+     -38.61,
      38.61
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -9629,91 +9706,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0664,
+   "head_y_min": 0.0716,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.9,
     "base_pitch": 20.6,
-    "elbow_pitch": 60.2,
+    "elbow_pitch": 78.0,
     "wrist_roll": 54.3,
-    "wrist_pitch": 86.2
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_96_c",
-   "base": "beat_hype_96",
-   "variant": "c",
-   "bpm": 96,
-   "tier": "hype",
-   "frames": 186,
-   "md5": "eaa2394e7c7f22db5054b4bef53aa2bf",
-   "seconds": 6.2,
-   "amplitude": 38.61,
-   "scale": {
-    "base_yaw": 0.55,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.845,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -29.7,
-     38.61
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -38.224,
-     7.0004
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.8,
-     58.16
-    ]
-   },
-   "first_beat_s": 1.225,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0574,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.9,
-    "base_pitch": 46.8,
-    "elbow_pitch": 137.9,
-    "wrist_roll": 54.3,
-    "wrist_pitch": 116.3
+    "wrist_pitch": 61.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -9885,7 +9885,84 @@
    "bpm": 100,
    "tier": "hype",
    "frames": 180,
-   "md5": "fbbdc806015cddc908154d34306c433d",
+   "md5": "5d03772b061e236c3c5e06566005a70e",
+   "seconds": 6.0,
+   "amplitude": 35.1,
+   "scale": {
+    "base_yaw": 1.0,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -35.1,
+     35.1
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.2,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0748,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 130.8,
+    "base_pitch": 21.4,
+    "elbow_pitch": 81.4,
+    "wrist_roll": 37.8,
+    "wrist_pitch": 63.9
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_100_c",
+   "base": "beat_hype_100",
+   "variant": "c",
+   "bpm": 100,
+   "tier": "hype",
+   "frames": 180,
+   "md5": "a8985ace9cb7019912725d28ca0f42c2",
    "seconds": 6.0,
    "amplitude": 36.86,
    "scale": {
@@ -9911,23 +9988,23 @@
    },
    "range": {
     "base_yaw": [
-     -28.35,
+     -36.855,
      36.855
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -9938,91 +10015,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0676,
+   "head_y_min": 0.0723,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.3,
     "base_pitch": 21.4,
-    "elbow_pitch": 62.6,
+    "elbow_pitch": 81.4,
     "wrist_roll": 56.7,
-    "wrist_pitch": 90.2
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_100_c",
-   "base": "beat_hype_100",
-   "variant": "c",
-   "bpm": 100,
-   "tier": "hype",
-   "frames": 180,
-   "md5": "c6871f751a743be61c328fe84c286392",
-   "seconds": 6.0,
-   "amplitude": 36.86,
-   "scale": {
-    "base_yaw": 0.525,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.815,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -28.35,
-     36.855
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -37.648,
-     5.9708
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.8,
-     58.16
-    ]
-   },
-   "first_beat_s": 1.2,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0596,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.3,
-    "base_pitch": 48.8,
-    "elbow_pitch": 138.5,
-    "wrist_roll": 56.7,
-    "wrist_pitch": 121.3
+    "wrist_pitch": 63.9
    },
    "gain": {
     "base_yaw": 1.8,
@@ -10194,7 +10194,84 @@
    "bpm": 104,
    "tier": "hype",
    "frames": 174,
-   "md5": "25119feef15f09022dc51a7205583380",
+   "md5": "277feb08cd2e0cec26306a0b44eaf004",
+   "seconds": 5.8,
+   "amplitude": 35.1,
+   "scale": {
+    "base_yaw": 1.0,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -35.1,
+     35.1
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.1769230769230767,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0748,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 136.1,
+    "base_pitch": 22.3,
+    "elbow_pitch": 84.7,
+    "wrist_roll": 39.2,
+    "wrist_pitch": 66.6
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_104_c",
+   "base": "beat_hype_104",
+   "variant": "c",
+   "bpm": 104,
+   "tier": "hype",
+   "frames": 174,
+   "md5": "32b4b7e053f68ca8b15e6acd697f77c0",
    "seconds": 5.8,
    "amplitude": 35.45,
    "scale": {
@@ -10220,23 +10297,23 @@
    },
    "range": {
     "base_yaw": [
-     -27.27,
+     -35.451,
      35.451
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -10247,91 +10324,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0685,
+   "head_y_min": 0.0729,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.5,
     "base_pitch": 22.3,
-    "elbow_pitch": 65.2,
+    "elbow_pitch": 84.7,
     "wrist_roll": 59.0,
-    "wrist_pitch": 93.6
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_104_c",
-   "base": "beat_hype_104",
-   "variant": "c",
-   "bpm": 104,
-   "tier": "hype",
-   "frames": 174,
-   "md5": "c2f27f01fd93fd96ed74a6d5bb3ebc5c",
-   "seconds": 5.8,
-   "amplitude": 35.45,
-   "scale": {
-    "base_yaw": 0.505,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.785,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -27.27,
-     35.451
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -37.072,
-     4.9412
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.8,
-     58.16
-    ]
-   },
-   "first_beat_s": 1.1769230769230767,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0617,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.5,
-    "base_pitch": 50.8,
-    "elbow_pitch": 138.1,
-    "wrist_roll": 59.0,
-    "wrist_pitch": 126.3
+    "wrist_pitch": 66.6
    },
    "gain": {
     "base_yaw": 1.8,
@@ -10503,7 +10503,84 @@
    "bpm": 108,
    "tier": "hype",
    "frames": 169,
-   "md5": "6e7a6295ad0468195677b41f35deb5f9",
+   "md5": "221cc062e63af1d0d933cbf00d0825f0",
+   "seconds": 5.6333,
+   "amplitude": 34.4,
+   "scale": {
+    "base_yaw": 0.98,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -34.398,
+     34.398
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.1555555555555554,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0751,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.5,
+    "base_pitch": 23.2,
+    "elbow_pitch": 87.9,
+    "wrist_roll": 40.7,
+    "wrist_pitch": 69.1
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_108_c",
+   "base": "beat_hype_108",
+   "variant": "c",
+   "bpm": 108,
+   "tier": "hype",
+   "frames": 169,
+   "md5": "2f46db70b01f5a37d33e244294a8899f",
    "seconds": 5.6333,
    "amplitude": 34.4,
    "scale": {
@@ -10529,23 +10606,23 @@
    },
    "range": {
     "base_yaw": [
-     -26.46,
+     -34.398,
      34.398
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -10556,91 +10633,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0692,
+   "head_y_min": 0.0733,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.5,
     "base_pitch": 23.2,
-    "elbow_pitch": 67.7,
+    "elbow_pitch": 87.9,
     "wrist_roll": 61.3,
-    "wrist_pitch": 97.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_108_c",
-   "base": "beat_hype_108",
-   "variant": "c",
-   "bpm": 108,
-   "tier": "hype",
-   "frames": 169,
-   "md5": "d6bedbc31406c76ccf7e28b7226d4733",
-   "seconds": 5.6333,
-   "amplitude": 34.4,
-   "scale": {
-    "base_yaw": 0.49,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.755,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -26.46,
-     34.398
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -36.496,
-     3.9116
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.8,
-     58.16
-    ]
-   },
-   "first_beat_s": 1.1555555555555554,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0635,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.5,
-    "base_pitch": 52.8,
-    "elbow_pitch": 138.1,
-    "wrist_roll": 61.3,
-    "wrist_pitch": 131.1
+    "wrist_pitch": 69.1
    },
    "gain": {
     "base_yaw": 1.8,
@@ -10812,7 +10812,84 @@
    "bpm": 112,
    "tier": "hype",
    "frames": 165,
-   "md5": "e21192ae4a3b0bbd595e706ef8f58286",
+   "md5": "4088d3bffa4787a939493e69c2a631c7",
+   "seconds": 5.5,
+   "amplitude": 33.17,
+   "scale": {
+    "base_yaw": 0.945,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -33.1695,
+     33.1695
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.1357142857142857,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0756,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.5,
+    "base_pitch": 24.0,
+    "elbow_pitch": 91.2,
+    "wrist_roll": 42.3,
+    "wrist_pitch": 71.6
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_112_c",
+   "base": "beat_hype_112",
+   "variant": "c",
+   "bpm": 112,
+   "tier": "hype",
+   "frames": 165,
+   "md5": "339ced0f2b03af7c5a4959f7af24f4bb",
    "seconds": 5.5,
    "amplitude": 32.99,
    "scale": {
@@ -10838,23 +10915,23 @@
    },
    "range": {
     "base_yaw": [
-     -25.38,
+     -32.994,
      32.994
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -10865,91 +10942,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.07,
+   "head_y_min": 0.0739,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.8,
     "base_pitch": 24.0,
-    "elbow_pitch": 70.1,
+    "elbow_pitch": 91.2,
     "wrist_roll": 63.5,
-    "wrist_pitch": 100.7
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_112_c",
-   "base": "beat_hype_112",
-   "variant": "c",
-   "bpm": 112,
-   "tier": "hype",
-   "frames": 165,
-   "md5": "bd7ec49aea6e5cf70842cd42273df65e",
-   "seconds": 5.5,
-   "amplitude": 32.99,
-   "scale": {
-    "base_yaw": 0.47,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.73,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -25.38,
-     32.994
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -36.016,
-     3.0536
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.8,
-     58.16
-    ]
-   },
-   "first_beat_s": 1.1357142857142857,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0653,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.8,
-    "base_pitch": 54.6,
-    "elbow_pitch": 138.2,
-    "wrist_roll": 63.5,
-    "wrist_pitch": 135.7
+    "wrist_pitch": 71.6
    },
    "gain": {
     "base_yaw": 1.8,
@@ -11121,7 +11121,84 @@
    "bpm": 116,
    "tier": "hype",
    "frames": 160,
-   "md5": "e19489076786bc1e5bb6b0aff17ca5f6",
+   "md5": "f8c850006a8fcf387592de396d82b846",
+   "seconds": 5.3333,
+   "amplitude": 32.12,
+   "scale": {
+    "base_yaw": 0.915,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -32.1165,
+     32.1165
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.1172413793103448,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0761,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.2,
+    "base_pitch": 24.8,
+    "elbow_pitch": 94.4,
+    "wrist_roll": 43.5,
+    "wrist_pitch": 74.2
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_116_c",
+   "base": "beat_hype_116",
+   "variant": "c",
+   "bpm": 116,
+   "tier": "hype",
+   "frames": 160,
+   "md5": "a36fc67857e19ef7de66ffcc4131d69c",
    "seconds": 5.3333,
    "amplitude": 31.94,
    "scale": {
@@ -11147,23 +11224,23 @@
    },
    "range": {
     "base_yaw": [
-     -24.57,
+     -31.941,
      31.941
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -11174,91 +11251,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0707,
+   "head_y_min": 0.0743,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.0,
     "base_pitch": 24.8,
-    "elbow_pitch": 72.6,
+    "elbow_pitch": 94.4,
     "wrist_roll": 65.7,
-    "wrist_pitch": 104.5
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_116_c",
-   "base": "beat_hype_116",
-   "variant": "c",
-   "bpm": 116,
-   "tier": "hype",
-   "frames": 160,
-   "md5": "e0a8270a51a212dcddb6872c66fdd18b",
-   "seconds": 5.3333,
-   "amplitude": 31.94,
-   "scale": {
-    "base_yaw": 0.455,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.705,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.985
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -24.57,
-     31.941
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -35.536,
-     2.1956
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     16.998,
-     57.7376
-    ]
-   },
-   "first_beat_s": 1.1172413793103448,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0669,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.0,
-    "base_pitch": 56.4,
-    "elbow_pitch": 138.4,
-    "wrist_roll": 65.7,
-    "wrist_pitch": 138.0
+    "wrist_pitch": 74.2
    },
    "gain": {
     "base_yaw": 1.8,
@@ -11430,7 +11430,84 @@
    "bpm": 120,
    "tier": "hype",
    "frames": 156,
-   "md5": "34a22eba262d426d331faf8c4df5fcc2",
+   "md5": "62dd5dac051714a9e9c4e8903f121084",
+   "seconds": 5.2,
+   "amplitude": 31.06,
+   "scale": {
+    "base_yaw": 0.885,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -31.0635,
+     31.0635
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.1,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0765,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.5,
+    "base_pitch": 25.6,
+    "elbow_pitch": 97.4,
+    "wrist_roll": 45.2,
+    "wrist_pitch": 76.5
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_120_c",
+   "base": "beat_hype_120",
+   "variant": "c",
+   "bpm": 120,
+   "tier": "hype",
+   "frames": 156,
+   "md5": "efccda7ec87e198fe8f0f3dbaa7d82b9",
    "seconds": 5.2,
    "amplitude": 30.89,
    "scale": {
@@ -11456,23 +11533,23 @@
    },
    "range": {
     "base_yaw": [
-     -23.76,
+     -30.888,
      30.888
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -11483,91 +11560,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0713,
+   "head_y_min": 0.0747,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.7,
     "base_pitch": 25.6,
-    "elbow_pitch": 74.9,
+    "elbow_pitch": 97.4,
     "wrist_roll": 67.8,
-    "wrist_pitch": 107.9
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_120_c",
-   "base": "beat_hype_120",
-   "variant": "c",
-   "bpm": 120,
-   "tier": "hype",
-   "frames": 156,
-   "md5": "cad07d9455676c9ddf1b330d7e0799a5",
-   "seconds": 5.2,
-   "amplitude": 30.89,
-   "scale": {
-    "base_yaw": 0.44,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.68,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.95
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -23.76,
-     30.888
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -35.056,
-     1.3376
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     17.46,
-     56.752
-    ]
-   },
-   "first_beat_s": 1.1,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0684,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.7,
-    "base_pitch": 58.5,
-    "elbow_pitch": 138.3,
-    "wrist_roll": 67.8,
-    "wrist_pitch": 137.9
+    "wrist_pitch": 76.5
    },
    "gain": {
     "base_yaw": 1.8,
@@ -11739,7 +11739,84 @@
    "bpm": 124,
    "tier": "hype",
    "frames": 152,
-   "md5": "2d0e32933ffe581fe697a3b4dfd0f5ef",
+   "md5": "30fac9aa65b1258b3af2e133a10137b3",
+   "seconds": 5.0667,
+   "amplitude": 29.84,
+   "scale": {
+    "base_yaw": 0.85,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -29.835,
+     29.835
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.0838709677419356,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0769,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 137.8,
+    "base_pitch": 26.3,
+    "elbow_pitch": 100.9,
+    "wrist_roll": 46.8,
+    "wrist_pitch": 79.2
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_124_c",
+   "base": "beat_hype_124",
+   "variant": "c",
+   "bpm": 124,
+   "tier": "hype",
+   "frames": 152,
+   "md5": "12b1dd99ece50dc1b34d403f1c199823",
    "seconds": 5.0667,
    "amplitude": 29.84,
    "scale": {
@@ -11765,23 +11842,23 @@
    },
    "range": {
     "base_yaw": [
-     -22.95,
+     -29.835,
      29.835
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -11792,91 +11869,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0719,
+   "head_y_min": 0.0751,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.8,
     "base_pitch": 26.6,
-    "elbow_pitch": 77.6,
+    "elbow_pitch": 100.9,
     "wrist_roll": 70.2,
-    "wrist_pitch": 110.5
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_124_c",
-   "base": "beat_hype_124",
-   "variant": "c",
-   "bpm": 124,
-   "tier": "hype",
-   "frames": 152,
-   "md5": "23b7100f09b95afe19094e7f10058f5e",
-   "seconds": 5.0667,
-   "amplitude": 29.84,
-   "scale": {
-    "base_yaw": 0.425,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.655,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.92
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -22.95,
-     29.835
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -34.576,
-     0.4796
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     17.856,
-     55.9072
-    ]
-   },
-   "first_beat_s": 1.0838709677419356,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.07,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.8,
-    "base_pitch": 60.6,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 70.2,
-    "wrist_pitch": 138.4
+    "wrist_pitch": 79.2
    },
    "gain": {
     "base_yaw": 1.8,
@@ -12048,7 +12048,84 @@
    "bpm": 128,
    "tier": "hype",
    "frames": 148,
-   "md5": "063c390bceeb521040dd7f9ee455250c",
+   "md5": "f575068e8e745afe8d36bddc705aa701",
+   "seconds": 4.9333,
+   "amplitude": 28.96,
+   "scale": {
+    "base_yaw": 0.825,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -28.9575,
+     28.9575
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.06875,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0773,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.0,
+    "base_pitch": 27.4,
+    "elbow_pitch": 104.1,
+    "wrist_roll": 48.0,
+    "wrist_pitch": 81.4
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_128_c",
+   "base": "beat_hype_128",
+   "variant": "c",
+   "bpm": 128,
+   "tier": "hype",
+   "frames": 148,
+   "md5": "155dc5927368a3843778495f0b16d193",
    "seconds": 4.9333,
    "amplitude": 28.78,
    "scale": {
@@ -12074,23 +12151,23 @@
    },
    "range": {
     "base_yaw": [
-     -22.14,
+     -28.782,
      28.782
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -12101,91 +12178,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0725,
+   "head_y_min": 0.0755,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.2,
     "base_pitch": 27.4,
-    "elbow_pitch": 80.1,
+    "elbow_pitch": 104.1,
     "wrist_roll": 72.2,
-    "wrist_pitch": 115.3
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_128_c",
-   "base": "beat_hype_128",
-   "variant": "c",
-   "bpm": 128,
-   "tier": "hype",
-   "frames": 148,
-   "md5": "43ab241c2cacf0389d78a566dfc1d82f",
-   "seconds": 4.9333,
-   "amplitude": 29.13,
-   "scale": {
-    "base_yaw": 0.415,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.635,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.89
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -22.41,
-     29.133
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -34.192,
-     -0.2068
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     18.252,
-     55.0624
-    ]
-   },
-   "first_beat_s": 1.06875,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0711,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.3,
-    "base_pitch": 62.5,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 72.2,
-    "wrist_pitch": 138.1
+    "wrist_pitch": 81.4
    },
    "gain": {
     "base_yaw": 1.8,
@@ -12357,7 +12357,84 @@
    "bpm": 132,
    "tier": "hype",
    "frames": 145,
-   "md5": "5952cc18711df94781a8ca60fc4a6f70",
+   "md5": "781b852b96f07b717d2edb90b9ce5aed",
+   "seconds": 4.8333,
+   "amplitude": 28.08,
+   "scale": {
+    "base_yaw": 0.8,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -28.08,
+     28.08
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.0545454545454545,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0776,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 137.9,
+    "base_pitch": 28.2,
+    "elbow_pitch": 107.3,
+    "wrist_roll": 49.5,
+    "wrist_pitch": 84.3
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_132_c",
+   "base": "beat_hype_132",
+   "variant": "c",
+   "bpm": 132,
+   "tier": "hype",
+   "frames": 145,
+   "md5": "04cd93496a9c1222f4a3e029db8d79b8",
    "seconds": 4.8333,
    "amplitude": 28.08,
    "scale": {
@@ -12383,23 +12460,23 @@
    },
    "range": {
     "base_yaw": [
-     -21.6,
+     -28.08,
      28.08
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -12410,91 +12487,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0729,
+   "head_y_min": 0.0758,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.0,
     "base_pitch": 28.2,
-    "elbow_pitch": 82.6,
+    "elbow_pitch": 107.3,
     "wrist_roll": 74.8,
-    "wrist_pitch": 117.6
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_132_c",
-   "base": "beat_hype_132",
-   "variant": "c",
-   "bpm": 132,
-   "tier": "hype",
-   "frames": 145,
-   "md5": "4e79fcd7114679b48f07dbdf2c8eaec5",
-   "seconds": 4.8333,
-   "amplitude": 28.08,
-   "scale": {
-    "base_yaw": 0.4,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.615,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.865
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -21.6,
-     28.08
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -33.808,
-     -0.8932
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     18.582,
-     54.3584
-    ]
-   },
-   "first_beat_s": 1.0545454545454545,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0725,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.0,
-    "base_pitch": 64.4,
-    "elbow_pitch": 137.6,
-    "wrist_roll": 74.8,
-    "wrist_pitch": 138.4
+    "wrist_pitch": 84.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -12666,7 +12666,84 @@
    "bpm": 136,
    "tier": "hype",
    "frames": 142,
-   "md5": "f9941c5b1b0e7a23ebe15e021c5e4dd0",
+   "md5": "d1750c04cfe42db667ef5da796668885",
+   "seconds": 4.7333,
+   "amplitude": 27.38,
+   "scale": {
+    "base_yaw": 0.78,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -27.378,
+     27.378
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.0411764705882351,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0778,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.6,
+    "base_pitch": 29.0,
+    "elbow_pitch": 110.5,
+    "wrist_roll": 51.3,
+    "wrist_pitch": 86.8
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_136_c",
+   "base": "beat_hype_136",
+   "variant": "c",
+   "bpm": 136,
+   "tier": "hype",
+   "frames": 142,
+   "md5": "ca9049fe8138b749d458c70f0baa8ed4",
    "seconds": 4.7333,
    "amplitude": 27.38,
    "scale": {
@@ -12692,23 +12769,23 @@
    },
    "range": {
     "base_yaw": [
-     -21.06,
+     -27.378,
      27.378
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -12719,91 +12796,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0733,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.6,
-    "base_pitch": 29.1,
-    "elbow_pitch": 85.0,
-    "wrist_roll": 76.9,
-    "wrist_pitch": 122.0
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_136_c",
-   "base": "beat_hype_136",
-   "variant": "c",
-   "bpm": 136,
-   "tier": "hype",
-   "frames": 142,
-   "md5": "03a31d0f6dcb6d9506a74bcc7540c9b6",
-   "seconds": 4.7333,
-   "amplitude": 27.38,
-   "scale": {
-    "base_yaw": 0.39,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.605,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.84
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -21.06,
-     27.378
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -33.616,
-     -1.2364
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     18.912,
-     53.6544
-    ]
-   },
-   "first_beat_s": 1.0411764705882351,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0732,
+   "head_y_min": 0.076,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.5,
-    "base_pitch": 66.4,
-    "elbow_pitch": 137.8,
+    "base_pitch": 29.0,
+    "elbow_pitch": 110.5,
     "wrist_roll": 76.9,
-    "wrist_pitch": 138.4
+    "wrist_pitch": 86.8
    },
    "gain": {
     "base_yaw": 1.8,
@@ -12975,7 +12975,84 @@
    "bpm": 140,
    "tier": "hype",
    "frames": 139,
-   "md5": "d50d6e31aa764e7e2b4908f0d513b5aa",
+   "md5": "de93baaab2005b6374117d3f21582ac0",
+   "seconds": 4.6333,
+   "amplitude": 26.5,
+   "scale": {
+    "base_yaw": 0.755,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -26.5005,
+     26.5005
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.0285714285714285,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0782,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 137.9,
+    "base_pitch": 29.9,
+    "elbow_pitch": 113.6,
+    "wrist_roll": 52.8,
+    "wrist_pitch": 89.3
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_140_c",
+   "base": "beat_hype_140",
+   "variant": "c",
+   "bpm": 140,
+   "tier": "hype",
+   "frames": 139,
+   "md5": "6feaf91994861e03b6da4ae5d40f459f",
    "seconds": 4.6333,
    "amplitude": 26.32,
    "scale": {
@@ -13001,23 +13078,23 @@
    },
    "range": {
     "base_yaw": [
-     -20.25,
+     -26.325,
      26.325
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -13028,91 +13105,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0739,
+   "head_y_min": 0.0764,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.0,
-    "base_pitch": 29.8,
-    "elbow_pitch": 87.5,
+    "base_pitch": 30.0,
+    "elbow_pitch": 113.6,
     "wrist_roll": 79.1,
-    "wrist_pitch": 125.9
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_140_c",
-   "base": "beat_hype_140",
-   "variant": "c",
-   "bpm": 140,
-   "tier": "hype",
-   "frames": 139,
-   "md5": "ffb60c118cbf098af4735ff7de5f9edb",
-   "seconds": 4.6333,
-   "amplitude": 26.32,
-   "scale": {
-    "base_yaw": 0.375,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.58,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.82
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -20.25,
-     26.325
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -33.136,
-     -2.0944
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     19.176,
-     53.0912
-    ]
-   },
-   "first_beat_s": 1.0285714285714285,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0747,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.0,
-    "base_pitch": 68.0,
-    "elbow_pitch": 137.8,
-    "wrist_roll": 79.1,
-    "wrist_pitch": 138.4
+    "wrist_pitch": 89.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -13284,7 +13284,84 @@
    "bpm": 144,
    "tier": "hype",
    "frames": 136,
-   "md5": "e5807ab538d2f255eb97b8b6356b835a",
+   "md5": "58f908e51428cb9c57895f37d896b4a2",
+   "seconds": 4.5333,
+   "amplitude": 25.97,
+   "scale": {
+    "base_yaw": 0.74,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -25.974,
+     25.974
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.0166666666666666,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0783,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 137.9,
+    "base_pitch": 30.8,
+    "elbow_pitch": 116.9,
+    "wrist_roll": 53.8,
+    "wrist_pitch": 91.8
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_144_c",
+   "base": "beat_hype_144",
+   "variant": "c",
+   "bpm": 144,
+   "tier": "hype",
+   "frames": 136,
+   "md5": "6374758078a4bd820781f36a78ec3868",
    "seconds": 4.5333,
    "amplitude": 25.62,
    "scale": {
@@ -13310,23 +13387,23 @@
    },
    "range": {
     "base_yaw": [
-     -19.71,
+     -25.623,
      25.623
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -13337,91 +13414,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0742,
+   "head_y_min": 0.0766,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.1,
     "base_pitch": 30.8,
-    "elbow_pitch": 89.9,
+    "elbow_pitch": 116.9,
     "wrist_roll": 81.4,
-    "wrist_pitch": 129.5
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_144_c",
-   "base": "beat_hype_144",
-   "variant": "c",
-   "bpm": 144,
-   "tier": "hype",
-   "frames": 136,
-   "md5": "716dc0476cb0588440d12323b129bae1",
-   "seconds": 4.5333,
-   "amplitude": 25.62,
-   "scale": {
-    "base_yaw": 0.365,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.57,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.8
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -19.71,
-     25.623
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -32.944,
-     -2.4376
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     19.44,
-     52.528
-    ]
-   },
-   "first_beat_s": 1.0166666666666666,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0754,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.1,
-    "base_pitch": 69.6,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 81.4,
-    "wrist_pitch": 138.3
+    "wrist_pitch": 91.8
    },
    "gain": {
     "base_yaw": 1.8,
@@ -13593,7 +13593,84 @@
    "bpm": 148,
    "tier": "hype",
    "frames": 133,
-   "md5": "2938178e2d10ddbeb8276e9044c1bfd4",
+   "md5": "aa115f0ee6bcd6a9cd022029c3d56960",
+   "seconds": 4.4333,
+   "amplitude": 25.1,
+   "scale": {
+    "base_yaw": 0.715,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -25.0965,
+     25.0965
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 1.0054054054054054,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0787,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.1,
+    "base_pitch": 31.6,
+    "elbow_pitch": 120.2,
+    "wrist_roll": 55.2,
+    "wrist_pitch": 93.4
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_148_c",
+   "base": "beat_hype_148",
+   "variant": "c",
+   "bpm": 148,
+   "tier": "hype",
+   "frames": 133,
+   "md5": "b3eb2d12acd6694998856f45b3b54a29",
    "seconds": 4.4333,
    "amplitude": 24.92,
    "scale": {
@@ -13619,23 +13696,23 @@
    },
    "range": {
     "base_yaw": [
-     -19.17,
+     -24.921,
      24.921
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -13646,91 +13723,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0746,
+   "head_y_min": 0.0769,
    "zmp_y_min": 0.0064,
    "peak_speed": {
-    "base_yaw": 137.1,
-    "base_pitch": 31.6,
-    "elbow_pitch": 92.4,
+    "base_yaw": 136.7,
+    "base_pitch": 31.5,
+    "elbow_pitch": 120.2,
     "wrist_roll": 82.8,
-    "wrist_pitch": 132.8
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_148_c",
-   "base": "beat_hype_148",
-   "variant": "c",
-   "bpm": 148,
-   "tier": "hype",
-   "frames": 133,
-   "md5": "d1a08babfddc092866b8f297d423888a",
-   "seconds": 4.4333,
-   "amplitude": 25.27,
-   "scale": {
-    "base_yaw": 0.36,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.555,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.77
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -19.44,
-     25.272
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -32.656,
-     -2.9524
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     19.836,
-     51.6832
-    ]
-   },
-   "first_beat_s": 1.0054054054054054,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0762,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.5,
-    "base_pitch": 72.1,
-    "elbow_pitch": 137.9,
-    "wrist_roll": 82.8,
-    "wrist_pitch": 138.0
+    "wrist_pitch": 93.4
    },
    "gain": {
     "base_yaw": 1.8,
@@ -13902,7 +13902,84 @@
    "bpm": 152,
    "tier": "hype",
    "frames": 131,
-   "md5": "cb41f78e6f37b420b02c97c1635fb0f5",
+   "md5": "88e4f65402e0bcc91253909113946600",
+   "seconds": 4.3667,
+   "amplitude": 24.57,
+   "scale": {
+    "base_yaw": 0.7,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -24.57,
+     24.57
+    ],
+    "base_pitch": [
+     -51.99,
+     -43.25
+    ],
+    "elbow_pitch": [
+     -43.84,
+     -5.2
+    ],
+    "wrist_roll": [
+     -7.8,
+     10.14
+    ],
+    "wrist_pitch": [
+     12.84,
+     43.2
+    ]
+   },
+   "first_beat_s": 0.9947368421052631,
+   "beats": 8,
+   "accent_beats": [
+    1,
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0788,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.5,
+    "base_pitch": 32.5,
+    "elbow_pitch": 123.4,
+    "wrist_roll": 57.1,
+    "wrist_pitch": 97.0
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_hype_152_c",
+   "base": "beat_hype_152",
+   "variant": "c",
+   "bpm": 152,
+   "tier": "hype",
+   "frames": 131,
+   "md5": "4584befaf485e2b429d7e7b30c242f77",
    "seconds": 4.3667,
    "amplitude": 24.22,
    "scale": {
@@ -13928,23 +14005,23 @@
    },
    "range": {
     "base_yaw": [
-     -18.63,
+     -24.219,
      24.219
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -11.7,
+     15.21
     ],
     "wrist_pitch": [
-     16.8,
+     12.84,
      43.2
     ]
    },
@@ -13955,91 +14032,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0749,
+   "head_y_min": 0.0771,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 136.8,
-    "base_pitch": 32.3,
-    "elbow_pitch": 94.9,
+    "base_pitch": 32.5,
+    "elbow_pitch": 123.4,
     "wrist_roll": 85.9,
-    "wrist_pitch": 135.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_hype_152_c",
-   "base": "beat_hype_152",
-   "variant": "c",
-   "bpm": 152,
-   "tier": "hype",
-   "frames": 131,
-   "md5": "36c2aa0b379618e58dc6d347b8a4c0a7",
-   "seconds": 4.3667,
-   "amplitude": 24.22,
-   "scale": {
-    "base_yaw": 0.345,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.54,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.76
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -18.63,
-     24.219
-    ],
-    "base_pitch": [
-     -51.3,
-     -37.04
-    ],
-    "elbow_pitch": [
-     -32.368,
-     -3.4672
-    ],
-    "wrist_roll": [
-     -11.7,
-     15.21
-    ],
-    "wrist_pitch": [
-     19.968,
-     51.4016
-    ]
-   },
-   "first_beat_s": 0.9947368421052631,
-   "beats": 8,
-   "accent_beats": [
-    1,
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0773,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 136.8,
-    "base_pitch": 73.1,
-    "elbow_pitch": 138.5,
-    "wrist_roll": 85.9,
-    "wrist_pitch": 137.9
+    "wrist_pitch": 97.0
    },
    "gain": {
     "base_yaw": 1.8,
@@ -14211,15 +14211,15 @@
    "bpm": 156,
    "tier": "hype",
    "frames": 128,
-   "md5": "871d4cbc10627d3c474ecf3c4de9569f",
+   "md5": "ce245c02f1c7b032eb95c8debe0e926f",
    "seconds": 4.2667,
    "amplitude": 23.87,
    "scale": {
-    "base_yaw": 0.34,
+    "base_yaw": 0.68,
     "base_pitch": 1.0,
     "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.99
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -14237,24 +14237,24 @@
    },
    "range": {
     "base_yaw": [
-     -18.36,
+     -23.868,
      23.868
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -7.8,
+     10.14
     ],
     "wrist_pitch": [
-     16.932,
-     43.068
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9846153846153847,
@@ -14264,14 +14264,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0751,
+   "head_y_min": 0.0791,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.4,
-    "base_pitch": 33.3,
-    "elbow_pitch": 97.4,
-    "wrist_roll": 88.2,
-    "wrist_pitch": 137.9
+    "base_pitch": 33.2,
+    "elbow_pitch": 126.6,
+    "wrist_roll": 58.8,
+    "wrist_pitch": 99.5
    },
    "gain": {
     "base_yaw": 1.8,
@@ -14288,15 +14288,15 @@
    "bpm": 156,
    "tier": "hype",
    "frames": 128,
-   "md5": "aff65b575762a525404af1f66272a337",
+   "md5": "91dcfa74f32fec9805c09450cb7c716e",
    "seconds": 4.2667,
    "amplitude": 23.87,
    "scale": {
     "base_yaw": 0.34,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.525,
+    "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.735
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -14314,24 +14314,24 @@
    },
    "range": {
     "base_yaw": [
-     -18.36,
+     -23.868,
      23.868
     ],
     "base_pitch": [
-     -51.3,
-     -37.04
+     -51.99,
+     -43.25
     ],
     "elbow_pitch": [
-     -32.08,
-     -3.982
+     -43.84,
+     -5.2
     ],
     "wrist_roll": [
      -11.7,
      15.21
     ],
     "wrist_pitch": [
-     20.298,
-     50.6976
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9846153846153847,
@@ -14341,14 +14341,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.078,
-   "zmp_y_min": 0.0063,
+   "head_y_min": 0.0772,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.4,
-    "base_pitch": 75.9,
-    "elbow_pitch": 138.2,
+    "base_pitch": 33.3,
+    "elbow_pitch": 126.6,
     "wrist_roll": 88.2,
-    "wrist_pitch": 138.5
+    "wrist_pitch": 99.5
    },
    "gain": {
     "base_yaw": 1.8,
@@ -14520,15 +14520,15 @@
    "bpm": 160,
    "tier": "hype",
    "frames": 126,
-   "md5": "3cbc3c271e26ccf751ab52eb60ccbc09",
+   "md5": "c2dc561942d8f7a17ae3b67cefddb9b7",
    "seconds": 4.2,
-   "amplitude": 23.17,
+   "amplitude": 23.34,
    "scale": {
-    "base_yaw": 0.33,
+    "base_yaw": 0.665,
     "base_pitch": 1.0,
     "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.96
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -14546,24 +14546,24 @@
    },
    "range": {
     "base_yaw": [
-     -17.82,
-     23.166
+     -23.3415,
+     23.3415
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -7.8,
+     10.14
     ],
     "wrist_pitch": [
-     17.328,
-     42.672
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.975,
@@ -14573,14 +14573,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0755,
+   "head_y_min": 0.0792,
    "zmp_y_min": 0.0064,
    "peak_speed": {
-    "base_yaw": 137.7,
-    "base_pitch": 34.1,
-    "elbow_pitch": 99.8,
-    "wrist_roll": 90.4,
-    "wrist_pitch": 138.1
+    "base_yaw": 138.4,
+    "base_pitch": 33.7,
+    "elbow_pitch": 129.8,
+    "wrist_roll": 60.1,
+    "wrist_pitch": 102.0
    },
    "gain": {
     "base_yaw": 1.8,
@@ -14597,15 +14597,15 @@
    "bpm": 160,
    "tier": "hype",
    "frames": 126,
-   "md5": "6031b233e45e73815a7efc5a1a70ed40",
+   "md5": "de873fc584848a7a5d8b18aa5b83fba1",
    "seconds": 4.2,
    "amplitude": 23.17,
    "scale": {
     "base_yaw": 0.33,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.515,
+    "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.715
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -14623,24 +14623,24 @@
    },
    "range": {
     "base_yaw": [
-     -17.82,
+     -23.166,
      23.166
     ],
     "base_pitch": [
-     -51.3,
-     -37.04
+     -51.99,
+     -43.25
     ],
     "elbow_pitch": [
-     -31.888,
-     -4.3252
+     -43.84,
+     -5.2
     ],
     "wrist_roll": [
      -11.7,
      15.21
     ],
     "wrist_pitch": [
-     20.562,
-     50.1344
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.975,
@@ -14650,14 +14650,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0787,
-   "zmp_y_min": 0.0061,
+   "head_y_min": 0.0774,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.7,
-    "base_pitch": 77.7,
-    "elbow_pitch": 138.5,
+    "base_pitch": 33.9,
+    "elbow_pitch": 129.8,
     "wrist_roll": 90.4,
-    "wrist_pitch": 138.0
+    "wrist_pitch": 102.0
    },
    "gain": {
     "base_yaw": 1.8,
@@ -14829,15 +14829,15 @@
    "bpm": 164,
    "tier": "hype",
    "frames": 124,
-   "md5": "a219da869f6e9f9018aeabcb9e1e988c",
+   "md5": "760d16d70e2151dd71f37b64979fedfa",
    "seconds": 4.1333,
-   "amplitude": 22.82,
+   "amplitude": 22.99,
    "scale": {
-    "base_yaw": 0.325,
+    "base_yaw": 0.655,
     "base_pitch": 1.0,
     "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.955
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -14855,24 +14855,24 @@
    },
    "range": {
     "base_yaw": [
-     -17.55,
-     22.815
+     -22.9905,
+     22.9905
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -7.8,
+     10.14
     ],
     "wrist_pitch": [
-     17.394,
-     42.606
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9658536585365853,
@@ -14882,14 +14882,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0756,
+   "head_y_min": 0.0794,
    "zmp_y_min": 0.0064,
    "peak_speed": {
-    "base_yaw": 137.4,
+    "base_yaw": 138.5,
     "base_pitch": 34.5,
-    "elbow_pitch": 101.0,
-    "wrist_roll": 91.6,
-    "wrist_pitch": 138.0
+    "elbow_pitch": 131.5,
+    "wrist_roll": 61.1,
+    "wrist_pitch": 103.4
    },
    "gain": {
     "base_yaw": 1.8,
@@ -14906,15 +14906,15 @@
    "bpm": 164,
    "tier": "hype",
    "frames": 124,
-   "md5": "2215bcdb252e40a5ec0769f865c4f6b4",
+   "md5": "ae0e5e3d8f9bcc86ef425c7c19ce336d",
    "seconds": 4.1333,
    "amplitude": 22.82,
    "scale": {
     "base_yaw": 0.325,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.505,
+    "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.71
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -14932,24 +14932,24 @@
    },
    "range": {
     "base_yaw": [
-     -17.55,
+     -22.815,
      22.815
     ],
     "base_pitch": [
-     -51.3,
-     -37.04
+     -51.99,
+     -43.25
     ],
     "elbow_pitch": [
-     -31.696,
-     -4.6684
+     -43.84,
+     -5.2
     ],
     "wrist_roll": [
      -11.7,
      15.21
     ],
     "wrist_pitch": [
-     20.628,
-     49.9936
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9658536585365853,
@@ -14959,14 +14959,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.079,
-   "zmp_y_min": 0.0059,
+   "head_y_min": 0.0776,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.4,
-    "base_pitch": 78.4,
-    "elbow_pitch": 137.5,
+    "base_pitch": 34.5,
+    "elbow_pitch": 131.5,
     "wrist_roll": 91.6,
-    "wrist_pitch": 138.3
+    "wrist_pitch": 103.4
    },
    "gain": {
     "base_yaw": 1.8,
@@ -15138,15 +15138,15 @@
    "bpm": 168,
    "tier": "hype",
    "frames": 122,
-   "md5": "b6711269b4d4c9c7f24f53bde3fc488c",
+   "md5": "e2e5a84fe07cbccbc42a0503d59ab16a",
    "seconds": 4.0667,
-   "amplitude": 22.11,
+   "amplitude": 22.29,
    "scale": {
-    "base_yaw": 0.315,
+    "base_yaw": 0.635,
     "base_pitch": 1.0,
     "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.915
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -15164,24 +15164,24 @@
    },
    "range": {
     "base_yaw": [
-     -17.01,
-     22.113
+     -22.2885,
+     22.2885
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
+     -43.84,
      -5.2
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -7.8,
+     10.14
     ],
     "wrist_pitch": [
-     17.922,
-     42.078
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9571428571428571,
@@ -15191,14 +15191,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.076,
+   "head_y_min": 0.0796,
    "zmp_y_min": 0.0064,
    "peak_speed": {
-    "base_yaw": 137.9,
-    "base_pitch": 35.5,
-    "elbow_pitch": 104.8,
-    "wrist_roll": 94.6,
-    "wrist_pitch": 138.1
+    "base_yaw": 137.8,
+    "base_pitch": 35.4,
+    "elbow_pitch": 136.2,
+    "wrist_roll": 62.1,
+    "wrist_pitch": 106.7
    },
    "gain": {
     "base_yaw": 1.8,
@@ -15215,15 +15215,15 @@
    "bpm": 168,
    "tier": "hype",
    "frames": 122,
-   "md5": "9e8f8c0959fde78847798df82778233c",
+   "md5": "40f9c49ef1dee47dce938e28343b0c03",
    "seconds": 4.0667,
    "amplitude": 22.11,
    "scale": {
     "base_yaw": 0.315,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.485,
+    "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.685
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -15241,24 +15241,24 @@
    },
    "range": {
     "base_yaw": [
-     -17.01,
+     -22.113,
      22.113
     ],
     "base_pitch": [
-     -51.3,
-     -37.04
+     -51.99,
+     -43.25
     ],
     "elbow_pitch": [
-     -31.312,
-     -5.3548
+     -43.84,
+     -5.2
     ],
     "wrist_roll": [
      -11.7,
      15.21
     ],
     "wrist_pitch": [
-     20.958,
-     49.2896
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9571428571428571,
@@ -15268,14 +15268,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0788,
-   "zmp_y_min": 0.0056,
+   "head_y_min": 0.0778,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
-    "base_yaw": 137.5,
-    "base_pitch": 81.0,
-    "elbow_pitch": 137.2,
+    "base_yaw": 137.9,
+    "base_pitch": 35.8,
+    "elbow_pitch": 136.2,
     "wrist_roll": 94.6,
-    "wrist_pitch": 137.9
+    "wrist_pitch": 106.7
    },
    "gain": {
     "base_yaw": 1.8,
@@ -15447,15 +15447,15 @@
    "bpm": 172,
    "tier": "hype",
    "frames": 120,
-   "md5": "0458f948a86355d2d200b6d421803879",
+   "md5": "410743dfb540282e561e467bac9a0f80",
    "seconds": 4.0,
    "amplitude": 21.76,
    "scale": {
-    "base_yaw": 0.31,
+    "base_yaw": 0.62,
     "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
+    "elbow_pitch": 0.995,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.905
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -15473,24 +15473,24 @@
    },
    "range": {
     "base_yaw": [
-     -16.74,
+     -21.762,
      21.762
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
-     -5.2
+     -43.7308,
+     -5.284
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -7.8,
+     10.14
     ],
     "wrist_pitch": [
-     18.054,
-     41.946
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9488372093023256,
@@ -15500,14 +15500,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0762,
+   "head_y_min": 0.0799,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.6,
-    "base_pitch": 36.6,
-    "elbow_pitch": 107.2,
-    "wrist_roll": 96.6,
-    "wrist_pitch": 138.0
+    "base_pitch": 36.4,
+    "elbow_pitch": 138.4,
+    "wrist_roll": 64.2,
+    "wrist_pitch": 109.0
    },
    "gain": {
     "base_yaw": 1.8,
@@ -15524,15 +15524,15 @@
    "bpm": 172,
    "tier": "hype",
    "frames": 120,
-   "md5": "be09c012cae0ad0487b33c4b69740b0a",
+   "md5": "ef3f6888c855136f96ead48ad4d086dd",
    "seconds": 4.0,
    "amplitude": 21.76,
    "scale": {
     "base_yaw": 0.31,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.475,
+    "elbow_pitch": 0.995,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.665
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -15550,24 +15550,24 @@
    },
    "range": {
     "base_yaw": [
-     -16.74,
+     -21.762,
      21.762
     ],
     "base_pitch": [
-     -51.3,
-     -37.04
+     -51.99,
+     -43.25
     ],
     "elbow_pitch": [
-     -31.12,
-     -5.698
+     -43.7308,
+     -5.284
     ],
     "wrist_roll": [
      -11.7,
      15.21
     ],
     "wrist_pitch": [
-     21.222,
-     48.7264
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9488372093023256,
@@ -15577,14 +15577,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0788,
-   "zmp_y_min": 0.0055,
+   "head_y_min": 0.078,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.2,
-    "base_pitch": 83.5,
-    "elbow_pitch": 138.2,
+    "base_pitch": 36.7,
+    "elbow_pitch": 138.4,
     "wrist_roll": 96.6,
-    "wrist_pitch": 137.9
+    "wrist_pitch": 109.0
    },
    "gain": {
     "base_yaw": 1.8,
@@ -15756,15 +15756,15 @@
    "bpm": 176,
    "tier": "hype",
    "frames": 118,
-   "md5": "5f2539b6c93a2e04eb81f4a935e4fa81",
+   "md5": "b1803e9eb3734d484f63fbcf3b5c1dff",
    "seconds": 3.9333,
    "amplitude": 21.06,
    "scale": {
-    "base_yaw": 0.3,
+    "base_yaw": 0.6,
     "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
+    "elbow_pitch": 0.97,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.88
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -15782,24 +15782,24 @@
    },
    "range": {
     "base_yaw": [
-     -16.2,
+     -21.06,
      21.06
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
-     -5.2
+     -43.1848,
+     -5.704
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -7.8,
+     10.14
     ],
     "wrist_pitch": [
-     18.384,
-     41.616
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9409090909090909,
@@ -15809,14 +15809,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0765,
+   "head_y_min": 0.0806,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.5,
-    "base_pitch": 37.5,
-    "elbow_pitch": 109.7,
-    "wrist_roll": 99.1,
-    "wrist_pitch": 138.0
+    "base_pitch": 37.4,
+    "elbow_pitch": 138.3,
+    "wrist_roll": 66.1,
+    "wrist_pitch": 111.8
    },
    "gain": {
     "base_yaw": 1.8,
@@ -15833,15 +15833,15 @@
    "bpm": 176,
    "tier": "hype",
    "frames": 118,
-   "md5": "f57d85e33130337dbffb21567b5c95bc",
+   "md5": "f9eae4ff80dfd94d722cce5c9354b3a3",
    "seconds": 3.9333,
    "amplitude": 21.06,
    "scale": {
     "base_yaw": 0.3,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.475,
+    "elbow_pitch": 0.97,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.65
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -15859,24 +15859,24 @@
    },
    "range": {
     "base_yaw": [
-     -16.2,
+     -21.06,
      21.06
     ],
     "base_pitch": [
-     -51.3,
-     -37.04
+     -51.99,
+     -43.25
     ],
     "elbow_pitch": [
-     -31.12,
-     -5.698
+     -43.1848,
+     -5.704
     ],
     "wrist_roll": [
      -11.7,
      15.21
     ],
     "wrist_pitch": [
-     21.42,
-     48.304
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9409090909090909,
@@ -15886,14 +15886,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.079,
-   "zmp_y_min": 0.0053,
+   "head_y_min": 0.0788,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.2,
-    "base_pitch": 85.6,
-    "elbow_pitch": 138.2,
+    "base_pitch": 37.3,
+    "elbow_pitch": 138.3,
     "wrist_roll": 99.1,
-    "wrist_pitch": 138.2
+    "wrist_pitch": 111.8
    },
    "gain": {
     "base_yaw": 1.8,
@@ -16065,15 +16065,15 @@
    "bpm": 180,
    "tier": "hype",
    "frames": 116,
-   "md5": "f90cd6a449a77d298d3c6e5c2bfbc320",
+   "md5": "7da09d058ed57b8021da158d908de03d",
    "seconds": 3.8667,
    "amplitude": 20.71,
    "scale": {
-    "base_yaw": 0.295,
+    "base_yaw": 0.59,
     "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
+    "elbow_pitch": 0.95,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.855
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -16091,24 +16091,24 @@
    },
    "range": {
     "base_yaw": [
-     -15.93,
+     -20.709,
      20.709
     ],
     "base_pitch": [
-     -51.3,
+     -51.99,
      -43.25
     ],
     "elbow_pitch": [
-     -38.8,
-     -5.2
+     -42.748,
+     -6.04
     ],
     "wrist_roll": [
-     -15.21,
-     11.7
+     -7.8,
+     10.14
     ],
     "wrist_pitch": [
-     18.714,
-     41.286
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9333333333333333,
@@ -16118,14 +16118,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0766,
+   "head_y_min": 0.0812,
    "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.2,
     "base_pitch": 38.4,
-    "elbow_pitch": 112.2,
-    "wrist_roll": 101.5,
-    "wrist_pitch": 138.1
+    "elbow_pitch": 138.5,
+    "wrist_roll": 67.7,
+    "wrist_pitch": 114.6
    },
    "gain": {
     "base_yaw": 1.8,
@@ -16142,15 +16142,15 @@
    "bpm": 180,
    "tier": "hype",
    "frames": 116,
-   "md5": "111296b5396caf178a29322e205faa42",
+   "md5": "c61b7226a6522ddfd52fed2086013cf2",
    "seconds": 3.8667,
    "amplitude": 20.71,
    "scale": {
     "base_yaw": 0.295,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.455,
+    "elbow_pitch": 0.95,
     "wrist_roll": 1.0,
-    "wrist_pitch": 0.635
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -16168,24 +16168,24 @@
    },
    "range": {
     "base_yaw": [
-     -15.93,
+     -20.709,
      20.709
     ],
     "base_pitch": [
-     -51.3,
-     -37.04
+     -51.99,
+     -43.25
     ],
     "elbow_pitch": [
-     -30.736,
-     -6.3844
+     -42.748,
+     -6.04
     ],
     "wrist_roll": [
      -11.7,
      15.21
     ],
     "wrist_pitch": [
-     21.618,
-     47.8816
+     12.84,
+     43.2
     ]
    },
    "first_beat_s": 0.9333333333333333,
@@ -16195,14 +16195,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0787,
-   "zmp_y_min": 0.005,
+   "head_y_min": 0.0794,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.2,
-    "base_pitch": 87.5,
+    "base_pitch": 38.4,
     "elbow_pitch": 138.5,
     "wrist_roll": 101.5,
-    "wrist_pitch": 138.0
+    "wrist_pitch": 114.6
    },
    "gain": {
     "base_yaw": 1.8,
@@ -16372,89 +16372,13 @@
    "bpm": 80,
    "tier": "drop",
    "frames": 216,
-   "md5": "9f1ad8c6161a66575977e768f0936019",
-   "seconds": 7.2,
-   "amplitude": 46.33,
-   "scale": {
-    "base_yaw": 0.66,
-    "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -46.332,
-     35.64
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.8,
-     6.8
-    ],
-    "wrist_roll": [
-     -11.7,
-     25.61
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.35,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.068,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.0,
-    "base_pitch": 44.6,
-    "elbow_pitch": 86.0,
-    "wrist_roll": 111.4,
-    "wrist_pitch": 72.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_80_c",
-   "base": "beat_drop_80",
-   "variant": "c",
-   "bpm": 80,
-   "tier": "drop",
-   "frames": 216,
-   "md5": "0b0fb766bdb4faf3c3d40b98f77f36c9",
+   "md5": "d65ad5a186589da4ce6f6ab383d2a72c",
    "seconds": 7.2,
    "amplitude": 46.17,
    "scale": {
     "base_yaw": 0.855,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.795,
+    "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
@@ -16478,20 +16402,20 @@
      46.17
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -41.08,
-     5.2844
+     -43.84,
+     6.8
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -11.7,
+     20.54
     ],
     "wrist_pitch": [
-     16.8,
-     58.16
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.35,
@@ -16500,14 +16424,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.066,
-   "zmp_y_min": 0.0035,
+   "head_y_min": 0.0607,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.9,
+    "base_pitch": 44.6,
+    "elbow_pitch": 115.4,
+    "wrist_roll": 96.3,
+    "wrist_pitch": 65.7
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_80_c",
+   "base": "beat_drop_80",
+   "variant": "c",
+   "bpm": 80,
+   "tier": "drop",
+   "frames": 216,
+   "md5": "636c0de51093724229f3c6ba445bfd7d",
+   "seconds": 7.2,
+   "amplitude": 46.33,
+   "scale": {
+    "base_yaw": 0.66,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.88,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -46.332,
+     35.64
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -43.12,
+     3.344
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     19.0,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.35,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0705,
+   "zmp_y_min": 0.0047,
+   "peak_speed": {
+    "base_yaw": 138.0,
     "base_pitch": 71.9,
     "elbow_pitch": 138.4,
-    "wrist_roll": 46.6,
-    "wrist_pitch": 116.9
+    "wrist_roll": 60.9,
+    "wrist_pitch": 98.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -16677,89 +16677,13 @@
    "bpm": 84,
    "tier": "drop",
    "frames": 207,
-   "md5": "155b071a9f37bf534302d81c133db85e",
-   "seconds": 6.9,
-   "amplitude": 44.23,
-   "scale": {
-    "base_yaw": 0.63,
-    "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -44.226,
-     34.02
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.8,
-     6.8
-    ],
-    "wrist_roll": [
-     -11.7,
-     25.61
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.3142857142857143,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.069,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.1,
-    "base_pitch": 46.7,
-    "elbow_pitch": 89.9,
-    "wrist_roll": 116.9,
-    "wrist_pitch": 75.6
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_84_c",
-   "base": "beat_drop_84",
-   "variant": "c",
-   "bpm": 84,
-   "tier": "drop",
-   "frames": 207,
-   "md5": "765cab760190be41a1b7d0640d2e07c5",
+   "md5": "4714167e98ddc51845cce5a550f2266c",
    "seconds": 6.9,
    "amplitude": 44.01,
    "scale": {
     "base_yaw": 0.815,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.755,
+    "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
@@ -16783,20 +16707,20 @@
      44.01
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -40.12,
-     3.9116
+     -43.84,
+     6.8
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -11.7,
+     20.54
     ],
     "wrist_pitch": [
-     16.8,
-     58.16
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.3142857142857143,
@@ -16805,14 +16729,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0672,
-   "zmp_y_min": 0.0031,
+   "head_y_min": 0.0623,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
-    "base_yaw": 138.0,
+    "base_yaw": 137.9,
+    "base_pitch": 46.7,
+    "elbow_pitch": 121.1,
+    "wrist_roll": 101.1,
+    "wrist_pitch": 68.7
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_84_c",
+   "base": "beat_drop_84",
+   "variant": "c",
+   "bpm": 84,
+   "tier": "drop",
+   "frames": 207,
+   "md5": "0bd204ffcad0fe604e9046b958f35c8a",
+   "seconds": 6.9,
+   "amplitude": 44.23,
+   "scale": {
+    "base_yaw": 0.63,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.835,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -44.226,
+     34.02
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -42.04,
+     2.048
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     19.0,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.3142857142857143,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0725,
+   "zmp_y_min": 0.0043,
+   "peak_speed": {
+    "base_yaw": 138.1,
     "base_pitch": 75.7,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 48.9,
-    "wrist_pitch": 122.7
+    "elbow_pitch": 138.2,
+    "wrist_roll": 64.0,
+    "wrist_pitch": 103.4
    },
    "gain": {
     "base_yaw": 1.8,
@@ -16982,89 +16982,13 @@
    "bpm": 88,
    "tier": "drop",
    "frames": 200,
-   "md5": "84d856457c32aced2b6898305c6962fc",
-   "seconds": 6.6667,
-   "amplitude": 42.12,
-   "scale": {
-    "base_yaw": 0.6,
-    "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -42.12,
-     32.4
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.8,
-     6.8
-    ],
-    "wrist_roll": [
-     -11.7,
-     25.61
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.2818181818181817,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.07,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.3,
-    "base_pitch": 49.1,
-    "elbow_pitch": 94.5,
-    "wrist_roll": 122.1,
-    "wrist_pitch": 79.5
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_88_c",
-   "base": "beat_drop_88",
-   "variant": "c",
-   "bpm": 88,
-   "tier": "drop",
-   "frames": 200,
-   "md5": "1f776b071f29ccf9e13eae90dceb009a",
+   "md5": "f241636e2bd991331ae5e86b0c24a195",
    "seconds": 6.6667,
    "amplitude": 42.12,
    "scale": {
     "base_yaw": 0.78,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.725,
+    "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
@@ -17088,20 +17012,20 @@
      42.12
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -39.4,
-     2.882
+     -43.84,
+     6.8
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -11.7,
+     20.54
     ],
     "wrist_pitch": [
-     16.8,
-     58.16
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.2818181818181817,
@@ -17110,14 +17034,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0682,
-   "zmp_y_min": 0.0028,
+   "head_y_min": 0.0636,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.3,
+    "base_pitch": 49.1,
+    "elbow_pitch": 126.5,
+    "wrist_roll": 105.5,
+    "wrist_pitch": 72.2
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_88_c",
+   "base": "beat_drop_88",
+   "variant": "c",
+   "bpm": 88,
+   "tier": "drop",
+   "frames": 200,
+   "md5": "93c75ec595133b11b158c0cfb50fcc6c",
+   "seconds": 6.6667,
+   "amplitude": 42.12,
+   "scale": {
+    "base_yaw": 0.6,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.8,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -42.12,
+     32.4
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -41.2,
+     1.04
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     19.0,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.2818181818181817,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0741,
+   "zmp_y_min": 0.0039,
    "peak_speed": {
     "base_yaw": 138.3,
     "base_pitch": 79.2,
-    "elbow_pitch": 138.4,
-    "wrist_roll": 51.2,
-    "wrist_pitch": 128.2
+    "elbow_pitch": 138.5,
+    "wrist_roll": 66.8,
+    "wrist_pitch": 108.2
    },
    "gain": {
     "base_yaw": 1.8,
@@ -17287,89 +17287,13 @@
    "bpm": 92,
    "tier": "drop",
    "frames": 193,
-   "md5": "7798e5ab94203e60e27f2349907206ed",
-   "seconds": 6.4333,
-   "amplitude": 40.37,
-   "scale": {
-    "base_yaw": 0.575,
-    "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -40.365,
-     31.05
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.8,
-     6.8
-    ],
-    "wrist_roll": [
-     -11.7,
-     25.61
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.2521739130434781,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0708,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.6,
-    "base_pitch": 51.3,
-    "elbow_pitch": 98.8,
-    "wrist_roll": 127.3,
-    "wrist_pitch": 83.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_92_c",
-   "base": "beat_drop_92",
-   "variant": "c",
-   "bpm": 92,
-   "tier": "drop",
-   "frames": 193,
-   "md5": "6a6c10e360e0da83c756c226885d80e8",
+   "md5": "b813ed649f642481bb06d5f5e804fbdd",
    "seconds": 6.4333,
    "amplitude": 40.23,
    "scale": {
     "base_yaw": 0.745,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.695,
+    "elbow_pitch": 1.0,
     "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
@@ -17393,20 +17317,20 @@
      40.23
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -38.68,
-     1.8524
+     -43.84,
+     6.8
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -11.7,
+     20.54
     ],
     "wrist_pitch": [
-     16.8,
-     58.16
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.2521739130434781,
@@ -17415,14 +17339,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0691,
-   "zmp_y_min": 0.0024,
+   "head_y_min": 0.0649,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.1,
+    "base_pitch": 51.3,
+    "elbow_pitch": 131.9,
+    "wrist_roll": 110.0,
+    "wrist_pitch": 75.4
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_92_c",
+   "base": "beat_drop_92",
+   "variant": "c",
+   "bpm": 92,
+   "tier": "drop",
+   "frames": 193,
+   "md5": "46d563846687282481282bf4cf732a15",
+   "seconds": 6.4333,
+   "amplitude": 40.37,
+   "scale": {
+    "base_yaw": 0.575,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.765,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -40.365,
+     31.05
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -40.36,
+     0.032
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     19.0,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.2521739130434781,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0749,
+   "zmp_y_min": 0.0036,
+   "peak_speed": {
+    "base_yaw": 138.6,
     "base_pitch": 82.8,
-    "elbow_pitch": 138.3,
-    "wrist_roll": 53.5,
-    "wrist_pitch": 133.6
+    "elbow_pitch": 138.5,
+    "wrist_roll": 69.7,
+    "wrist_pitch": 113.2
    },
    "gain": {
     "base_yaw": 1.8,
@@ -17592,13 +17592,89 @@
    "bpm": 96,
    "tier": "drop",
    "frames": 186,
-   "md5": "548f8e26a5339ab92ddcabad12be0ccf",
+   "md5": "497fa9c17e544b73d3c5d1c3eee4be0d",
+   "seconds": 6.2,
+   "amplitude": 38.61,
+   "scale": {
+    "base_yaw": 0.715,
+    "base_pitch": 1.0,
+    "elbow_pitch": 1.0,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -38.61,
+     38.61
+    ],
+    "base_pitch": [
+     -51.99,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -43.84,
+     6.8
+    ],
+    "wrist_roll": [
+     -11.7,
+     20.54
+    ],
+    "wrist_pitch": [
+     23.4,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.225,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.066,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.3,
+    "base_pitch": 53.4,
+    "elbow_pitch": 138.0,
+    "wrist_roll": 115.2,
+    "wrist_pitch": 78.6
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_96_c",
+   "base": "beat_drop_96",
+   "variant": "c",
+   "bpm": 96,
+   "tier": "drop",
+   "frames": 186,
+   "md5": "3831e1db7731ddf7641585a1681028ac",
    "seconds": 6.2,
    "amplitude": 38.61,
    "scale": {
     "base_yaw": 0.55,
     "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
+    "elbow_pitch": 0.735,
     "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
@@ -17622,19 +17698,19 @@
      29.7
     ],
     "base_pitch": [
-     -51.3,
+     -52.0,
      -34.05
     ],
     "elbow_pitch": [
-     -38.8,
-     6.8
+     -39.64,
+     -0.832
     ],
     "wrist_roll": [
-     -11.7,
-     25.61
+     -15.6,
+     15.6
     ],
     "wrist_pitch": [
-     16.8,
+     19.0,
      52.0
     ]
    },
@@ -17644,90 +17720,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0716,
-   "zmp_y_min": 0.0064,
+   "head_y_min": 0.0744,
+   "zmp_y_min": 0.0032,
    "peak_speed": {
     "base_yaw": 137.5,
-    "base_pitch": 53.4,
-    "elbow_pitch": 102.9,
-    "wrist_roll": 133.3,
-    "wrist_pitch": 86.2
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_96_c",
-   "base": "beat_drop_96",
-   "variant": "c",
-   "bpm": 96,
-   "tier": "drop",
-   "frames": 186,
-   "md5": "48c126e050e6a2b71d5bc3095ce6bd82",
-   "seconds": 6.2,
-   "amplitude": 38.61,
-   "scale": {
-    "base_yaw": 0.715,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.665,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.99
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -38.61,
-     38.61
-    ],
-    "base_pitch": [
-     -52.0,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -37.96,
-     0.8228
-    ],
-    "wrist_roll": [
-     -15.6,
-     15.6
-    ],
-    "wrist_pitch": [
-     16.932,
-     57.8784
-    ]
-   },
-   "first_beat_s": 1.225,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0698,
-   "zmp_y_min": 0.002,
-   "peak_speed": {
-    "base_yaw": 138.3,
     "base_pitch": 86.0,
-    "elbow_pitch": 138.5,
-    "wrist_roll": 55.9,
-    "wrist_pitch": 138.5
+    "elbow_pitch": 138.2,
+    "wrist_roll": 72.9,
+    "wrist_pitch": 117.6
    },
    "gain": {
     "base_yaw": 1.8,
@@ -17897,14 +17897,90 @@
    "bpm": 100,
    "tier": "drop",
    "frames": 180,
-   "md5": "d415b4dfc6c69f9fd4d9ee0f1e81d302",
+   "md5": "d7972b43b80975b35c0a1b8e7a3f2efe",
+   "seconds": 6.0,
+   "amplitude": 36.99,
+   "scale": {
+    "base_yaw": 0.685,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.96,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -36.99,
+     36.99
+    ],
+    "base_pitch": [
+     -51.99,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -42.9664,
+     5.648
+    ],
+    "wrist_roll": [
+     -11.7,
+     20.54
+    ],
+    "wrist_pitch": [
+     23.4,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.2,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.068,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 137.8,
+    "base_pitch": 55.7,
+    "elbow_pitch": 138.2,
+    "wrist_roll": 120.1,
+    "wrist_pitch": 82.0
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_100_c",
+   "base": "beat_drop_100",
+   "variant": "c",
+   "bpm": 100,
+   "tier": "drop",
+   "frames": 180,
+   "md5": "081a0a91bc1b4465809fa4356a33c1dc",
    "seconds": 6.0,
    "amplitude": 36.86,
    "scale": {
     "base_yaw": 0.525,
     "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 0.995,
+    "elbow_pitch": 0.7,
+    "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
    "first": {
@@ -17927,19 +18003,19 @@
      28.35
     ],
     "base_pitch": [
-     -51.3,
+     -52.0,
      -34.05
     ],
     "elbow_pitch": [
      -38.8,
-     6.8
+     -1.84
     ],
     "wrist_roll": [
-     -11.6415,
-     25.482
+     -15.6,
+     15.6
     ],
     "wrist_pitch": [
-     16.8,
+     19.0,
      52.0
     ]
    },
@@ -17949,90 +18025,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0723,
-   "zmp_y_min": 0.0064,
+   "head_y_min": 0.0748,
+   "zmp_y_min": 0.0027,
    "peak_speed": {
     "base_yaw": 137.3,
-    "base_pitch": 55.7,
-    "elbow_pitch": 107.3,
-    "wrist_roll": 138.3,
-    "wrist_pitch": 90.2
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_100_c",
-   "base": "beat_drop_100",
-   "variant": "c",
-   "bpm": 100,
-   "tier": "drop",
-   "frames": 180,
-   "md5": "f2496975f7f87543551b42c4c0aabb3d",
-   "seconds": 6.0,
-   "amplitude": 36.99,
-   "scale": {
-    "base_yaw": 0.685,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.635,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.945
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -36.99,
-     36.99
-    ],
-    "base_pitch": [
-     -52.0,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -37.24,
-     -0.2068
-    ],
-    "wrist_roll": [
-     -15.6,
-     15.6
-    ],
-    "wrist_pitch": [
-     17.526,
-     56.6112
-    ]
-   },
-   "first_beat_s": 1.2,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0705,
-   "zmp_y_min": 0.0017,
-   "peak_speed": {
-    "base_yaw": 137.8,
     "base_pitch": 90.0,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 58.1,
-    "wrist_pitch": 137.9
+    "elbow_pitch": 137.7,
+    "wrist_roll": 76.0,
+    "wrist_pitch": 122.9
    },
    "gain": {
     "base_yaw": 1.8,
@@ -18202,14 +18202,90 @@
    "bpm": 104,
    "tier": "drop",
    "frames": 174,
-   "md5": "5343fff7ed233f763554c7c7a3257789",
+   "md5": "a08d4c91bc00fc0dee0d6efe31ac9bb6",
+   "seconds": 5.8,
+   "amplitude": 35.64,
+   "scale": {
+    "base_yaw": 0.66,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.92,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -35.64,
+     35.64
+    ],
+    "base_pitch": [
+     -51.99,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -42.0928,
+     4.496
+    ],
+    "wrist_roll": [
+     -11.7,
+     20.54
+    ],
+    "wrist_pitch": [
+     23.4,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.1769230769230767,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0697,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.2,
+    "base_pitch": 57.9,
+    "elbow_pitch": 137.9,
+    "wrist_roll": 125.0,
+    "wrist_pitch": 85.2
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_104_c",
+   "base": "beat_drop_104",
+   "variant": "c",
+   "bpm": 104,
+   "tier": "drop",
+   "frames": 174,
+   "md5": "a7acbf09bdf1ec76ed03b8ad9b426ea2",
    "seconds": 5.8,
    "amplitude": 35.8,
    "scale": {
     "base_yaw": 0.51,
     "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 0.955,
+    "elbow_pitch": 0.675,
+    "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
    "first": {
@@ -18232,19 +18308,19 @@
      27.54
     ],
     "base_pitch": [
-     -51.3,
+     -52.0,
      -34.05
     ],
     "elbow_pitch": [
-     -38.8,
-     6.8
+     -38.2,
+     -2.56
     ],
     "wrist_roll": [
-     -11.1735,
-     24.4576
+     -15.6,
+     15.6
     ],
     "wrist_pitch": [
-     16.8,
+     19.0,
      52.0
     ]
    },
@@ -18254,90 +18330,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0728,
-   "zmp_y_min": 0.0064,
+   "head_y_min": 0.0753,
+   "zmp_y_min": 0.0024,
    "peak_speed": {
     "base_yaw": 138.5,
-    "base_pitch": 57.9,
-    "elbow_pitch": 111.5,
-    "wrist_roll": 138.2,
-    "wrist_pitch": 93.6
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_104_c",
-   "base": "beat_drop_104",
-   "variant": "c",
-   "bpm": 104,
-   "tier": "drop",
-   "frames": 174,
-   "md5": "dd911ae545375192b78b49b9402d18ba",
-   "seconds": 5.8,
-   "amplitude": 35.64,
-   "scale": {
-    "base_yaw": 0.66,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.61,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.91
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -35.64,
-     35.64
-    ],
-    "base_pitch": [
-     -52.0,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -36.64,
-     -1.0648
-    ],
-    "wrist_roll": [
-     -15.6,
-     15.6
-    ],
-    "wrist_pitch": [
-     17.988,
-     55.6256
-    ]
-   },
-   "first_beat_s": 1.1769230769230767,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.071,
-   "zmp_y_min": 0.0013,
-   "peak_speed": {
-    "base_yaw": 138.2,
     "base_pitch": 93.7,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 60.5,
-    "wrist_pitch": 138.2
+    "elbow_pitch": 138.2,
+    "wrist_roll": 79.2,
+    "wrist_pitch": 128.0
    },
    "gain": {
     "base_yaw": 1.8,
@@ -18507,14 +18507,90 @@
    "bpm": 108,
    "tier": "drop",
    "frames": 169,
-   "md5": "d341af3a5b700560505bc005b2b9ff9f",
+   "md5": "5d4f41a60e515060c555ab3de979a10c",
+   "seconds": 5.6333,
+   "amplitude": 34.29,
+   "scale": {
+    "base_yaw": 0.635,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.89,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -34.29,
+     34.29
+    ],
+    "base_pitch": [
+     -51.99,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -41.4376,
+     3.632
+    ],
+    "wrist_roll": [
+     -11.7,
+     20.54
+    ],
+    "wrist_pitch": [
+     23.4,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.1555555555555554,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0712,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 138.1,
+    "base_pitch": 60.0,
+    "elbow_pitch": 138.5,
+    "wrist_roll": 129.8,
+    "wrist_pitch": 88.2
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_108_c",
+   "base": "beat_drop_108",
+   "variant": "c",
+   "bpm": 108,
+   "tier": "drop",
+   "frames": 169,
+   "md5": "fa31aa560600531d1259545e7a4baa47",
    "seconds": 5.6333,
    "amplitude": 34.4,
    "scale": {
     "base_yaw": 0.49,
     "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 0.92,
+    "elbow_pitch": 0.65,
+    "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
    "first": {
@@ -18537,19 +18613,19 @@
      26.46
     ],
     "base_pitch": [
-     -51.3,
+     -52.0,
      -34.05
     ],
     "elbow_pitch": [
-     -38.8,
-     6.8
+     -37.6,
+     -3.28
     ],
     "wrist_roll": [
-     -10.764,
-     23.5612
+     -15.6,
+     15.6
     ],
     "wrist_pitch": [
-     16.8,
+     19.0,
      52.0
     ]
    },
@@ -18559,90 +18635,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0734,
-   "zmp_y_min": 0.0064,
+   "head_y_min": 0.0757,
+   "zmp_y_min": 0.002,
    "peak_speed": {
     "base_yaw": 138.0,
-    "base_pitch": 60.0,
-    "elbow_pitch": 115.5,
-    "wrist_roll": 138.2,
-    "wrist_pitch": 97.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_108_c",
-   "base": "beat_drop_108",
-   "variant": "c",
-   "bpm": 108,
-   "tier": "drop",
-   "frames": 169,
-   "md5": "fae924c35adac3a5c820fe7289aa5c52",
-   "seconds": 5.6333,
-   "amplitude": 34.29,
-   "scale": {
-    "base_yaw": 0.635,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.59,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.875
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -34.29,
-     34.29
-    ],
-    "base_pitch": [
-     -52.0,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -36.16,
-     -1.7512
-    ],
-    "wrist_roll": [
-     -15.6,
-     15.6
-    ],
-    "wrist_pitch": [
-     18.45,
-     54.64
-    ]
-   },
-   "first_beat_s": 1.1555555555555554,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0716,
-   "zmp_y_min": 0.001,
-   "peak_speed": {
-    "base_yaw": 138.1,
     "base_pitch": 97.3,
-    "elbow_pitch": 138.6,
-    "wrist_roll": 62.8,
-    "wrist_pitch": 138.0
+    "elbow_pitch": 138.2,
+    "wrist_roll": 82.2,
+    "wrist_pitch": 132.9
    },
    "gain": {
     "base_yaw": 1.8,
@@ -18812,14 +18812,90 @@
    "bpm": 112,
    "tier": "drop",
    "frames": 165,
-   "md5": "e21fbee57ef2f33cbd6648f111b9cee9",
+   "md5": "6e7b4507f69b6bce18a1460db538d3c0",
+   "seconds": 5.5,
+   "amplitude": 32.94,
+   "scale": {
+    "base_yaw": 0.61,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.86,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -32.94,
+     32.94
+    ],
+    "base_pitch": [
+     -51.99,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -40.7824,
+     2.768
+    ],
+    "wrist_roll": [
+     -11.7,
+     20.54
+    ],
+    "wrist_pitch": [
+     23.4,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.1357142857142857,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0727,
+   "zmp_y_min": 0.0064,
+   "peak_speed": {
+    "base_yaw": 137.5,
+    "base_pitch": 62.4,
+    "elbow_pitch": 138.5,
+    "wrist_roll": 134.3,
+    "wrist_pitch": 91.8
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_112_c",
+   "base": "beat_drop_112",
+   "variant": "c",
+   "bpm": 112,
+   "tier": "drop",
+   "frames": 165,
+   "md5": "b935986d9f79b7f667e3bc3c8704c436",
    "seconds": 5.5,
    "amplitude": 32.99,
    "scale": {
     "base_yaw": 0.47,
     "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 0.89,
+    "elbow_pitch": 0.625,
+    "wrist_roll": 1.0,
     "wrist_pitch": 1.0
    },
    "first": {
@@ -18842,19 +18918,19 @@
      25.38
     ],
     "base_pitch": [
-     -51.3,
+     -52.0,
      -34.05
     ],
     "elbow_pitch": [
-     -38.8,
-     6.8
+     -37.0,
+     -4.0
     ],
     "wrist_roll": [
-     -10.413,
-     22.7929
+     -15.6,
+     15.6
     ],
     "wrist_pitch": [
-     16.8,
+     19.0,
      52.0
     ]
    },
@@ -18864,90 +18940,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.074,
-   "zmp_y_min": 0.0064,
+   "head_y_min": 0.076,
+   "zmp_y_min": 0.0016,
    "peak_speed": {
     "base_yaw": 137.3,
-    "base_pitch": 62.4,
-    "elbow_pitch": 120.2,
-    "wrist_roll": 138.3,
-    "wrist_pitch": 100.7
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_112_c",
-   "base": "beat_drop_112",
-   "variant": "c",
-   "bpm": 112,
-   "tier": "drop",
-   "frames": 165,
-   "md5": "c1ba7237171a5dfc372721bc7dcaaa00",
-   "seconds": 5.5,
-   "amplitude": 32.94,
-   "scale": {
-    "base_yaw": 0.61,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.57,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.845
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -32.94,
-     32.94
-    ],
-    "base_pitch": [
-     -52.0,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -35.68,
-     -2.4376
-    ],
-    "wrist_roll": [
-     -15.6,
-     15.6
-    ],
-    "wrist_pitch": [
-     18.846,
-     53.7952
-    ]
-   },
-   "first_beat_s": 1.1357142857142857,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0721,
-   "zmp_y_min": 0.0006,
-   "peak_speed": {
-    "base_yaw": 137.5,
     "base_pitch": 100.8,
-    "elbow_pitch": 138.5,
-    "wrist_roll": 65.1,
-    "wrist_pitch": 137.9
+    "elbow_pitch": 137.8,
+    "wrist_roll": 85.0,
+    "wrist_pitch": 137.8
    },
    "gain": {
     "base_yaw": 1.8,
@@ -19117,91 +19117,15 @@
    "bpm": 116,
    "tier": "drop",
    "frames": 160,
-   "md5": "35b578ee7604c7b3d0d0dd35642fc5e3",
-   "seconds": 5.3333,
-   "amplitude": 31.94,
-   "scale": {
-    "base_yaw": 0.455,
-    "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 0.86,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -31.941,
-     24.57
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.8,
-     6.8
-    ],
-    "wrist_roll": [
-     -10.062,
-     22.0246
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.1172413793103448,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0745,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.9,
-    "base_pitch": 64.2,
-    "elbow_pitch": 123.6,
-    "wrist_roll": 138.0,
-    "wrist_pitch": 104.5
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_116_c",
-   "base": "beat_drop_116",
-   "variant": "c",
-   "bpm": 116,
-   "tier": "drop",
-   "frames": 160,
-   "md5": "ee08509e928c87d646b737b51a25f3f6",
+   "md5": "41733b257d37d6f4aef5c2479581e5e0",
    "seconds": 5.3333,
    "amplitude": 31.86,
    "scale": {
     "base_yaw": 0.59,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.55,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.82
+    "elbow_pitch": 0.83,
+    "wrist_roll": 0.995,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -19223,20 +19147,20 @@
      31.86
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -35.2,
-     -3.124
+     -40.1272,
+     1.904
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -11.6415,
+     20.4373
     ],
     "wrist_pitch": [
-     19.176,
-     53.0912
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.1172413793103448,
@@ -19245,14 +19169,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0724,
-   "zmp_y_min": 0.0003,
+   "head_y_min": 0.0739,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 137.7,
+    "base_pitch": 64.2,
+    "elbow_pitch": 138.0,
+    "wrist_roll": 138.0,
+    "wrist_pitch": 94.4
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_116_c",
+   "base": "beat_drop_116",
+   "variant": "c",
+   "bpm": 116,
+   "tier": "drop",
+   "frames": 160,
+   "md5": "b0d2e2e33cb2379a1312eb9a0375bc01",
+   "seconds": 5.3333,
+   "amplitude": 31.94,
+   "scale": {
+    "base_yaw": 0.455,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.605,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.97
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -31.941,
+     24.57
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -36.52,
+     -4.576
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     19.33,
+     51.34
+    ]
+   },
+   "first_beat_s": 1.1172413793103448,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.076,
+   "zmp_y_min": 0.0013,
+   "peak_speed": {
+    "base_yaw": 137.9,
     "base_pitch": 104.4,
     "elbow_pitch": 138.0,
-    "wrist_roll": 67.4,
-    "wrist_pitch": 138.1
+    "wrist_roll": 87.8,
+    "wrist_pitch": 138.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -19422,91 +19422,15 @@
    "bpm": 120,
    "tier": "drop",
    "frames": 156,
-   "md5": "7ed65dbbbb0f769489d504c8329f602e",
-   "seconds": 5.2,
-   "amplitude": 30.89,
-   "scale": {
-    "base_yaw": 0.44,
-    "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 0.83,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -30.888,
-     23.76
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.8,
-     6.8
-    ],
-    "wrist_roll": [
-     -9.711,
-     21.2563
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.1,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0749,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.7,
-    "base_pitch": 66.7,
-    "elbow_pitch": 128.4,
-    "wrist_roll": 138.1,
-    "wrist_pitch": 107.9
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_120_c",
-   "base": "beat_drop_120",
-   "variant": "c",
-   "bpm": 120,
-   "tier": "drop",
-   "frames": 156,
-   "md5": "b684e0fad71adc7165acc0ad2dd7d6e5",
+   "md5": "a626f2a8b93a25abe9e5e047585174eb",
    "seconds": 5.2,
    "amplitude": 31.05,
    "scale": {
     "base_yaw": 0.575,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.53,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.79
+    "elbow_pitch": 0.8,
+    "wrist_roll": 0.96,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -19528,20 +19452,20 @@
      31.05
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -34.72,
-     -3.8104
+     -39.472,
+     1.04
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -11.232,
+     19.7184
     ],
     "wrist_pitch": [
-     19.572,
-     52.2464
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.1,
@@ -19550,14 +19474,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0724,
-   "zmp_y_min": -0.0,
+   "head_y_min": 0.0751,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.4,
-    "base_pitch": 107.7,
+    "base_pitch": 66.7,
     "elbow_pitch": 137.8,
-    "wrist_roll": 69.6,
-    "wrist_pitch": 137.9
+    "wrist_roll": 138.0,
+    "wrist_pitch": 98.1
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_120_c",
+   "base": "beat_drop_120",
+   "variant": "c",
+   "bpm": 120,
+   "tier": "drop",
+   "frames": 156,
+   "md5": "e254655a2c10af2257feb651dabb962b",
+   "seconds": 5.2,
+   "amplitude": 30.89,
+   "scale": {
+    "base_yaw": 0.44,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.585,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.94
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -30.888,
+     23.76
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -36.04,
+     -5.152
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     19.66,
+     50.68
+    ]
+   },
+   "first_beat_s": 1.1,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0759,
+   "zmp_y_min": 0.0009,
+   "peak_speed": {
+    "base_yaw": 137.7,
+    "base_pitch": 107.7,
+    "elbow_pitch": 137.7,
+    "wrist_roll": 91.0,
+    "wrist_pitch": 138.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -19727,91 +19727,15 @@
    "bpm": 124,
    "tier": "drop",
    "frames": 152,
-   "md5": "5093dbcaad9cdb46550dc16106b02d56",
-   "seconds": 5.0667,
-   "amplitude": 30.19,
-   "scale": {
-    "base_yaw": 0.43,
-    "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 0.8,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -30.186,
-     23.22
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.8,
-     6.8
-    ],
-    "wrist_roll": [
-     -9.36,
-     20.488
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.0838709677419356,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0752,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.9,
-    "base_pitch": 69.0,
-    "elbow_pitch": 133.0,
-    "wrist_roll": 137.9,
-    "wrist_pitch": 110.5
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_124_c",
-   "base": "beat_drop_124",
-   "variant": "c",
-   "bpm": 124,
-   "tier": "drop",
-   "frames": 152,
-   "md5": "31e72626db7736f3a2cf640375826def",
+   "md5": "e4c2977622009720e343f0f3b5f33cae",
    "seconds": 5.0667,
    "amplitude": 29.97,
    "scale": {
     "base_yaw": 0.555,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.51,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.765
+    "elbow_pitch": 0.775,
+    "wrist_roll": 0.93,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -19833,20 +19757,20 @@
      29.97
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -34.24,
-     -4.4968
+     -38.926,
+     0.32
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -10.881,
+     19.1022
     ],
     "wrist_pitch": [
-     19.902,
-     51.5424
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.0838709677419356,
@@ -19855,14 +19779,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0724,
-   "zmp_y_min": -0.0002,
+   "head_y_min": 0.0763,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.4,
+    "base_pitch": 69.0,
+    "elbow_pitch": 138.3,
+    "wrist_roll": 138.5,
+    "wrist_pitch": 101.6
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_124_c",
+   "base": "beat_drop_124",
+   "variant": "c",
+   "bpm": 124,
+   "tier": "drop",
+   "frames": 152,
+   "md5": "225a65c3e1618d1d3cba74994ec4aa30",
+   "seconds": 5.0667,
+   "amplitude": 30.19,
+   "scale": {
+    "base_yaw": 0.43,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.57,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.915
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -30.186,
+     23.22
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -35.68,
+     -5.584
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     19.935,
+     50.13
+    ]
+   },
+   "first_beat_s": 1.0838709677419356,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0756,
+   "zmp_y_min": 0.0007,
+   "peak_speed": {
+    "base_yaw": 137.9,
     "base_pitch": 110.5,
-    "elbow_pitch": 137.4,
-    "wrist_roll": 72.1,
-    "wrist_pitch": 138.4
+    "elbow_pitch": 137.7,
+    "wrist_roll": 94.3,
+    "wrist_pitch": 138.1
    },
    "gain": {
     "base_yaw": 1.8,
@@ -20032,91 +20032,15 @@
    "bpm": 128,
    "tier": "drop",
    "frames": 148,
-   "md5": "02f65043143e211c26b897a180649349",
-   "seconds": 4.9333,
-   "amplitude": 28.78,
-   "scale": {
-    "base_yaw": 0.41,
-    "base_pitch": 1.0,
-    "elbow_pitch": 1.0,
-    "wrist_roll": 0.775,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -28.782,
-     22.14
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.8,
-     6.8
-    ],
-    "wrist_roll": [
-     -9.0675,
-     19.8478
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.06875,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0757,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.2,
-    "base_pitch": 70.8,
-    "elbow_pitch": 136.4,
-    "wrist_roll": 137.8,
-    "wrist_pitch": 115.3
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_128_c",
-   "base": "beat_drop_128",
-   "variant": "c",
-   "bpm": 128,
-   "tier": "drop",
-   "frames": 148,
-   "md5": "3c0a56de67e44971e2f44d54e89b2c8d",
+   "md5": "54ba3bffacc54a36b09154c946a3ec5a",
    "seconds": 4.9333,
    "amplitude": 28.89,
    "scale": {
     "base_yaw": 0.535,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.495,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.74
+    "elbow_pitch": 0.75,
+    "wrist_roll": 0.9,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -20138,20 +20062,20 @@
      28.89
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -33.88,
-     -5.0116
+     -38.38,
+     -0.4
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -10.53,
+     18.486
     ],
     "wrist_pitch": [
-     20.232,
-     50.8384
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.06875,
@@ -20160,14 +20084,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0723,
-   "zmp_y_min": -0.0004,
+   "head_y_min": 0.0774,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
-    "base_yaw": 137.7,
+    "base_yaw": 137.5,
+    "base_pitch": 70.8,
+    "elbow_pitch": 138.1,
+    "wrist_roll": 138.2,
+    "wrist_pitch": 104.2
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_128_c",
+   "base": "beat_drop_128",
+   "variant": "c",
+   "bpm": 128,
+   "tier": "drop",
+   "frames": 148,
+   "md5": "56639c4e74163fab669695188b1dd26f",
+   "seconds": 4.9333,
+   "amplitude": 28.78,
+   "scale": {
+    "base_yaw": 0.41,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.55,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.885
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -28.782,
+     22.14
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -35.2,
+     -6.16
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     20.265,
+     49.47
+    ]
+   },
+   "first_beat_s": 1.06875,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0752,
+   "zmp_y_min": 0.0006,
+   "peak_speed": {
+    "base_yaw": 137.2,
     "base_pitch": 114.6,
-    "elbow_pitch": 137.5,
-    "wrist_roll": 74.3,
-    "wrist_pitch": 138.1
+    "elbow_pitch": 137.8,
+    "wrist_roll": 97.2,
+    "wrist_pitch": 138.6
    },
    "gain": {
     "base_yaw": 1.8,
@@ -20337,91 +20337,15 @@
    "bpm": 132,
    "tier": "drop",
    "frames": 145,
-   "md5": "4ba78e0746559bf0c5e44fe78a5b56b6",
-   "seconds": 4.8333,
-   "amplitude": 28.43,
-   "scale": {
-    "base_yaw": 0.405,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.985,
-    "wrist_roll": 0.755,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -28.431,
-     21.87
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -38.548,
-     6.368
-    ],
-    "wrist_roll": [
-     -8.8335,
-     19.3356
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.0545454545454545,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0762,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.2,
-    "base_pitch": 72.9,
-    "elbow_pitch": 138.4,
-    "wrist_roll": 138.4,
-    "wrist_pitch": 117.6
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_132_c",
-   "base": "beat_drop_132",
-   "variant": "c",
-   "bpm": 132,
-   "tier": "drop",
-   "frames": 145,
-   "md5": "bdedc7c5a4601a89ce47311978ab50b7",
+   "md5": "d7fa9fb37269dd9380b5b5e884f7767e",
    "seconds": 4.8333,
    "amplitude": 28.08,
    "scale": {
     "base_yaw": 0.52,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.48,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.72
+    "elbow_pitch": 0.73,
+    "wrist_roll": 0.875,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -20443,20 +20367,20 @@
      28.08
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -33.52,
-     -5.5264
+     -37.9432,
+     -0.976
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -10.2375,
+     17.9725
     ],
     "wrist_pitch": [
-     20.496,
-     50.2752
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.0545454545454545,
@@ -20465,14 +20389,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0724,
-   "zmp_y_min": -0.0014,
+   "head_y_min": 0.0783,
+   "zmp_y_min": 0.0064,
    "peak_speed": {
     "base_yaw": 138.0,
+    "base_pitch": 72.9,
+    "elbow_pitch": 138.6,
+    "wrist_roll": 138.6,
+    "wrist_pitch": 107.3
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_132_c",
+   "base": "beat_drop_132",
+   "variant": "c",
+   "bpm": 132,
+   "tier": "drop",
+   "frames": 145,
+   "md5": "a087b110e17f9f8592c45c985df0c8ee",
+   "seconds": 4.8333,
+   "amplitude": 28.43,
+   "scale": {
+    "base_yaw": 0.405,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.53,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.85
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -28.431,
+     21.87
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -34.72,
+     -6.736
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     20.65,
+     48.7
+    ]
+   },
+   "first_beat_s": 1.0545454545454545,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0749,
+   "zmp_y_min": -0.0004,
+   "peak_speed": {
+    "base_yaw": 138.2,
     "base_pitch": 118.7,
     "elbow_pitch": 137.5,
-    "wrist_roll": 76.7,
-    "wrist_pitch": 138.5
+    "wrist_roll": 100.3,
+    "wrist_pitch": 137.9
    },
    "gain": {
     "base_yaw": 1.8,
@@ -20642,91 +20642,15 @@
    "bpm": 136,
    "tier": "drop",
    "frames": 142,
-   "md5": "f770c3a44a4d7370c304955e4ef616dd",
-   "seconds": 4.7333,
-   "amplitude": 27.38,
-   "scale": {
-    "base_yaw": 0.39,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.95,
-    "wrist_roll": 0.73,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -27.378,
-     21.06
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -37.96,
-     5.36
-    ],
-    "wrist_roll": [
-     -8.541,
-     18.6953
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.0411764705882351,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0768,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 138.0,
-    "base_pitch": 75.6,
-    "elbow_pitch": 138.4,
-    "wrist_roll": 137.9,
-    "wrist_pitch": 122.0
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_136_c",
-   "base": "beat_drop_136",
-   "variant": "c",
-   "bpm": 136,
-   "tier": "drop",
-   "frames": 142,
-   "md5": "38538a4cb843ad9c4debe278a032f8ba",
+   "md5": "cb147c5b5e8986ce92b461cc41749508",
    "seconds": 4.7333,
    "amplitude": 27.27,
    "scale": {
     "base_yaw": 0.505,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.465,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.695
+    "elbow_pitch": 0.705,
+    "wrist_roll": 0.845,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -20748,20 +20672,20 @@
      27.27
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -33.16,
-     -6.0412
+     -37.3972,
+     -1.696
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -9.8865,
+     17.3563
     ],
     "wrist_pitch": [
-     20.826,
-     49.5712
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.0411764705882351,
@@ -20770,14 +20694,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0733,
-   "zmp_y_min": -0.0014,
+   "head_y_min": 0.0793,
+   "zmp_y_min": 0.0061,
+   "peak_speed": {
+    "base_yaw": 137.8,
+    "base_pitch": 75.6,
+    "elbow_pitch": 137.9,
+    "wrist_roll": 137.9,
+    "wrist_pitch": 111.3
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_136_c",
+   "base": "beat_drop_136",
+   "variant": "c",
+   "bpm": 136,
+   "tier": "drop",
+   "frames": 142,
+   "md5": "a35fafe06c51d108db241ff70422ae0d",
+   "seconds": 4.7333,
+   "amplitude": 27.38,
+   "scale": {
+    "base_yaw": 0.39,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.52,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.835
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -27.378,
+     21.06
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -34.48,
+     -7.024
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     20.815,
+     48.37
+    ]
+   },
+   "first_beat_s": 1.0411764705882351,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0764,
+   "zmp_y_min": -0.0004,
    "peak_speed": {
     "base_yaw": 138.0,
     "base_pitch": 121.4,
-    "elbow_pitch": 137.3,
-    "wrist_roll": 78.8,
-    "wrist_pitch": 137.8
+    "elbow_pitch": 138.1,
+    "wrist_roll": 103.3,
+    "wrist_pitch": 138.6
    },
    "gain": {
     "base_yaw": 1.8,
@@ -20947,15 +20947,91 @@
    "bpm": 140,
    "tier": "drop",
    "frames": 139,
-   "md5": "de00ec91d1938ef82cbb5d7d4d1b817c",
+   "md5": "fb57e06fcea66e879ad97324e654671c",
+   "seconds": 4.6333,
+   "amplitude": 26.73,
+   "scale": {
+    "base_yaw": 0.495,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.69,
+    "wrist_roll": 0.825,
+    "wrist_pitch": 1.0
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -26.73,
+     26.73
+    ],
+    "base_pitch": [
+     -51.99,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -37.0696,
+     -2.128
+    ],
+    "wrist_roll": [
+     -9.6525,
+     16.9455
+    ],
+    "wrist_pitch": [
+     23.4,
+     52.0
+    ]
+   },
+   "first_beat_s": 1.0285714285714285,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0799,
+   "zmp_y_min": 0.0059,
+   "peak_speed": {
+    "base_yaw": 138.6,
+    "base_pitch": 77.8,
+    "elbow_pitch": 138.2,
+    "wrist_roll": 137.9,
+    "wrist_pitch": 114.5
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_140_c",
+   "base": "beat_drop_140",
+   "variant": "c",
+   "bpm": 140,
+   "tier": "drop",
+   "frames": 139,
+   "md5": "532b52127febb289c1ead1974d3f1227",
    "seconds": 4.6333,
    "amplitude": 26.32,
    "scale": {
     "base_yaw": 0.375,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.92,
-    "wrist_roll": 0.715,
-    "wrist_pitch": 1.0
+    "elbow_pitch": 0.505,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.81
    },
    "first": {
     "base_yaw": 0.0,
@@ -20977,96 +21053,20 @@
      20.25
     ],
     "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -37.456,
-     4.496
-    ],
-    "wrist_roll": [
-     -8.3655,
-     18.3112
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.0285714285714285,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0771,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.0,
-    "base_pitch": 77.8,
-    "elbow_pitch": 137.9,
-    "wrist_roll": 138.3,
-    "wrist_pitch": 125.9
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_140_c",
-   "base": "beat_drop_140",
-   "variant": "c",
-   "bpm": 140,
-   "tier": "drop",
-   "frames": 139,
-   "md5": "285c9607d1b42810e31fd8e943cd97a7",
-   "seconds": 4.6333,
-   "amplitude": 26.46,
-   "scale": {
-    "base_yaw": 0.49,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.455,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.68
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -26.46,
-     26.46
-    ],
-    "base_pitch": [
      -52.0,
      -34.05
     ],
     "elbow_pitch": [
-     -32.92,
-     -6.3844
+     -34.12,
+     -7.456
     ],
     "wrist_roll": [
      -15.6,
      15.6
     ],
     "wrist_pitch": [
-     21.024,
-     49.1488
+     21.09,
+     47.82
     ]
    },
    "first_beat_s": 1.0285714285714285,
@@ -21075,14 +21075,14 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0729,
-   "zmp_y_min": -0.0012,
+   "head_y_min": 0.0757,
+   "zmp_y_min": -0.0003,
    "peak_speed": {
-    "base_yaw": 137.8,
+    "base_yaw": 137.0,
     "base_pitch": 125.2,
-    "elbow_pitch": 137.5,
-    "wrist_roll": 80.9,
-    "wrist_pitch": 138.0
+    "elbow_pitch": 138.2,
+    "wrist_roll": 105.8,
+    "wrist_pitch": 138.6
    },
    "gain": {
     "base_yaw": 1.8,
@@ -21252,91 +21252,15 @@
    "bpm": 144,
    "tier": "drop",
    "frames": 136,
-   "md5": "2292e69a8b5c7e50d64a2bc59cfa10f6",
-   "seconds": 4.5333,
-   "amplitude": 25.62,
-   "scale": {
-    "base_yaw": 0.365,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.905,
-    "wrist_roll": 0.695,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -25.623,
-     19.71
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -37.204,
-     4.064
-    ],
-    "wrist_roll": [
-     -8.1315,
-     17.799
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.0166666666666666,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0773,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 137.1,
-    "base_pitch": 79.4,
-    "elbow_pitch": 138.4,
-    "wrist_roll": 137.6,
-    "wrist_pitch": 129.5
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_144_c",
-   "base": "beat_drop_144",
-   "variant": "c",
-   "bpm": 144,
-   "tier": "drop",
-   "frames": 136,
-   "md5": "0ef58794220ae29b86d3b3f539c60299",
+   "md5": "114e541e14ece4404d4cc8f99abc1325",
    "seconds": 4.5333,
    "amplitude": 25.65,
    "scale": {
     "base_yaw": 0.475,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.445,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.665
+    "elbow_pitch": 0.675,
+    "wrist_roll": 0.805,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -21358,20 +21282,20 @@
      25.65
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -32.68,
-     -6.7276
+     -36.742,
+     -2.56
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -9.4185,
+     16.5347
     ],
     "wrist_pitch": [
-     21.222,
-     48.7264
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.0166666666666666,
@@ -21380,14 +21304,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0729,
-   "zmp_y_min": -0.0024,
+   "head_y_min": 0.0809,
+   "zmp_y_min": 0.0057,
    "peak_speed": {
     "base_yaw": 137.3,
+    "base_pitch": 79.4,
+    "elbow_pitch": 138.4,
+    "wrist_roll": 137.8,
+    "wrist_pitch": 116.8
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_144_c",
+   "base": "beat_drop_144",
+   "variant": "c",
+   "bpm": 144,
+   "tier": "drop",
+   "frames": 136,
+   "md5": "5be5df2b4a688f5a63be8158513ef002",
+   "seconds": 4.5333,
+   "amplitude": 25.62,
+   "scale": {
+    "base_yaw": 0.365,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.49,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.78
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -25.623,
+     19.71
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -33.76,
+     -7.888
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     21.42,
+     47.16
+    ]
+   },
+   "first_beat_s": 1.0166666666666666,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0751,
+   "zmp_y_min": -0.0015,
+   "peak_speed": {
+    "base_yaw": 137.1,
     "base_pitch": 129.2,
-    "elbow_pitch": 137.8,
-    "wrist_roll": 83.5,
-    "wrist_pitch": 138.2
+    "elbow_pitch": 138.4,
+    "wrist_roll": 108.3,
+    "wrist_pitch": 137.7
    },
    "gain": {
     "base_yaw": 1.8,
@@ -21557,91 +21557,15 @@
    "bpm": 148,
    "tier": "drop",
    "frames": 133,
-   "md5": "0f9ab8cf6f0130a452d8f8a58fd5c206",
-   "seconds": 4.4333,
-   "amplitude": 24.92,
-   "scale": {
-    "base_yaw": 0.355,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.88,
-    "wrist_roll": 0.675,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -24.921,
-     19.17
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -36.784,
-     3.344
-    ],
-    "wrist_roll": [
-     -7.8975,
-     17.2868
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 1.0054054054054054,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0776,
-   "zmp_y_min": 0.0064,
-   "peak_speed": {
-    "base_yaw": 136.7,
-    "base_pitch": 81.4,
-    "elbow_pitch": 137.9,
-    "wrist_roll": 138.6,
-    "wrist_pitch": 132.8
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_148_c",
-   "base": "beat_drop_148",
-   "variant": "c",
-   "bpm": 148,
-   "tier": "drop",
-   "frames": 133,
-   "md5": "57b9c4fdd124c7e73caf47bf997e575e",
+   "md5": "71a40b224351a20972ac80a5b230d658",
    "seconds": 4.4333,
    "amplitude": 25.11,
    "scale": {
     "base_yaw": 0.465,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.43,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.64
+    "elbow_pitch": 0.65,
+    "wrist_roll": 0.78,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -21663,20 +21587,20 @@
      25.11
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -32.32,
-     -7.2424
+     -36.196,
+     -3.28
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -9.126,
+     16.0212
     ],
     "wrist_pitch": [
-     21.552,
-     48.0224
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 1.0054054054054054,
@@ -21685,14 +21609,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0735,
-   "zmp_y_min": -0.0021,
+   "head_y_min": 0.0815,
+   "zmp_y_min": 0.0055,
    "peak_speed": {
-    "base_yaw": 138.2,
+    "base_yaw": 138.1,
+    "base_pitch": 81.4,
+    "elbow_pitch": 138.2,
+    "wrist_roll": 138.4,
+    "wrist_pitch": 119.7
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_148_c",
+   "base": "beat_drop_148",
+   "variant": "c",
+   "bpm": 148,
+   "tier": "drop",
+   "frames": 133,
+   "md5": "497b98553522da161d9dd2d9506c2c4c",
+   "seconds": 4.4333,
+   "amplitude": 24.92,
+   "scale": {
+    "base_yaw": 0.355,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.48,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.77
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -24.921,
+     19.17
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -33.52,
+     -8.176
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     21.53,
+     46.94
+    ]
+   },
+   "first_beat_s": 1.0054054054054054,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0763,
+   "zmp_y_min": -0.0012,
+   "peak_speed": {
+    "base_yaw": 136.7,
     "base_pitch": 131.2,
-    "elbow_pitch": 138.0,
-    "wrist_roll": 85.8,
-    "wrist_pitch": 137.9
+    "elbow_pitch": 137.7,
+    "wrist_roll": 112.3,
+    "wrist_pitch": 138.1
    },
    "gain": {
     "base_yaw": 1.8,
@@ -21862,91 +21862,15 @@
    "bpm": 152,
    "tier": "drop",
    "frames": 131,
-   "md5": "36862a4f1d377dd09a5fc57f96aeeda0",
-   "seconds": 4.3667,
-   "amplitude": 24.57,
-   "scale": {
-    "base_yaw": 0.35,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.85,
-    "wrist_roll": 0.665,
-    "wrist_pitch": 1.0
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -24.57,
-     18.9
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -36.28,
-     2.48
-    ],
-    "wrist_roll": [
-     -7.7805,
-     17.0307
-    ],
-    "wrist_pitch": [
-     16.8,
-     52.0
-    ]
-   },
-   "first_beat_s": 0.9947368421052631,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0777,
-   "zmp_y_min": 0.0061,
-   "peak_speed": {
-    "base_yaw": 137.2,
-    "base_pitch": 84.2,
-    "elbow_pitch": 137.9,
-    "wrist_roll": 138.3,
-    "wrist_pitch": 135.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_152_c",
-   "base": "beat_drop_152",
-   "variant": "c",
-   "bpm": 152,
-   "tier": "drop",
-   "frames": 131,
-   "md5": "66af104dcb1c7cbf02358e0682af6b20",
+   "md5": "3e6e27558200395fdb36384b2618d1bc",
    "seconds": 4.3667,
    "amplitude": 24.3,
    "scale": {
     "base_yaw": 0.45,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.425,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.63
+    "elbow_pitch": 0.64,
+    "wrist_roll": 0.77,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -21968,20 +21892,20 @@
      24.3
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -32.2,
-     -7.414
+     -35.9776,
+     -3.568
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -9.009,
+     15.8158
     ],
     "wrist_pitch": [
-     21.684,
-     47.7408
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 0.9947368421052631,
@@ -21990,14 +21914,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0729,
-   "zmp_y_min": -0.0028,
+   "head_y_min": 0.0814,
+   "zmp_y_min": 0.0052,
    "peak_speed": {
     "base_yaw": 137.3,
+    "base_pitch": 84.2,
+    "elbow_pitch": 137.9,
+    "wrist_roll": 138.4,
+    "wrist_pitch": 124.0
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_152_c",
+   "base": "beat_drop_152",
+   "variant": "c",
+   "bpm": 152,
+   "tier": "drop",
+   "frames": 131,
+   "md5": "a5fdfc024c981401d6c0513eb849a3d2",
+   "seconds": 4.3667,
+   "amplitude": 24.57,
+   "scale": {
+    "base_yaw": 0.35,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.46,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.74
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -24.57,
+     18.9
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -33.04,
+     -8.752
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     21.86,
+     46.28
+    ]
+   },
+   "first_beat_s": 0.9947368421052631,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.075,
+   "zmp_y_min": -0.0019,
+   "peak_speed": {
+    "base_yaw": 137.2,
     "base_pitch": 136.5,
-    "elbow_pitch": 138.2,
-    "wrist_roll": 88.1,
-    "wrist_pitch": 137.5
+    "elbow_pitch": 137.2,
+    "wrist_roll": 113.8,
+    "wrist_pitch": 138.0
    },
    "gain": {
     "base_yaw": 1.8,
@@ -22167,91 +22167,15 @@
    "bpm": 156,
    "tier": "drop",
    "frames": 128,
-   "md5": "570009a3a9ace164d9e3544a7f2a043b",
-   "seconds": 4.2667,
-   "amplitude": 23.87,
-   "scale": {
-    "base_yaw": 0.34,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.83,
-    "wrist_roll": 0.64,
-    "wrist_pitch": 0.99
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -23.868,
-     18.36
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -35.944,
-     1.904
-    ],
-    "wrist_roll": [
-     -7.488,
-     16.3904
-    ],
-    "wrist_pitch": [
-     16.932,
-     51.78
-    ]
-   },
-   "first_beat_s": 0.9846153846153847,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0779,
-   "zmp_y_min": 0.0058,
-   "peak_speed": {
-    "base_yaw": 137.4,
-    "base_pitch": 86.7,
-    "elbow_pitch": 138.6,
-    "wrist_roll": 138.2,
-    "wrist_pitch": 137.9
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_156_c",
-   "base": "beat_drop_156",
-   "variant": "c",
-   "bpm": 156,
-   "tier": "drop",
-   "frames": 128,
-   "md5": "14fbdd96beea25934d5c95b270c0f1e4",
+   "md5": "f6ee427869da9b14c9f79b24a0819a30",
    "seconds": 4.2667,
    "amplitude": 23.76,
    "scale": {
     "base_yaw": 0.44,
     "base_pitch": 1.0,
-    "elbow_pitch": 0.41,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.61
+    "elbow_pitch": 0.615,
+    "wrist_roll": 0.74,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -22273,20 +22197,20 @@
      23.76
     ],
     "base_pitch": [
-     -52.0,
+     -51.99,
      -34.05
     ],
     "elbow_pitch": [
-     -31.84,
-     -7.9288
+     -35.4316,
+     -4.288
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -8.658,
+     15.1996
     ],
     "wrist_pitch": [
-     21.948,
-     47.1776
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 0.9846153846153847,
@@ -22295,14 +22219,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.074,
-   "zmp_y_min": -0.0028,
+   "head_y_min": 0.0812,
+   "zmp_y_min": 0.0048,
    "peak_speed": {
     "base_yaw": 137.7,
+    "base_pitch": 86.7,
+    "elbow_pitch": 137.5,
+    "wrist_roll": 138.1,
+    "wrist_pitch": 127.5
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_156_c",
+   "base": "beat_drop_156",
+   "variant": "c",
+   "bpm": 156,
+   "tier": "drop",
+   "frames": 128,
+   "md5": "25e0131d9cce8761404141ce2f7e0c7f",
+   "seconds": 4.2667,
+   "amplitude": 23.87,
+   "scale": {
+    "base_yaw": 0.34,
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.46,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.735
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -23.868,
+     18.36
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.05
+    ],
+    "elbow_pitch": [
+     -33.04,
+     -8.752
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     21.915,
+     46.17
+    ]
+   },
+   "first_beat_s": 0.9846153846153847,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0766,
+   "zmp_y_min": -0.0019,
+   "peak_speed": {
+    "base_yaw": 137.4,
     "base_pitch": 137.8,
-    "elbow_pitch": 138.4,
-    "wrist_roll": 90.4,
-    "wrist_pitch": 138.2
+    "elbow_pitch": 138.6,
+    "wrist_roll": 118.1,
+    "wrist_pitch": 138.4
    },
    "gain": {
     "base_yaw": 1.8,
@@ -22472,91 +22472,15 @@
    "bpm": 160,
    "tier": "drop",
    "frames": 126,
-   "md5": "46e943fe5720123f817bdc812d3c50d5",
-   "seconds": 4.2,
-   "amplitude": 23.17,
-   "scale": {
-    "base_yaw": 0.33,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.81,
-    "wrist_roll": 0.625,
-    "wrist_pitch": 0.96
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -23.166,
-     17.82
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -35.608,
-     1.328
-    ],
-    "wrist_roll": [
-     -7.3125,
-     16.0063
-    ],
-    "wrist_pitch": [
-     17.328,
-     51.12
-    ]
-   },
-   "first_beat_s": 0.975,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0781,
-   "zmp_y_min": 0.0055,
-   "peak_speed": {
-    "base_yaw": 137.7,
-    "base_pitch": 88.6,
-    "elbow_pitch": 138.3,
-    "wrist_roll": 138.2,
-    "wrist_pitch": 138.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_160_c",
-   "base": "beat_drop_160",
-   "variant": "c",
-   "bpm": 160,
-   "tier": "drop",
-   "frames": 126,
-   "md5": "caa69bc0c330bd27d915594e73338ebe",
+   "md5": "fd86e575605bdfa979fe28dd80d09fb3",
    "seconds": 4.2,
    "amplitude": 23.22,
    "scale": {
     "base_yaw": 0.43,
-    "base_pitch": 0.965,
-    "elbow_pitch": 0.4,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.595
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.605,
+    "wrist_roll": 0.725,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -22578,20 +22502,20 @@
      23.22
     ],
     "base_pitch": [
-     -52.0,
-     -34.5733
+     -51.99,
+     -34.05
     ],
     "elbow_pitch": [
-     -31.6,
-     -8.272
+     -35.2132,
+     -4.576
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -8.4825,
+     14.8915
     ],
     "wrist_pitch": [
-     22.146,
-     46.7552
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 0.975,
@@ -22600,14 +22524,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0731,
-   "zmp_y_min": -0.003,
+   "head_y_min": 0.0811,
+   "zmp_y_min": 0.0046,
    "peak_speed": {
     "base_yaw": 138.0,
+    "base_pitch": 88.6,
+    "elbow_pitch": 138.6,
+    "wrist_roll": 138.6,
+    "wrist_pitch": 130.4
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_160_c",
+   "base": "beat_drop_160",
+   "variant": "c",
+   "bpm": 160,
+   "tier": "drop",
+   "frames": 126,
+   "md5": "bea84e2c24f192e04ac01a005f2f36bf",
+   "seconds": 4.2,
+   "amplitude": 23.17,
+   "scale": {
+    "base_yaw": 0.33,
+    "base_pitch": 0.965,
+    "elbow_pitch": 0.44,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.705
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -23.166,
+     17.82
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.5733
+    ],
+    "elbow_pitch": [
+     -32.56,
+     -9.328
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     22.245,
+     45.51
+    ]
+   },
+   "first_beat_s": 0.975,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0752,
+   "zmp_y_min": -0.002,
+   "peak_speed": {
+    "base_yaw": 137.7,
     "base_pitch": 138.5,
-    "elbow_pitch": 138.3,
-    "wrist_roll": 92.7,
-    "wrist_pitch": 138.1
+    "elbow_pitch": 138.1,
+    "wrist_roll": 121.0,
+    "wrist_pitch": 138.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -22777,91 +22777,15 @@
    "bpm": 164,
    "tier": "drop",
    "frames": 124,
-   "md5": "6630717a0ee7e5a15842285ea968f76b",
-   "seconds": 4.1333,
-   "amplitude": 23.17,
-   "scale": {
-    "base_yaw": 0.33,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.795,
-    "wrist_roll": 0.62,
-    "wrist_pitch": 0.955
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -23.166,
-     17.82
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -35.356,
-     0.896
-    ],
-    "wrist_roll": [
-     -7.254,
-     15.8782
-    ],
-    "wrist_pitch": [
-     17.394,
-     51.01
-    ]
-   },
-   "first_beat_s": 0.9658536585365853,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0781,
-   "zmp_y_min": 0.0053,
-   "peak_speed": {
-    "base_yaw": 138.3,
-    "base_pitch": 90.0,
-    "elbow_pitch": 137.9,
-    "wrist_roll": 138.4,
-    "wrist_pitch": 138.0
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_164_c",
-   "base": "beat_drop_164",
-   "variant": "c",
-   "bpm": 164,
-   "tier": "drop",
-   "frames": 124,
-   "md5": "668bec8323b398deed447abc760e81e1",
+   "md5": "6d83b63ce71f6d2ad40bcdd3be98afe2",
    "seconds": 4.1333,
    "amplitude": 22.95,
    "scale": {
     "base_yaw": 0.425,
-    "base_pitch": 0.95,
-    "elbow_pitch": 0.395,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.59
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.595,
+    "wrist_roll": 0.715,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -22883,20 +22807,20 @@
      22.95
     ],
     "base_pitch": [
-     -52.0,
-     -34.7975
+     -51.99,
+     -34.05
     ],
     "elbow_pitch": [
-     -31.48,
-     -8.4436
+     -34.9948,
+     -4.864
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -8.3655,
+     14.6861
     ],
     "wrist_pitch": [
-     22.212,
-     46.6144
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 0.9658536585365853,
@@ -22905,14 +22829,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0741,
-   "zmp_y_min": -0.0025,
+   "head_y_min": 0.081,
+   "zmp_y_min": 0.0044,
    "peak_speed": {
     "base_yaw": 138.0,
+    "base_pitch": 90.0,
+    "elbow_pitch": 137.5,
+    "wrist_roll": 137.9,
+    "wrist_pitch": 132.5
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_164_c",
+   "base": "beat_drop_164",
+   "variant": "c",
+   "bpm": 164,
+   "tier": "drop",
+   "frames": 124,
+   "md5": "15f94d9ff90a44baca125a550f2c37d8",
+   "seconds": 4.1333,
+   "amplitude": 23.17,
+   "scale": {
+    "base_yaw": 0.33,
+    "base_pitch": 0.95,
+    "elbow_pitch": 0.435,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.695
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -23.166,
+     17.82
+    ],
+    "base_pitch": [
+     -52.0,
+     -34.7975
+    ],
+    "elbow_pitch": [
+     -32.44,
+     -9.472
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     22.355,
+     45.29
+    ]
+   },
+   "first_beat_s": 0.9658536585365853,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0765,
+   "zmp_y_min": -0.0017,
+   "peak_speed": {
+    "base_yaw": 138.3,
     "base_pitch": 138.0,
-    "elbow_pitch": 137.8,
-    "wrist_roll": 93.8,
-    "wrist_pitch": 138.2
+    "elbow_pitch": 138.1,
+    "wrist_roll": 122.1,
+    "wrist_pitch": 137.9
    },
    "gain": {
     "base_yaw": 1.8,
@@ -23082,91 +23082,15 @@
    "bpm": 168,
    "tier": "drop",
    "frames": 122,
-   "md5": "0d33a278d84278754b849594a94c0295",
-   "seconds": 4.0667,
-   "amplitude": 22.11,
-   "scale": {
-    "base_yaw": 0.315,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.785,
-    "wrist_roll": 0.6,
-    "wrist_pitch": 0.915
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -22.113,
-     17.01
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -35.188,
-     0.608
-    ],
-    "wrist_roll": [
-     -7.02,
-     15.366
-    ],
-    "wrist_pitch": [
-     17.922,
-     50.13
-    ]
-   },
-   "first_beat_s": 0.9571428571428571,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0784,
-   "zmp_y_min": 0.0051,
-   "peak_speed": {
-    "base_yaw": 137.9,
-    "base_pitch": 91.5,
-    "elbow_pitch": 138.4,
-    "wrist_roll": 138.4,
-    "wrist_pitch": 138.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_168_c",
-   "base": "beat_drop_168",
-   "variant": "c",
-   "bpm": 168,
-   "tier": "drop",
-   "frames": 122,
-   "md5": "bd42ab20833ff572d952123a52beeed0",
+   "md5": "f06d3895b0f50a18c007b7b228aedee4",
    "seconds": 4.0667,
    "amplitude": 22.14,
    "scale": {
     "base_yaw": 0.41,
-    "base_pitch": 0.92,
-    "elbow_pitch": 0.38,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.57
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.58,
+    "wrist_roll": 0.695,
+    "wrist_pitch": 1.0
    },
    "first": {
     "base_yaw": 0.0,
@@ -23188,20 +23112,20 @@
      22.14
     ],
     "base_pitch": [
-     -52.0,
-     -35.246
+     -51.99,
+     -34.05
     ],
     "elbow_pitch": [
-     -31.12,
-     -8.9584
+     -34.6672,
+     -5.296
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -8.1315,
+     14.2753
     ],
     "wrist_pitch": [
-     22.476,
-     46.0512
+     23.4,
+     52.0
     ]
    },
    "first_beat_s": 0.9571428571428571,
@@ -23210,14 +23134,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0731,
-   "zmp_y_min": -0.0032,
+   "head_y_min": 0.0808,
+   "zmp_y_min": 0.0042,
    "peak_speed": {
     "base_yaw": 138.0,
+    "base_pitch": 91.5,
+    "elbow_pitch": 138.5,
+    "wrist_roll": 138.5,
+    "wrist_pitch": 134.6
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_168_c",
+   "base": "beat_drop_168",
+   "variant": "c",
+   "bpm": 168,
+   "tier": "drop",
+   "frames": 122,
+   "md5": "0fbb4397eef5862b385e9dc51f5b5f44",
+   "seconds": 4.0667,
+   "amplitude": 22.11,
+   "scale": {
+    "base_yaw": 0.315,
+    "base_pitch": 0.92,
+    "elbow_pitch": 0.42,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.675
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -22.113,
+     17.01
+    ],
+    "base_pitch": [
+     -52.0,
+     -35.246
+    ],
+    "elbow_pitch": [
+     -32.08,
+     -9.904
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     22.575,
+     44.85
+    ]
+   },
+   "first_beat_s": 0.9571428571428571,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.075,
+   "zmp_y_min": -0.0023,
+   "peak_speed": {
+    "base_yaw": 137.9,
     "base_pitch": 138.2,
-    "elbow_pitch": 137.0,
-    "wrist_roll": 97.2,
-    "wrist_pitch": 138.0
+    "elbow_pitch": 137.9,
+    "wrist_roll": 126.2,
+    "wrist_pitch": 138.5
    },
    "gain": {
     "base_yaw": 1.8,
@@ -23387,91 +23387,15 @@
    "bpm": 172,
    "tier": "drop",
    "frames": 120,
-   "md5": "38c4a67b3d2f8675d5aeaf9910d3d786",
-   "seconds": 4.0,
-   "amplitude": 21.76,
-   "scale": {
-    "base_yaw": 0.31,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.76,
-    "wrist_roll": 0.58,
-    "wrist_pitch": 0.905
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -21.762,
-     16.74
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -34.768,
-     -0.112
-    ],
-    "wrist_roll": [
-     -6.786,
-     14.8538
-    ],
-    "wrist_pitch": [
-     18.054,
-     49.91
-    ]
-   },
-   "first_beat_s": 0.9488372093023256,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0785,
-   "zmp_y_min": 0.0049,
-   "peak_speed": {
-    "base_yaw": 137.2,
-    "base_pitch": 94.6,
-    "elbow_pitch": 138.6,
-    "wrist_roll": 137.8,
-    "wrist_pitch": 138.0
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_172_c",
-   "base": "beat_drop_172",
-   "variant": "c",
-   "bpm": 172,
-   "tier": "drop",
-   "frames": 120,
-   "md5": "1fdc4f864794621cb983013ef93c3757",
+   "md5": "f0983baf215af1ca0103d673d5f5b4e0",
    "seconds": 4.0,
    "amplitude": 21.6,
    "scale": {
     "base_yaw": 0.4,
-    "base_pitch": 0.9,
-    "elbow_pitch": 0.37,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.555
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.56,
+    "wrist_roll": 0.675,
+    "wrist_pitch": 0.995
    },
    "first": {
     "base_yaw": 0.0,
@@ -23493,20 +23417,20 @@
      21.6
     ],
     "base_pitch": [
-     -52.0,
-     -35.545
+     -51.99,
+     -34.05
     ],
     "elbow_pitch": [
-     -30.88,
-     -9.3016
+     -34.2304,
+     -5.872
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -7.8975,
+     13.8645
     ],
     "wrist_pitch": [
-     22.674,
-     45.6288
+     23.433,
+     51.89
     ]
    },
    "first_beat_s": 0.9488372093023256,
@@ -23515,14 +23439,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.074,
-   "zmp_y_min": -0.002,
+   "head_y_min": 0.0806,
+   "zmp_y_min": 0.004,
    "peak_speed": {
-    "base_yaw": 137.8,
+    "base_yaw": 137.2,
+    "base_pitch": 94.6,
+    "elbow_pitch": 137.8,
+    "wrist_roll": 138.6,
+    "wrist_pitch": 138.6
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_172_c",
+   "base": "beat_drop_172",
+   "variant": "c",
+   "bpm": 172,
+   "tier": "drop",
+   "frames": 120,
+   "md5": "d8fce4df9cf9326d35c43a264d1eb584",
+   "seconds": 4.0,
+   "amplitude": 21.76,
+   "scale": {
+    "base_yaw": 0.31,
+    "base_pitch": 0.9,
+    "elbow_pitch": 0.41,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.66
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -21.762,
+     16.74
+    ],
+    "base_pitch": [
+     -52.0,
+     -35.545
+    ],
+    "elbow_pitch": [
+     -31.84,
+     -10.192
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     22.74,
+     44.52
+    ]
+   },
+   "first_beat_s": 0.9488372093023256,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0762,
+   "zmp_y_min": -0.0012,
+   "peak_speed": {
+    "base_yaw": 137.2,
     "base_pitch": 138.1,
-    "elbow_pitch": 137.4,
-    "wrist_roll": 99.1,
-    "wrist_pitch": 138.4
+    "elbow_pitch": 137.5,
+    "wrist_roll": 130.0,
+    "wrist_pitch": 138.3
    },
    "gain": {
     "base_yaw": 1.8,
@@ -23692,91 +23692,15 @@
    "bpm": 176,
    "tier": "drop",
    "frames": 118,
-   "md5": "9eae307490f019c803d4b5ed0c226527",
-   "seconds": 3.9333,
-   "amplitude": 21.06,
-   "scale": {
-    "base_yaw": 0.3,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.735,
-    "wrist_roll": 0.565,
-    "wrist_pitch": 0.88
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -21.06,
-     16.2
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -34.348,
-     -0.832
-    ],
-    "wrist_roll": [
-     -6.6105,
-     14.4697
-    ],
-    "wrist_pitch": [
-     18.384,
-     49.36
-    ]
-   },
-   "first_beat_s": 0.9409090909090909,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0787,
-   "zmp_y_min": 0.0047,
-   "peak_speed": {
-    "base_yaw": 136.4,
-    "base_pitch": 97.4,
-    "elbow_pitch": 137.9,
-    "wrist_roll": 137.6,
-    "wrist_pitch": 138.0
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_176_c",
-   "base": "beat_drop_176",
-   "variant": "c",
-   "bpm": 176,
-   "tier": "drop",
-   "frames": 118,
-   "md5": "20675696f2657d690da4219078999014",
+   "md5": "29f5d6767889e7d7b67b8194ffbda508",
    "seconds": 3.9333,
    "amplitude": 21.06,
    "scale": {
     "base_yaw": 0.39,
-    "base_pitch": 0.89,
-    "elbow_pitch": 0.36,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.54
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.545,
+    "wrist_roll": 0.655,
+    "wrist_pitch": 0.965
    },
    "first": {
     "base_yaw": 0.0,
@@ -23798,20 +23722,20 @@
      21.06
     ],
     "base_pitch": [
-     -52.0,
-     -35.6945
+     -51.99,
+     -34.05
     ],
     "elbow_pitch": [
-     -30.64,
-     -9.6448
+     -33.9028,
+     -6.304
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -7.6635,
+     13.4537
     ],
     "wrist_pitch": [
-     22.872,
-     45.2064
+     23.631,
+     51.23
     ]
    },
    "first_beat_s": 0.9409090909090909,
@@ -23820,14 +23744,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0744,
-   "zmp_y_min": -0.0032,
+   "head_y_min": 0.0805,
+   "zmp_y_min": 0.0038,
    "peak_speed": {
-    "base_yaw": 137.5,
+    "base_yaw": 137.1,
+    "base_pitch": 97.4,
+    "elbow_pitch": 137.5,
+    "wrist_roll": 137.8,
+    "wrist_pitch": 138.3
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_176_c",
+   "base": "beat_drop_176",
+   "variant": "c",
+   "bpm": 176,
+   "tier": "drop",
+   "frames": 118,
+   "md5": "9a89324c531814ea541b3eedcf6d06cd",
+   "seconds": 3.9333,
+   "amplitude": 21.06,
+   "scale": {
+    "base_yaw": 0.3,
+    "base_pitch": 0.89,
+    "elbow_pitch": 0.405,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.65
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -21.06,
+     16.2
+    ],
+    "base_pitch": [
+     -52.0,
+     -35.6945
+    ],
+    "elbow_pitch": [
+     -31.72,
+     -10.336
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     22.85,
+     44.3
+    ]
+   },
+   "first_beat_s": 0.9409090909090909,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0762,
+   "zmp_y_min": -0.0023,
+   "peak_speed": {
+    "base_yaw": 136.4,
     "base_pitch": 138.5,
-    "elbow_pitch": 137.0,
-    "wrist_roll": 101.6,
-    "wrist_pitch": 138.0
+    "elbow_pitch": 137.7,
+    "wrist_roll": 133.2,
+    "wrist_pitch": 138.2
    },
    "gain": {
     "base_yaw": 1.8,
@@ -23997,91 +23997,15 @@
    "bpm": 180,
    "tier": "drop",
    "frames": 116,
-   "md5": "481de86c288cf8b469f15fe3706eabbb",
-   "seconds": 3.8667,
-   "amplitude": 20.71,
-   "scale": {
-    "base_yaw": 0.295,
-    "base_pitch": 1.0,
-    "elbow_pitch": 0.72,
-    "wrist_roll": 0.555,
-    "wrist_pitch": 0.855
-   },
-   "first": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "last": {
-    "base_yaw": 0.0,
-    "base_pitch": -49.0,
-    "elbow_pitch": -22.0,
-    "wrist_roll": 0.0,
-    "wrist_pitch": 30.0
-   },
-   "range": {
-    "base_yaw": [
-     -20.709,
-     15.93
-    ],
-    "base_pitch": [
-     -51.3,
-     -34.05
-    ],
-    "elbow_pitch": [
-     -34.096,
-     -1.264
-    ],
-    "wrist_roll": [
-     -6.4935,
-     14.2136
-    ],
-    "wrist_pitch": [
-     18.714,
-     48.81
-    ]
-   },
-   "first_beat_s": 0.9333333333333333,
-   "beats": 8,
-   "accent_beats": [
-    5
-   ],
-   "flick_beat": 5,
-   "head_y_min": 0.0788,
-   "zmp_y_min": 0.0044,
-   "peak_speed": {
-    "base_yaw": 138.2,
-    "base_pitch": 99.8,
-    "elbow_pitch": 138.4,
-    "wrist_roll": 138.2,
-    "wrist_pitch": 138.1
-   },
-   "gain": {
-    "base_yaw": 1.8,
-    "base_pitch": 1.15,
-    "elbow_pitch": 1.2,
-    "wrist_roll": 1.3,
-    "wrist_pitch": 1.1
-   }
-  },
-  {
-   "name": "beat_drop_180_c",
-   "base": "beat_drop_180",
-   "variant": "c",
-   "bpm": 180,
-   "tier": "drop",
-   "frames": 116,
-   "md5": "d460b49943986e8db43d40aaf41875e9",
+   "md5": "e53e8ad5261ed6af908745cf32f30d22",
    "seconds": 3.8667,
    "amplitude": 20.52,
    "scale": {
     "base_yaw": 0.38,
-    "base_pitch": 0.855,
-    "elbow_pitch": 0.355,
-    "wrist_roll": 1.0,
-    "wrist_pitch": 0.53
+    "base_pitch": 1.0,
+    "elbow_pitch": 0.535,
+    "wrist_roll": 0.64,
+    "wrist_pitch": 0.94
    },
    "first": {
     "base_yaw": 0.0,
@@ -24103,20 +24027,20 @@
      20.52
     ],
     "base_pitch": [
-     -52.0,
-     -36.2177
+     -51.99,
+     -34.05
     ],
     "elbow_pitch": [
-     -30.52,
-     -9.8164
+     -33.6844,
+     -6.592
     ],
     "wrist_roll": [
-     -15.6,
-     15.6
+     -7.488,
+     13.1456
     ],
     "wrist_pitch": [
-     23.004,
-     44.9248
+     23.796,
+     50.68
     ]
    },
    "first_beat_s": 0.9333333333333333,
@@ -24125,14 +24049,90 @@
     5
    ],
    "flick_beat": 5,
-   "head_y_min": 0.0739,
-   "zmp_y_min": -0.0025,
+   "head_y_min": 0.0804,
+   "zmp_y_min": 0.0035,
    "peak_speed": {
     "base_yaw": 137.0,
+    "base_pitch": 99.8,
+    "elbow_pitch": 138.0,
+    "wrist_roll": 137.7,
+    "wrist_pitch": 138.1
+   },
+   "gain": {
+    "base_yaw": 1.8,
+    "base_pitch": 1.15,
+    "elbow_pitch": 1.2,
+    "wrist_roll": 1.3,
+    "wrist_pitch": 1.1
+   }
+  },
+  {
+   "name": "beat_drop_180_c",
+   "base": "beat_drop_180",
+   "variant": "c",
+   "bpm": 180,
+   "tier": "drop",
+   "frames": 116,
+   "md5": "ba03a5b0f72d7015acd0b8885af3e2f4",
+   "seconds": 3.8667,
+   "amplitude": 20.71,
+   "scale": {
+    "base_yaw": 0.295,
+    "base_pitch": 0.855,
+    "elbow_pitch": 0.39,
+    "wrist_roll": 1.0,
+    "wrist_pitch": 0.625
+   },
+   "first": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "last": {
+    "base_yaw": 0.0,
+    "base_pitch": -49.0,
+    "elbow_pitch": -22.0,
+    "wrist_roll": 0.0,
+    "wrist_pitch": 30.0
+   },
+   "range": {
+    "base_yaw": [
+     -20.709,
+     15.93
+    ],
+    "base_pitch": [
+     -52.0,
+     -36.2177
+    ],
+    "elbow_pitch": [
+     -31.36,
+     -10.768
+    ],
+    "wrist_roll": [
+     -15.6,
+     15.6
+    ],
+    "wrist_pitch": [
+     23.125,
+     43.75
+    ]
+   },
+   "first_beat_s": 0.9333333333333333,
+   "beats": 8,
+   "accent_beats": [
+    5
+   ],
+   "flick_beat": 5,
+   "head_y_min": 0.0757,
+   "zmp_y_min": -0.0017,
+   "peak_speed": {
+    "base_yaw": 138.2,
     "base_pitch": 137.8,
-    "elbow_pitch": 138.2,
-    "wrist_roll": 104.1,
-    "wrist_pitch": 138.6
+    "elbow_pitch": 137.5,
+    "wrist_roll": 136.2,
+    "wrist_pitch": 137.7
    },
    "gain": {
     "base_yaw": 1.8,

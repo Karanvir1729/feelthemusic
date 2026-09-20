@@ -13,6 +13,10 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lamp_show as L  # noqa: E402
 
+ROBOTDESC = __import__("pathlib").Path(os.environ.get("LAMP_ROBOTDESC",
+    "/private/tmp/claude-501/-Users-meharkhanna-feelthemusic/a2b4cfc6-081d-4df6-b3d6-864bf6cf8fa1/scratchpad/robotdesc"))
+HAVE_ROBOT = (ROBOTDESC / "pi5_feetech_r1" / "robot.urdf").exists() and (ROBOTDESC / "lelamp-calibration.json").exists()
+
 SR, HOP = 48000, 480
 
 
@@ -292,7 +296,8 @@ def test_beat_tracker_locks_128_bpm_with_jitter():
         assert abs(b - true) < 25e6, (i, (b - true) / 1e6)
     assert nxt[0] > after
     assert abs(tr.phase_error_ms()) < 25
-    assert not tr.locked(ks[-1] + 3_000_000_000)              # expired without kicks
+    assert tr.locked(ks[-1] + 3_000_000_000)                  # a 3 s breakdown keeps the lock
+    assert not tr.locked(ks[-1] + 4_500_000_000)              # expired without kicks (EXPIRE_NS 4 s)
 
 
 def test_beat_tracker_relocks_after_tempo_change_within_8_beats():
@@ -351,12 +356,12 @@ def test_parse_control_with_and_without_lamp_key():
     new = b"\x0d" + json.dumps({"lat": 280, "v": 2, "session": 4022250974,
                                 "lamp": {"mode": "dance", "lights": False, "gen": 7}}).encode()
     c = L.parse_control(new)
-    assert c["lat"] == 280.0 and c["lamp"] == {"mode": "dance", "lights": False, "gen": 7} and c["session"] == 4022250974
+    assert c["lat"] == 280.0 and c["lamp"] == {"mode": "dance", "lights": False, "gen": 7, "bold": None} and c["session"] == 4022250974
     bad = b"\x0d" + json.dumps({"lamp": {"mode": "spin", "gen": 1}}).encode()
-    assert L.parse_control(bad)["lamp"] == {"mode": None, "lights": None, "gen": 1}
+    assert L.parse_control(bad)["lamp"] == {"mode": None, "lights": None, "gen": 1, "bold": None}
     assert L.parse_control(b"\x0d{not json") == {"lat": None, "session": None, "lamp": None}
     odd = b"\x0d" + json.dumps({"lat": "x", "session": "y", "lamp": {"mode": "light", "gen": "z"}}).encode()
-    assert L.parse_control(odd) == {"lat": None, "session": None, "lamp": {"mode": "light", "lights": None, "gen": 0}}
+    assert L.parse_control(odd) == {"lat": None, "session": None, "lamp": {"mode": "light", "lights": None, "gen": 0, "bold": None}}
     assert L.parse_control(b"\x0d[1,2]") == {"lat": None, "session": None, "lamp": None}
 
 
@@ -834,3 +839,317 @@ def test_build_event_reaches_the_scheduler(monkeypatch):
     assert show.scheduler.build_until_ns == 103_200_000_000
     show.on_event("BUILD", 0.8, 110.0, 0)
     assert show.scheduler.build_until_ns == 103_200_000_000        # unknown duration: unchanged
+
+
+# ---- v4.1: bold + live clips ----------------------------------------------------------------------
+def test_parse_control_bold_is_clamped_and_missing_keeps_current():
+    def lamp_of(**kw):
+        return L.parse_control(b"\x0d" + json.dumps({"lamp": {"mode": "dance", "gen": 1, **kw}}).encode())["lamp"]
+    assert lamp_of(bold=0.8)["bold"] == pytest.approx(0.8)
+    assert lamp_of(bold=1.7)["bold"] == 1.0 and lamp_of(bold=-2)["bold"] == 0.0
+    assert lamp_of(bold="0.25")["bold"] == pytest.approx(0.25)     # a string that parses is a number
+    assert lamp_of(bold="x")["bold"] is None and lamp_of(bold=None)["bold"] is None
+    assert lamp_of()["bold"] is None                                 # missing -> keep the current value
+    assert lamp_of(bold=float("nan"))["bold"] == 0.0
+
+
+def test_show_bold_from_cli_and_control(monkeypatch, capsys):
+    posts = []
+    show = bare_show(monkeypatch, posts)
+    s = show.scheduler
+    assert s.bold == L.DEFAULT_BOLD == 0.6
+    assert s.live is not None and not s.live.usable() and s.live.state() == "off"   # no pack dir here: library only
+    show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "light", "gen": 1, "bold": 0.85}}).encode(), 0.0)
+    assert s.bold == 0.85 and "bold 0.60 -> 0.85" in capsys.readouterr().out
+    show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "light", "gen": 1}}).encode(), 0.0)
+    assert s.bold == 0.85                                                 # missing: unchanged, nothing logged
+    assert "bold" not in capsys.readouterr().out
+    show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "light", "gen": 1, "bold": 5}}).encode(), 0.0)
+    assert s.bold == 1.0
+    show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "light", "gen": 1, "bold": 0.85}}).encode(), 0.0)
+    assert s.bold == 0.85
+    show2 = bare_show(monkeypatch, [], mode="dance")
+    assert show2.scheduler.bold == 0.6
+    assert L.ClipScheduler(post=lambda n: {}, status=lambda: {}, bold=0.3).bold == 0.3
+    assert L.ClipScheduler(post=lambda n: {}, status=lambda: {}, bold=7).bold == 1.0
+    assert not s.set_bold(0.851)                                          # two decimals, as the conductor sends it
+
+
+def test_next_letter_matches_pick_rotation():
+    s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, manifest=manifest_v2(bpms=(120,)))
+    for _ in range(4):
+        want = s.next_letter("groove")
+        got = s.pick("groove", 120).rsplit("_", 1)[1]
+        assert got == want
+    assert s.next_letter("hype") == "a"
+    s.last_variant["hype"] = "c"
+    assert s.next_letter("hype") == "a"
+
+
+def fake_make(calls=None, ok=True, frames=149):
+    """A make_clip stand-in: rows at START, meta as make_clip's, no maths."""
+    def make(tier, variant, bpm, bold, gains=None, model=None):
+        if calls is not None: calls.append((tier, variant, round(bpm, 1), bold))
+        rows = [(0.0, -49.0, -22.0, 0.0, 30.0)] * frames
+        return rows, {"ok": ok, "reasons": [] if ok else ["zmp_y min -0.020 < -0.012"], "multiplier": 0.35 + 0.65 * bold,
+                      "amplitude": 10.0 * bold, "frames": frames, "tier": tier, "variant": variant, "bpm": bpm, "bold": bold}
+    return make
+
+
+def fake_pack(tmp_path):
+    """A pack dir whose runtime listing is its CSV stems (like GET /api/animations)."""
+    pack = tmp_path / "factory_v1"; pack.mkdir(parents=True)
+    return pack, (lambda: {p.stem for p in pack.glob("*.csv")})
+
+
+def live_for(tmp_path, calls=None, ok=True, list_fn=None, write_fn=None, log=None, model_fn=None, make_fn=None):
+    pack, listing = fake_pack(tmp_path)
+    lv = L.LiveClips(str(pack), list_fn=list_fn or listing, make_fn=make_fn or fake_make(calls, ok),
+                     write_fn=write_fn, model_fn=model_fn or (lambda: None), log=log or (lambda *_: None))
+    if write_fn is None:
+        import beat_clips
+        lv.write_fn = beat_clips.write_clip_atomic
+    return lv, pack
+
+
+def test_live_startup_sweeps_stale_live_files_and_disables_without_a_pack_dir(tmp_path, capsys):
+    pack, listing = fake_pack(tmp_path)
+    (pack / "live_3.csv").write_text("x"); (pack / ".live_2.csv.123.tmp").write_text("x"); (pack / "beat_groove_120_a.csv").write_text("y")
+    lv = L.LiveClips(str(pack), list_fn=listing, make_fn=fake_make(), write_fn=lambda p, r: "", log=print)
+    assert sorted(p.name for p in pack.iterdir()) == ["beat_groove_120_a.csv"]
+    assert lv.usable() and "removed 2 stale" in capsys.readouterr().out
+    off = L.LiveClips(str(tmp_path / "nope"), list_fn=listing, log=print)
+    assert not off.usable() and off.state() == "off" and "library only" in capsys.readouterr().out
+    assert L.LiveClips.is_pool_name("live_0") and L.LiveClips.is_pool_name("live_5") and not L.LiveClips.is_pool_name("live_6")
+    assert not L.LiveClips.is_pool_name("beat_groove_120_a")
+
+
+def test_live_pool_rotation_never_reuses_playing_or_inflight(tmp_path):
+    calls = []
+    lv, pack = live_for(tmp_path, calls)
+    names = []
+    def make(tier, variant, bpm, bold):
+        g = lv.generated
+        lv.request(tier, variant, bpm, bold, deadline_ns=L.time.monotonic_ns() + 5_000_000_000)
+        assert wait_for(lambda: lv.generated == g + 1 and lv.busy is None, 3.0)
+    for i in range(14):                                          # more than twice round the pool
+        make("groove", "abc"[i % 3], 120.0 + i, 0.6)
+        r = lv.peek()
+        assert r.name not in (lv.playing, lv.inflight), (i, r.name, lv.playing, lv.inflight)
+        names.append(r.name)
+        if i % 2 == 0:
+            taken = lv.take()
+            assert lv.inflight == taken.name and lv.peek() is None
+            # a regeneration while that one is in flight (not yet posted) must pick another name
+            make("hype", "a", 130.0, 0.6)
+            assert lv.peek().name != taken.name and lv.peek().name != lv.playing
+            names.append(lv.peek().name)
+            lv.posted(taken.name, True)
+            assert lv.playing == taken.name and lv.inflight is None
+        else:
+            lv.take(); lv.posted(r.name, True)
+    assert set(names) <= {f"live_{k}" for k in range(6)}
+    assert len({p.name for p in pack.glob("live_*.csv")}) <= 6      # the pack never grows
+    assert not list(pack.glob(".live_*"))                              # no temp files left
+    assert lv.generated == len(names) and lv.failed == 0
+    # covers(): the ready clip, the PLL's bpm wobble (the scheduler's take-time band), the same bold; not
+    # a real re-lock, another tier/variant/bold
+    make("groove", "c", 140.0, 0.6)
+    r = lv.peek()
+    assert L.LiveClips.BPM_TOL == L.ClipScheduler.LIVE_BPM_TOL == L.LIVE_BPM_TOL == 2.0
+    assert lv.covers(r.tier, r.variant, r.bpm + 1.9, r.bold) and lv.covers(r.tier, r.variant, r.bpm - 1.9, r.bold)
+    assert not lv.covers(r.tier, r.variant, r.bpm + 2.1, r.bold)
+    assert not lv.covers(r.tier, r.variant, r.bpm, 0.7) and not lv.covers("drop", r.variant, r.bpm, r.bold)
+
+
+def test_live_generation_failure_falls_back_to_library_and_disables_for_60s(tmp_path):
+    import time as _t
+    logs = []
+    def boom(tier, variant, bpm, bold, gains=None, model=None):
+        raise RuntimeError("model exploded")
+    lv, pack = live_for(tmp_path, log=logs.append, make_fn=boom)
+    posts = []
+    tr = L.BeatTracker()
+    ks = kicks(120, 16)
+    for k in ks: tr.feed(k)
+    s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                        status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
+                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)), live=lv)
+    now = ks[-1]
+    post_at, beat, period = s.plan(now, tr)
+    s.not_before_ns = now + 2_000_000_000                          # the hold behind home: the first clip is prepared ...
+    s.tick(now, True, tr, 0.3)
+    assert wait_for(lambda: lv.disables == 1, 3.0)                # ... and the generator dies once
+    s.not_before_ns = 0
+    assert len(logs) == 1 and "model exploded" in logs[0] and "60s" in logs[0]
+    assert not lv.usable() and lv.state().startswith("disabled")
+    s.tick(post_at + 2_000_000, True, tr, 0.3)                     # the post itself: the library, as before
+    _t.sleep(0.05)
+    assert posts == ["beat_groove_120_a"] and s.live_posts == 0 and s.boundary_ns == beat + 8 * period
+    s.tick(post_at + 10_000_000, True, tr, 0.3)                    # no second request while disabled
+    _t.sleep(0.05)
+    assert lv.disables == 1 and len(logs) == 1
+    lv.disabled_until_ns = 0                                       # 60 s later: it tries again
+    assert lv.usable()
+    # a clip that fails validation, a write that fails, and a name the runtime never lists: fallbacks, no disable
+    lv2, _ = live_for(tmp_path / "b", ok=False, log=logs.append)
+    lv2.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9)
+    assert wait_for(lambda: lv2.failed == 1, 3.0) and lv2.peek() is None and lv2.usable() and "FAILED validation" in logs[-1]
+    def bad_write(path, rows): raise OSError("disk full")
+    lv3, _ = live_for(tmp_path / "c", write_fn=bad_write, log=logs.append)
+    lv3.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9)
+    assert wait_for(lambda: lv3.failed == 1, 3.0) and lv3.peek() is None and lv3.usable() and "write failed" in logs[-1]
+    lv4, _ = live_for(tmp_path / "d", list_fn=lambda: set(), log=logs.append)
+    lv4.LIST_NS = 100_000_000
+    lv4.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9)
+    assert wait_for(lambda: lv4.failed == 1, 3.0) and lv4.peek() is None and "not listed" in logs[-1]
+
+
+def test_scheduler_posts_live_clips_with_the_library_timing(tmp_path):
+    """The live path changes WHAT is posted, never WHEN: same post instant, one in flight, the tail-hold
+    re-post; the variant rotation continues through live and library posts alike."""
+    import time as _t
+    calls, posts = [], []
+    lv, pack = live_for(tmp_path, calls)
+    tr = L.BeatTracker()
+    ks = kicks(120, 16)
+    for k in ks: tr.feed(k)
+    s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                        status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
+                        start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,)), live=lv)
+    now = ks[-1]
+    assert s.has_tier("build")                                       # the generator makes every tier
+    s.not_before_ns = now + 2_000_000_000                            # in the hold behind home: prepare groove a
+    s.tick(now, True, tr, 0.3)
+    assert wait_for(lambda: lv.peek() is not None, 3.0)
+    assert calls == [("groove", "a", round(tr.bpm, 1), 0.6)] and lv.peek().name == "live_0"
+    s.tick(now + 100_000_000, True, tr, 0.3)                         # covered: no second request
+    _t.sleep(0.05)
+    assert len(calls) == 1
+    s.set_bold(0.9)                                                  # bold changed with time to spare: regenerate
+    s.tick(now + 200_000_000, True, tr, 0.3)
+    assert wait_for(lambda: lv.peek() is not None and lv.peek().bold == 0.9, 3.0)
+    assert calls[-1] == ("groove", "a", round(tr.bpm, 1), 0.9) and lv.peek().name == "live_1"
+    s.not_before_ns = 0                                              # the hold is over
+    post_at, beat, period = s.plan(now, tr)
+    s.tick(post_at - 1_000, True, tr, 0.3)
+    assert posts == []                                               # not yet its instant
+    s.tick(post_at + 4_000_000, True, tr, 0.3)
+    _t.sleep(0.05)
+    assert posts == ["live_1"] and s.boundary_ns == beat + 8 * period and s.moves == 1 and s.live_posts == 1
+    assert s.last_variant["groove"] == "a" and lv.playing == "live_1" and lv.inflight is None
+    # the re-post: prepared right after the post (the plan is the boundary's), variant b
+    music = kicks(120, 200, t0=ks[-1] + period)
+    def next_post():
+        t = s.post_instant(s.boundary_ns, s.start_latency_ns)
+        for k in music:
+            if k <= t and k > ks[-1]: tr.feed(k)
+        return s.plan(t, tr)[0]
+    s.tick(post_at + 10_000_000, True, tr, 0.3)
+    assert wait_for(lambda: lv.peek() is not None, 3.0)
+    assert calls[-1][:2] == ("groove", "b") and lv.peek().name not in ("live_1",)
+    t2 = next_post()
+    s.tick(t2 - 100_000_000, True, tr, 0.9)                          # tier flips to hype with NO time left: post what is ready
+    _t.sleep(0.02)
+    assert calls[-1][:2] == ("groove", "b")
+    s.tick(t2 + 2_000_000, True, tr, 0.9)
+    _t.sleep(0.05)
+    assert posts[-1] == lv.playing and posts[-1] != "live_1" and s.last_variant["groove"] == "b"
+    # a DROP with no time left: the library's drop clip, not the ready hype one
+    s.tick(t2 + 10_000_000, True, tr, 0.9)
+    assert wait_for(lambda: lv.peek() is not None and lv.peek().tier == "hype", 3.0)
+    t3 = next_post()
+    s.drop_pending = True
+    s.tick(t3 + 2_000_000, True, tr, 0.9)
+    _t.sleep(0.05)
+    assert posts[-1] == "beat_drop_120_a" and s.drop_pending is False
+    assert lv.peek() is not None and lv.peek().tier == "hype"        # the ready hype clip is kept for later
+    # a tempo far from the ready clip's: the library bucket
+    lv.peek().bpm = 100.0
+    t4 = next_post()
+    s.tick(t4 + 2_000_000, True, tr, 0.9)
+    _t.sleep(0.05)
+    assert posts[-1] == "beat_hype_120_a"
+    # music ends: home once, as before; nothing live is left in flight
+    s.tick(s.boundary_ns, False, tr, 0.3)
+    _t.sleep(0.05)
+    assert posts[-1] == "home" and s.boundary_ns is None and s.playing is False and lv.inflight is None
+    assert set(p.stem for p in pack.glob("live_*.csv")) <= {f"live_{k}" for k in range(6)}
+
+
+def test_prepare_does_not_chase_the_pll_wobble(tmp_path):
+    """The tracker's PLL trims the bpm continuously; with real kick jitter it leaves a +-0.5 band several
+    times per clip. A ready clip within the scheduler's take-time band (LIVE_BPM_TOL) is the right clip:
+    no regeneration (a worker job, a CSV write with fsync and a listing poll each), until a real re-lock."""
+    import time as _t
+    calls = []
+    lv, pack = live_for(tmp_path, calls)
+    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
+                        manifest=manifest_v2(bpms=(128,)), live=lv)
+    now = L.time.monotonic_ns()
+    post_at = now + 5_000_000_000
+    s.prepare("groove", 128.0, post_at, now)
+    assert wait_for(lambda: lv.peek() is not None, 3.0) and len(calls) == 1
+    for d in (0.4, -0.7, 1.2, -1.5, 1.9, -1.99, 0.0):               # the wobble: covered, no request
+        s.prepare("groove", 128.0 + d, post_at, now)
+    _t.sleep(0.05)
+    assert len(calls) == 1 and lv.peek().bpm == 128.0
+    s.prepare("groove", 130.5, post_at, now)                         # a real re-lock: regenerate
+    assert wait_for(lambda: lv.peek() is not None and lv.peek().bpm == 130.5, 3.0)
+    assert len(calls) == 2
+    s.set_bold(0.3)                                                  # bold still triggers a regeneration
+    s.prepare("groove", 130.6, post_at, now)
+    assert wait_for(lambda: lv.peek() is not None and lv.peek().bold == 0.3, 3.0)
+    assert len(calls) == 3
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_live_clip_end_to_end_with_the_real_generator(tmp_path):
+    """make_clip + write_clip_atomic through LiveClips, validated with the scratchpad's model (the lamp
+    uses Validator.for_lamp with its own calibration): the file in the pack is a valid clip at 127.3 bpm."""
+    import beat_clips as bc
+    pack, listing = fake_pack(tmp_path)
+    logs = []
+    lv = L.LiveClips(str(pack), list_fn=listing, model_fn=lambda: bc.Validator(ROBOTDESC), log=logs.append)
+    lv.request("hype", "b", 127.3, 0.8, L.time.monotonic_ns() + 3_000_000_000)
+    assert wait_for(lambda: lv.peek() is not None or lv.failed or lv.disables, 10.0)
+    r = lv.peek()
+    assert r is not None and r.name == "live_0" and r.meta["ok"] is True, logs
+    text = (pack / "live_0.csv").read_text()
+    import hashlib
+    assert hashlib.md5(text.encode()).hexdigest() == r.md5
+    lines = text.splitlines()
+    assert lines[0] == bc.CSV_HEADER and len(lines) - 1 == round(bc.clip_seconds(127.3) * bc.FPS) == r.meta["frames"]
+    rows = [tuple(float(x) for x in l.split(",")[1:]) for l in lines[1:]]
+    ok, report = bc.validate_rows(rows, bc.Validator(ROBOTDESC))
+    assert ok, report
+    assert r.meta["multiplier"] == pytest.approx(0.87)
+
+
+def test_beat_tracker_locks_on_a_syncopated_kick_pattern():
+    """Kicks on beats 1, 2, 2.5, 4 and 1, 3, 3.75, 4 of a 120 bpm bar: uneven spacing, on-grid hits."""
+    tr = L.BeatTracker()
+    P = int(0.5e9); t0 = 10_000_000_000
+    bar_a = [0, 1, 1.5, 3]; bar_b = [0, 2, 2.75, 3]
+    now = t0
+    for bar in range(6):
+        for b in (bar_a if bar % 2 == 0 else bar_b):
+            tr.feed(t0 + int((bar * 4 + b) * P) + (7_000_000 if b == 1 else -5_000_000))
+            now = t0 + int((bar * 4 + b) * P)
+    assert tr.locked(now + 100_000_000), (tr.bpm, tr.on_grid)
+    assert abs(tr.bpm - 120) < 2.5
+    beats = tr.next_beats(now, 4)                      # the scheduler consumes the next beat; the PLL re-trims per kick
+    off = (beats[0] - t0) % P
+    assert beats and min(off, P - off) < 60_000_000, (beats[0] - t0) / 1e6
+
+
+def test_beat_tracker_rarely_locks_on_random_intervals():
+    """Statistical, deterministic seeds: random spacing in the tempo band must not read as a beat."""
+    import random
+    locks = 0
+    for seed in range(10):
+        rnd = random.Random(seed); tr = L.BeatTracker(); t = 20_000_000_000
+        for _ in range(16):
+            t += int(rnd.uniform(0.30, 0.74) * 1e9); tr.feed(t)
+        locks += tr.locked(t + 10_000_000)
+    assert locks <= 1, locks
