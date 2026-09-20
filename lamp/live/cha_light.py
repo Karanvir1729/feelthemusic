@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Song-mode light: GREEN while a person is in the camera's view, RED when nobody is.
+"""Song-mode light: GREEN while a person is in the camera's view, RED when nobody is -- only while the
+Cha Cha Slide is playing (a cha_* clip started within ACTIVE_S); the rest of the time the strand is the
+show's.
 
 For the Cha Cha Slide demo the lamp's light is a single signal to the room -- "I can see you" -- so a
 deaf follower knows whether the lamp is dancing WITH them. It watches the SDK camera stream at a few
@@ -26,13 +28,27 @@ import numpy as np
 from sdk import LampSDK, SDKError, read_token
 
 FPS = 6.0           # frames a second asked of the camera stream: plenty for "is anyone there"
-HOLD_S = 1.0        # a face seen this recently keeps the green: a blink or a turned head must not flash red
+HOLD_S = 2.0        # a face seen this recently keeps the green: a blink or a turned head must not flash red
+                    # (1.0 s flickered at the edge of detection, 2026-09-20 05:00)
+ACTIVE_S = 8.0      # paint only while the Cha Cha Slide is on: a cha_* clip started within this long ago
+                    # (operator: "only for this demo"); otherwise the strand is the show's, not ours
 REFRESH_S = 0.25    # re-send the colour this often: something on the lamp posts a light command about
                     # once a second through the runtime's web route (source robot_runtime_web, unidentified
                     # 2026-09-20 05:04; the vendor light/stop does not silence it) and the last writer wins,
                     # so this paints four times a second through the SAME route and stays on top
 GREEN, RED = (0, 255, 0), (255, 0, 0)
 LUMINANCE = 1.0
+
+
+def demo_active() -> bool:
+    """Is a cha_* clip playing or just finished? /api/animations/status keeps the last name and a live
+    elapsed_seconds (its 'playing' flag is stale, measured), so recency is the test."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8081/api/animations/status", timeout=2) as r:
+            st = json.load(r)
+        return str(st.get("current_animation") or "").startswith("cha_") and float(st.get("elapsed_seconds") or 1e9) < ACTIVE_S
+    except Exception:
+        return False
 
 
 def paint(rgb) -> None:
@@ -48,6 +64,7 @@ def main() -> int:
     sdk = LampSDK(read_token())
     faces = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.35)
     shown, sent_at, last_seen = None, 0.0, -1e9
+    active, checked_at = False, -1e9
     frames = 0
     while True:
         try:
@@ -61,6 +78,13 @@ def main() -> int:
                 if result.detections:
                     last_seen = now
                 state = (now - last_seen) <= HOLD_S
+                if now - checked_at >= 0.5:
+                    active, checked_at = demo_active(), now
+                    if not active and shown is not None:
+                        print(f"{time.strftime('%H:%M:%S')} demo over: leaving the strand to the show", flush=True)
+                        shown = None
+                if not active:
+                    continue
                 if state != shown or now - sent_at >= REFRESH_S:
                     try:
                         paint(GREEN if state else RED)
