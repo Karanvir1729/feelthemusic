@@ -1536,6 +1536,14 @@ class Panel(threading.Thread):
             http_thread = threading.Thread(target=self._http_loop, daemon=True); http_thread.start()
         while True:
             t = time.monotonic()
+            with self.lock:
+                dark = self.dark
+            if dark:
+                # Lights off (or mode off) means HANDS OFF the strand, not black: during the Cha Cha Slide
+                # cha_light.py paints it green/red through the same route, and a black frame every 20 ms
+                # from here was winning (2026-09-20). Whatever was last painted stays.
+                time.sleep(period)
+                continue
             rgb, brightness = self.frame(t)
             if self.mode == "direct":
                 try:
