@@ -1419,6 +1419,15 @@ class Show:
         self.music, self.excite = False, 0.0
         self.clip_until, self.clip_i = 0.0, 0
         self.counts = {"events": 0, "bass": 0, "control": 0, "flashes": 0, "clips": 0}
+        if os.environ.get("FOLLOW_GAME") == "1":
+            # The follow-the-lamp phone game (docs/follow-game.md), off unless asked for. follow_game.attach()
+            # publishes each accepted clip's head path and puts the room's followStatus on the panel; it posts
+            # nothing and changes no post instant. Any failure leaves the show exactly as it was.
+            try:
+                import follow_game
+                follow_game.attach(self)
+            except Exception as exc:
+                print(f"follow game: disabled ({exc})", flush=True)
 
     # ---- wire ---------------------------------------------------------------------------
     def send(self, b: bytes):
