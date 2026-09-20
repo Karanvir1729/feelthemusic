@@ -159,8 +159,10 @@ def main():
         song = slowed
         print(f"song at {TEMPO:.0%} speed ({slowed})")
     if seek > 0:
-        song = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{seek:.3f}", "-i", SONG, "-c", "copy", song], check=True)
+        trimmed = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+        # trim whichever file is being played (the slowed one when --tempo is set), at the stretched seek
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{seek:.3f}", "-i", song, "-c", "copy", trimmed], check=True)
+        song = trimmed
         print(f"starting at beat {args.start} = {seek:.2f} s into the song")
     # The song starts `lead` after this point, so the first cue -- due `lead` before its beat -- can be
     # posted on time even when the run starts on it (--from): t0 is the song clock's zero.
