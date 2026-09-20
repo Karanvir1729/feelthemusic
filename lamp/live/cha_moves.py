@@ -97,6 +97,7 @@ ELBOW_SHIFT = HOME_ELBOW - float(bc.START[2])
 # bar -- so the ceiling here is 290, checked on the smoothed clip, and it is a FAIL, not a warning.
 LEAD_BEATS = float(os.environ.get("CHA_LEAD_BEATS", 0.2))   # 0.098 s: frames 0-2 at home; frame 3 moves. CHA_LEAD_BEATS=1.3 tests the library's 0.63 s
 CHA_SPEED_LIMIT = 290.0
+TAIL_BEATS = 0.2       # stillness at the end of every call, for the same reason as the lead-in (see Call.rows)
 
 LOOK_YAW = YAW_REACH   # a look: 35 units is 26 deg on this calibration, 52 deg between left and right
 TURN_YAW = YAW_REACH   # the sweep's ends: 0 and +70 on the servo, 26 deg either side of centre
@@ -259,16 +260,23 @@ class Call:
         # The lead-in (LEAD_BEATS at home, see the runtime's rules above) is paid for by the call's own
         # closing stillness when it has one, so the move itself keeps its designed speed; a call that
         # ends in motion is instead played LEAD_BEATS/beats faster, and the speed check below sees that.
+        # ... and it must END still as well (TAIL_BEATS): the runtime's skip rule also asks the executor
+        # whether the arm is moving, and it answers from the last two frames it wrote. A clip whose last
+        # segment is the return home leaves those two frames a unit apart -- 26 units/s on a look --
+        # and the NEXT clip is blended away. Measured 2026-09-20 05:18: every clip that followed a look,
+        # a slide or a hop (the ones whose trailing hold the lead-in had eaten) streamed 1.15 s.
         keys = self.keys
         t_last0, t_last1, style_last = keys[-2][0], keys[-1][0], keys[-1][2]
-        if style_last == "hold" and t_last1 - t_last0 >= LEAD_BEATS - 1e-9:
+        trailing = (t_last1 - t_last0) if style_last == "hold" else 0.0
+        if trailing >= LEAD_BEATS + TAIL_BEATS - 1e-9:
             keys = ([keys[0], (LEAD_BEATS, keys[0][1], "hold")]
                     + [(t + LEAD_BEATS, pose, style) for t, pose, style in keys[1:-1]]
                     + [keys[-1]])
         else:
-            scale = (self.beats - LEAD_BEATS) / self.beats
+            scale = (self.beats - LEAD_BEATS - TAIL_BEATS) / self.beats
             keys = ([keys[0], (LEAD_BEATS, keys[0][1], "hold")]
-                    + [(LEAD_BEATS + t * scale, pose, style) for t, pose, style in keys[1:]])
+                    + [(LEAD_BEATS + t * scale, pose, style) for t, pose, style in keys[1:]]
+                    + [(self.beats, keys[0][1], "hold")])
         n = int(round(self.beats * BEAT * FPS)) + 1
         t = np.linspace(0.0, self.beats, n)
         U = np.tile(DESIGN_START.astype(float), (n, 1))
