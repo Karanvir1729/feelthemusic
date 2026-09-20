@@ -839,10 +839,15 @@ class LiveFollower:
                     if report["rejected"]:
                         note += " (whole-arm pose refused; yaw+tilt from neutral)"
         else:
-            self.aim_error = None
-            self.correcting = False
-            if cfg.target in FRAME_TARGETS or (self.sightings and self.sightings[-1][2] in FRAME_TARGETS):
-                self.sightings.clear()
+            # A missed frame is not a lost target. Keep the sightings and the correction latch for the
+            # LOST_S window (the next detection filters them by age, as above); clearing them here made
+            # aim need three CONSECUTIVE detections and abandoned corrections mid-move: with a detector
+            # missing every third frame the lamp never confirmed a face and searched with one in view.
+            frame_kind = cfg.target in FRAME_TARGETS or (self.sightings and self.sightings[-1][2] in FRAME_TARGETS)
+            window = TargetLock.LOST_S if frame_kind else 3.5
+            self.sightings = [s for s in self.sightings if now - s[0] < window]
+            if not self.sightings:
+                self.aim_error, self.correcting = None, False
             self.state, want = self.search.want(now)
             if self.state == "stalled" or self.guard.blocked(None):
                 self.state, note = "stalled", "holding until the target moves"

@@ -466,14 +466,27 @@ def test_correction_continues_inside_start_band_then_stays_stopped(one_axis_foll
     assert len(motors.posts) == sent
 
 
-def test_missing_face_requires_three_fresh_consecutive_sightings(one_axis_follow):
+def test_a_brief_miss_keeps_the_sightings(one_axis_follow):
+    """One missed frame is detector noise, not a lost target: the earlier sighting still counts.
+    (Clearing on every miss made a real detector that drops every third frame never confirm a face.)"""
     follower, clock, motors, camera = one_axis_follow
     run_cycles(follower, clock, 1)
     camera.point[1] = -1.0
     run_cycles(follower, clock, 1)
     camera.point[1] = 1.0
+    run_cycles(follower, clock, 2)                    # 1 pre-miss + 2 fresh = 3 sightings inside LOST_S
+    assert len(motors.posts) == 1
+
+
+def test_missing_face_longer_than_the_lost_window_requires_three_fresh_sightings(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    run_cycles(follower, clock, 1)
+    camera.point[1] = -1.0
+    run_cycles(follower, clock, 1)
+    clock.sleep(F.TargetLock.LOST_S + 0.01)           # gone for longer than the lock window
+    camera.point[1] = 1.0
     run_cycles(follower, clock, 2)
-    assert motors.posts == []                         # the pre-loss sighting must not count
+    assert motors.posts == []                         # the pre-loss sighting has aged out
     run_cycles(follower, clock, 1)
     assert len(motors.posts) == 1
 
@@ -844,6 +857,7 @@ def test_phone_following_requires_three_fresh_sightings_after_loss(one_axis_foll
     if loss == "missing":
         camera.point[1] = -1.0
         run_cycles(follower, clock, 1)
+        clock.sleep(F.TargetLock.LOST_S + 0.01)       # missing for longer than the lock window
         camera.point[1] = 1.0
     else:
         clock.sleep(0.61)
@@ -866,7 +880,10 @@ def test_phone_tracker_drives_existing_controller_with_synthetic_frames_and_dry_
     assert follower.commands == 0 and motors.posts == []
     frame[:] = 0
     run_cycles(follower, clock, 1)
-    assert follower.sightings == [] and follower.aim_error is None
+    assert len(follower.sightings) == 3 and follower.aim_error is not None   # one blank frame is kept
+    clock.sleep(F.TargetLock.LOST_S + 0.01)
+    run_cycles(follower, clock, 1)
+    assert follower.sightings == [] and follower.aim_error is None           # gone past the window
 
 
 @pytest.mark.parametrize("slow_stage", ["receipt", "detector", "joints", "ik"])
