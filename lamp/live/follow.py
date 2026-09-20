@@ -487,7 +487,11 @@ class Search:
 
 class LivePoster:
     """Runs each POST on a worker thread so the perception loop never blocks on the network.
-    At most one command in flight, and at most one every `period` seconds."""
+    At most one request in flight, and at most one every `period` seconds. Each accepted submit
+    gets a sequence number (`seq` after submit()) and records its own completion time and success
+    in `outcome(seq)`, so a caller can judge every command against the time the runtime accepted
+    THAT command, several commands deep."""
+    KEEP = 16                                             # outcomes remembered behind the newest
 
     def __init__(self, post, period: float, clock=time.monotonic):
         self._post, self.period, self.clock = post, period, clock
@@ -495,6 +499,7 @@ class LivePoster:
         self._thread: threading.Thread | None = None
         self.last_sent, self.posts = float("-inf"), 0
         self.last_completed = float("-inf")
+        self.seq, self._outcomes = 0, {}                  # seq -> (completed at, ok)
         self.rtt_ms: float | None = None
         self._error: Exception | None = None
 
@@ -511,21 +516,33 @@ class LivePoster:
             if self._busy or (not force and now - self.last_sent < self.period):
                 return False
             self._busy, self.last_sent = True, now
-        self._thread = threading.Thread(target=self._run, args=(pose, duration_ms), daemon=True)
+            self.seq += 1
+            seq = self.seq
+        self._thread = threading.Thread(target=self._run, args=(seq, pose, duration_ms), daemon=True)
         self._thread.start()
         return True
 
-    def _run(self, pose: dict, duration_ms: int) -> None:
-        t0 = time.perf_counter()
+    def outcome(self, seq: int) -> tuple[float, bool] | None:
+        """(when the runtime answered, whether it accepted) for submit number `seq`, None while it
+        is still in flight (or was forgotten: older than KEEP submits ago)."""
+        with self._lock:
+            return self._outcomes.get(seq)
+
+    def _run(self, seq: int, pose: dict, duration_ms: int) -> None:
+        t0, ok = time.perf_counter(), False
         try:
             self._post(pose, duration_ms)
             self.posts += 1
+            ok = True
         except Exception as exc:                          # surfaced to the loop by take_error()
             self._error = exc
         finally:
             self.rtt_ms = (time.perf_counter() - t0) * 1000
             with self._lock:
                 self.last_completed = self.clock()
+                self._outcomes[seq] = (self.last_completed, ok)
+                for old in [k for k in self._outcomes if k <= seq - self.KEEP]:
+                    del self._outcomes[old]
                 self._busy = False
 
     def take_error(self) -> Exception | None:
@@ -567,6 +584,12 @@ class LiveLink:
 
 
 class LiveConfig:
+    """Steps go out at the `period` cadence (one every 0.25 s by default) without waiting for the
+    previous one to land: the runtime replaces an unfinished move with the next command, and each
+    step is planned from the pose measured when it is sent, so pipelining loses nothing. Landing is
+    judged per command, `land_settle` after the runtime accepted it (see LiveFollower._feed_guard),
+    which is what the stall guard samples."""
+
     def __init__(self, target: str = "face", deadband_deg: float = 4.0, prefer_distance: float = 0.45,
                  live_ms: int = 250, period: float = 0.25, step: float = 10.0, search: bool = True,
                  dry_run: bool = False, seconds: float = 0.0, land_settle: float | None = None):
@@ -584,6 +607,7 @@ class LiveFollower:
     clock, sleep) so the whole loop runs against fakes on a laptop."""
     FACE_STICKY_S = 5.0            # with --target auto: once a face is seen, faces only for this long
     SIGHTINGS = 3
+    PENDING_MAX = 8                # steps awaiting judgement (about four are in play at the period)
 
     def __init__(self, model: LampModel, link, frames, trackers, thermal, cfg: LiveConfig, *,
                  clock=time.monotonic, sleep=None, out=print, poster: LivePoster | None = None):
@@ -596,7 +620,7 @@ class LiveFollower:
         self.search: Search | None = None                 # made on the first measured pose
         self.sightings: list[tuple[float, np.ndarray, str]] = []
         self.history: list[tuple[float, dict]] = []
-        self.pending: list[tuple[float, dict, dict]] = []
+        self.pending: list[tuple[float, dict, dict, int, float]] = []   # (earliest judgement, before, commanded, seq, sent)
         self.face_hold_until, self.fresh_after, self.last_note = float("-inf"), float("-inf"), float("-inf")
         self.state = "holding"
         self.aim_error: float | None = None
@@ -640,16 +664,29 @@ class LiveFollower:
         return True
 
     def _feed_guard(self, now: float, measured: dict) -> None:
-        """Commands whose motion has had time to play: compare where the arm landed with what was asked."""
-        if not self.poster.ready(now):
-            return
-        # A slow request must not spend the landing allowance before the runtime accepts it.
-        completed = self.poster.last_completed + self.cfg.land_settle
-        due = [p for p in self.pending if now >= max(p[0], completed)]
-        self.pending = [p for p in self.pending if now < max(p[0], completed)]
-        for _, before, commanded in due:
+        """Commands whose motion has had time to play: compare where the arm landed with what was asked.
+        Several commands may be pending (they go out at the period, not one per landing); each one is
+        judged `land_settle` after the runtime accepted THAT command, so a slow request never spends
+        its landing allowance before it is accepted, and a refused or failed POST is not a sample.
+        The sample is the FARTHEST the arm got from where it was when the step was sent (the poses
+        read since, and the one read now): a later step that sent the arm back the other way (the
+        target moved) superseded the step, it did not obstruct it."""
+        due, waiting = [], []
+        for p in self.pending:
+            outcome = self.poster.outcome(p[3])
+            if outcome is None:                           # still in flight
+                waiting.append(p)
+                continue
+            completed, ok = outcome
+            if not ok:                                    # a failed POST is not a landed movement sample
+                continue
+            (due if now >= max(p[0], completed + self.cfg.land_settle) else waiting).append(p)
+        self.pending = waiting
+        for _, before, commanded, _, sent in due:
+            since = [h for stamp, h in self.history if stamp > sent] + [measured]
+            landed = max(since, key=lambda h: moved_units(h, before))
             tripped_before = self.guard.stalled
-            self.guard.record(before, commanded, measured, self.aim_error)
+            self.guard.record(before, commanded, landed, self.aim_error)
             if self.guard.stalled and not tripped_before:
                 self.out("stalled: something is in the way", flush=True)
                 self.stalled_noted = True
@@ -658,8 +695,6 @@ class LiveFollower:
 
     def _send(self, now: float, measured: dict, goal: dict) -> tuple[dict | None, str]:
         """Step from the measured pose toward `goal` and post it. Returns (step or None, note)."""
-        if self.pending:
-            return None, "waiting for the last step to land"
         step = step_towards(measured, goal, self.cfg.step, self.model)
         if moved_units(step, measured) < 0.05:
             return None, "hold"
@@ -670,7 +705,9 @@ class LiveFollower:
         if not self.poster.submit(step, self.cfg.live_ms):
             return None, "busy"
         self.commands += 1
-        self.pending.append((self.poster.last_sent + self.cfg.land_settle, dict(measured), dict(step)))
+        self.pending.append((self.poster.last_sent + self.cfg.land_settle, dict(measured), dict(step),
+                             self.poster.seq, self.poster.last_sent))
+        del self.pending[:-self.PENDING_MAX]
         return step, "sent"
 
     def _post_errors(self) -> None:
@@ -678,7 +715,7 @@ class LiveFollower:
         if exc is None:
             self.consecutive_refusals = self.post_failures = 0     # both counters mean "in a row"
             return
-        self.pending.clear()                            # a failed POST is not a landed movement sample
+        # (the failed POST's step is dropped by _feed_guard from its own outcome: not a landed sample)
         if isinstance(exc, LiveRefused):
             self.refusals += 1
             self.consecutive_refusals += 1
@@ -789,8 +826,8 @@ class LiveFollower:
                     self.state, note = "holding", "behind me: no reachable pose"
                 elif not self.correcting:
                     self.state, note = "tracking", "on target"
-                elif self.pending or not self.poster.ready(now):
-                    self.state, note = "tracking", "waiting for the last step"
+                elif not self.poster.ready(now):
+                    self.state, note = "tracking", "next step at the period"
                 else:
                     t1 = time.perf_counter()
                     goal, report = model.look_at(target, prefer_distance=cfg.prefer_distance)
@@ -816,10 +853,10 @@ class LiveFollower:
                 if not self.parked_noted:
                     self.out("no face for a minute: parked at neutral, still looking", flush=True)
                     self.parked_noted = True
-            elif not self.pending and self.poster.ready(now):
+            elif self.poster.ready(now):
                 step, note = self._send(now, measured, want)
             else:
-                note = "waiting for the last step"
+                note = "next step at the period"
 
         rtt = self.poster.rtt_ms
         aim = f"{self.aim_error:5.1f}" if self.aim_error is not None else "  -- "

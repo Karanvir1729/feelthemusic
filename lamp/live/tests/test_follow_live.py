@@ -410,15 +410,23 @@ def test_fake_motors_include_transport_latency_and_motion_duration():
     assert motors.positions()[0]["base_yaw"] == pytest.approx(5)
 
 
-def test_live_loop_waits_for_landing_before_another_correction(one_axis_follow):
+def test_live_loop_steps_at_the_period_and_judges_every_step_after_its_own_acceptance(one_axis_follow):
     follower, clock, motors, _ = one_axis_follow
+    judged, record = [], follower.guard.record
+    follower.guard.record = lambda *a: (judged.append(clock.t), record(*a))[1]
     run_cycles(follower, clock, 60)
     assert len(motors.posts) >= 3
-    assert motors.superseded == 0
-    assert all(b[0] - a[0] >= follower.cfg.land_settle - 1e-9
-               for a, b in zip(motors.posts, motors.posts[1:]))
+    # steps go out at the period (the deployed cadence), not one per landing: a later step planned
+    # from the measured pose replaces an unfinished move
+    gaps = [b[0] - a[0] for a, b in zip(motors.posts, motors.posts[1:])]
+    assert all(g >= follower.cfg.period - 1e-9 for g in gaps) and min(gaps) < follower.cfg.land_settle
+    assert motors.superseded >= 1
     assert follower.aim_error < follower.cfg.deadband_deg
-    assert not follower.guard.stalled and follower.fatal is None
+    assert not follower.guard.stalled and follower.guard.misses == 0 and follower.fatal is None
+    # ... and every step was judged, none before its own landing allowance had run
+    assert len(judged) == follower.commands and follower.pending == []
+    for (sent, _, _), when in zip(motors.posts, judged):
+        assert when >= sent + follower.cfg.land_settle - 1e-9
 
 
 def test_delivered_half_steps_do_not_false_stall_when_target_direction_changes(one_axis_follow):
@@ -427,10 +435,12 @@ def test_delivered_half_steps_do_not_false_stall_when_target_direction_changes(o
         camera.point[0] = 8.0 if index % 2 else -8.0
         run_cycles(follower, clock, 1)
     assert follower.commands >= 4
+    # a step sent back the other way supersedes the one before it (the target moved): the arm did
+    # move when asked, so that is not an obstruction, however far it ends up from where it started
+    assert motors.superseded >= 1
     assert not follower.guard.stalled
     assert follower.guard.misses == 0
     assert follower.settles == 0 and follower.fatal is None
-    assert motors.superseded == 0
 
 
 def test_deadband_noise_does_not_start_repeated_corrections(one_axis_follow):
@@ -446,12 +456,14 @@ def test_correction_continues_inside_start_band_then_stays_stopped(one_axis_foll
     follower, clock, motors, camera = one_axis_follow
     camera.point[0] = 10.0
     run_cycles(follower, clock, 20)
-    # First half-step leaves a 5-degree error: keep correcting until inside the 4-degree stop band.
-    assert len(motors.posts) == 2
-    assert motors.positions()[0]["base_yaw"] == pytest.approx(7.5)
-    camera.point[0] = 12.5                             # a new 5-degree error must not restart corrections
+    # Each half-step leaves an error: keep stepping (at the period) until inside the 4-degree stop band.
+    assert 2 <= len(motors.posts) <= 4
+    assert abs(motors.positions()[0]["base_yaw"] - 10.0) < follower.cfg.deadband_deg
+    assert motors.positions()[0]["base_yaw"] < 10.0 - 1.0           # short of the target: half steps
+    sent = len(motors.posts)
+    camera.point[0] = motors.positions()[0]["base_yaw"] + 5.0      # a new 5-degree error must not restart corrections
     run_cycles(follower, clock, 12)
-    assert len(motors.posts) == 2
+    assert len(motors.posts) == sent
 
 
 def test_missing_face_requires_three_fresh_consecutive_sightings(one_axis_follow):
@@ -591,6 +603,45 @@ def test_rejected_post_is_not_assessed_as_a_failed_landing(one_axis_follow):
     assert follower.guard.last == "" and follower.guard.misses == 0
     assert not follower.guard.stalled and follower.settles == 0
     assert motors.posts == [] and follower.poster.posts == 0
+
+
+def test_pipelined_steps_are_judged_by_their_own_post_and_a_failed_one_is_no_sample(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    camera.point[0] = 40.0                            # far off: several capped steps are needed
+    calls = []
+
+    def post(commanded, ms):
+        calls.append(clock.t)
+        if len(calls) == 2:
+            raise F.LiveRefused(422, "fixture refusal")         # the second step is refused ...
+        if len(calls) == 3:
+            clock.sleep(follower.cfg.land_settle + 0.2)         # ... and the third is accepted late
+        motors.post(commanded, ms)
+
+    follower.poster = F.LivePoster(post, follower.cfg.period, clock=clock)
+    judged, record = [], follower.guard.record
+    follower.guard.record = lambda *a: (judged.append((clock.t, a[1]["base_yaw"])), record(*a))[1]
+    while follower.commands < 3:
+        run_cycles(follower, clock, 1)
+    assert len(calls) == 3 and follower.refusals == 1 and follower.fatal is None
+    # the refused step left no sample; the two accepted ones are still pending, each with its own POST
+    seqs = [p[3] for p in follower.pending]
+    assert len(follower.pending) == 2 and seqs == [1, 3]
+    first, third = follower.poster.outcome(1), follower.poster.outcome(3)
+    assert follower.poster.outcome(2) == (pytest.approx(calls[1]), False)
+    assert first[1] and third[1] and third[0] - calls[2] > follower.cfg.land_settle
+    # the first is judged land_settle after ITS acceptance, not after the slow third one's
+    camera.point[1] = -1.0                            # no more steps while the pending ones are judged
+    clock.t = max(first[0], calls[0]) + follower.cfg.land_settle - 0.01
+    follower.cycle()
+    assert len(judged) == 0
+    clock.sleep(0.02)
+    follower.cycle()
+    assert len(judged) == 1 and [p[3] for p in follower.pending] == [3]
+    clock.t = third[0] + follower.cfg.land_settle + 0.01
+    follower.cycle()
+    assert len(judged) == 2 and follower.pending == []
+    assert follower.guard.misses == 0 and not follower.guard.stalled
 
 
 def test_throttled_object_detections_still_acquire_three_sightings(one_axis_follow):
