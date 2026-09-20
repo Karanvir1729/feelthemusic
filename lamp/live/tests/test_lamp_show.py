@@ -382,13 +382,20 @@ def test_parse_control_with_and_without_lamp_key():
                                 "lamp": {"mode": "dance", "lights": False, "gen": 7}}).encode()
     c = L.parse_control(new)
     assert c["lat"] == 280.0 and c["session"] == 4022250974
-    assert c["lamp"] == {"mode": "dance", "lights": False, "gen": 7, "bold": None, "track": None}
+    # The lamp key carries two more fields than it did: `speed` (the dance-speed dial) and `preset`
+    # (the dance picker, "wave" for the greeting). Both read None when the conductor does not send
+    # them, which is what keeps the current value -- so the three dicts below asserted exactly this
+    # contract before, minus the two keys, and the missing-means-keep rule is unchanged.
+    assert c["lamp"] == {"mode": "dance", "lights": False, "gen": 7, "bold": None, "speed": None,
+                         "preset": None, "track": None}
     bad = b"\x0d" + json.dumps({"lamp": {"mode": "spin", "gen": 1}}).encode()
-    assert L.parse_control(bad)["lamp"] == {"mode": None, "lights": None, "gen": 1, "bold": None, "track": None}
+    assert L.parse_control(bad)["lamp"] == {"mode": None, "lights": None, "gen": 1, "bold": None,
+                                            "speed": None, "preset": None, "track": None}
     assert L.parse_control(b"\x0d{not json") == {"lat": None, "session": None, "lamp": None}
     odd = b"\x0d" + json.dumps({"lat": "x", "session": "y", "lamp": {"mode": "light", "gen": "z"}}).encode()
     assert L.parse_control(odd) == {"lat": None, "session": None,
-                                    "lamp": {"mode": "light", "lights": None, "gen": 0, "bold": None, "track": None}}
+                                    "lamp": {"mode": "light", "lights": None, "gen": 0, "bold": None,
+                                             "speed": None, "preset": None, "track": None}}
     assert L.parse_control(b"\x0d[1,2]") == {"lat": None, "session": None, "lamp": None}
 
 
@@ -398,6 +405,23 @@ def test_parse_control_track_is_face_or_phone_and_missing_keeps_current():
     assert lamp_of(track="phone")["track"] == "phone" and lamp_of(track="face")["track"] == "face"
     assert lamp_of()["track"] is None                                # missing -> keep the current target
     assert lamp_of(track="hand")["track"] is None and lamp_of(track=3)["track"] is None and lamp_of(track=None)["track"] is None
+
+
+def test_parse_control_speed_and_preset_are_new_and_missing_keeps_current():
+    """The dance-speed dial and the dance picker, read the same way `bold` and `track` already were:
+    `speed` clamped to 0..1 (NaN and unreadable values never reach the dial), `preset` any non-blank
+    string the dashboard sends, and missing -> None, which Show.handle reads as "keep what you have"."""
+    def lamp_of(**kw):
+        return L.parse_control(b"\x0d" + json.dumps({"lamp": {"mode": "dance", "gen": 1, **kw}}).encode())["lamp"]
+    assert lamp_of(speed=0.45)["speed"] == 0.45 and lamp_of(speed=1)["speed"] == 1.0
+    assert lamp_of(speed=1.4)["speed"] == 1.0 and lamp_of(speed=-3)["speed"] == 0.0     # clamped, never refused
+    assert lamp_of(speed="0.5")["speed"] == 0.5                       # a string that parses is fine, as bold is
+    assert lamp_of(speed=float("nan"))["speed"] == 0.0                # NaN -> the calmest end, never a NaN
+    assert lamp_of(speed="x")["speed"] is None and lamp_of(speed=None)["speed"] is None
+    assert lamp_of()["speed"] is None                                 # missing -> keep the dial where it is
+    assert lamp_of(preset="wave")["preset"] == L.WAVE_PRESET and lamp_of(preset="auto")["preset"] == "auto"
+    assert lamp_of()["preset"] is None and lamp_of(preset="")["preset"] is None
+    assert lamp_of(preset="  ")["preset"] is None and lamp_of(preset=3)["preset"] is None
 
 
 def test_hello_contents_for_the_new_conductor():
@@ -486,6 +510,11 @@ def test_scheduler_plans_first_beat_it_can_make_and_then_the_boundary():
 
 
 def test_scheduler_posts_once_per_boundary_without_network():
+    # bold=1.0 because this test posts from the LIBRARY, and the library is only reached at
+    # gen_bold() >= LIBRARY_BOLD_FLOOR now (0.85): its clips are fixed bold-1.0 CSVs, so below the
+    # floor the scheduler sits the clip out rather than answer "small moves" with a full-size dance
+    # (ClipScheduler.tick). At the default bold 0.6 this test posted nothing at all. Nothing about the
+    # timing it asserts depends on the slider -- only on WHICH beat a post goes out on.
     import time as _t
     posts = []
     tr = L.BeatTracker()
@@ -493,7 +522,7 @@ def test_scheduler_posts_once_per_boundary_without_network():
     for k in ks: tr.feed(k)
     s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
                                status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                               start_latency_ns=350_000_000, log=lambda *_: None))
+                               start_latency_ns=350_000_000, log=lambda *_: None, bold=1.0))
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
     s.tick(post_at - 1_000, True, tr, 0.3)
@@ -677,6 +706,10 @@ def test_leaving_dance_with_a_post_in_flight_still_homes_exactly_once(monkeypatc
         return {"status": "started"}
     s.post_fn, s.status_fn = slow_post, (lambda: {"current_animation": posts[-1], "playing": True, "elapsed_seconds": 0.0})
     s.log = lambda *_: None
+    s.set_bold(1.0)          # the clip in flight comes from the library, which needs gen_bold() >=
+                             # LIBRARY_BOLD_FLOOR (0.85); at the Show's default 0.6 nothing is posted
+                             # and there is no in-flight post to home behind. The homing this test is
+                             # about is unchanged.
     show.mode = "dance"
     tr = show.tracker
     ks = kicks(120, 16, t0=L.time.monotonic_ns() - 7_000_000_000)
@@ -825,6 +858,10 @@ def test_the_tier_surprises_a_quarter_of_the_time_and_never_onto_drop_or_build()
 
 
 def test_scheduler_posts_build_during_a_build_then_drop_then_rotates(monkeypatch):
+    # bold=1.0 throughout: these are library posts, and the library is only used at
+    # gen_bold() >= LIBRARY_BOLD_FLOOR (0.85). At the default 0.6 every clip here is sat out and the
+    # test sees no posts at all. Which TIER is chosen, and when, is what this test is about and is
+    # untouched by the slider.
     import time as _t
     posts = []
     tr = L.BeatTracker()
@@ -832,7 +869,8 @@ def test_scheduler_posts_build_during_a_build_then_drop_then_rotates(monkeypatch
     for k in ks: tr.feed(k)
     s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
                                status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                               start_latency_ns=350_000_000, log=lambda *_: None, manifest=manifest_v2(bpms=(120,))))
+                               start_latency_ns=350_000_000, log=lambda *_: None, bold=1.0,
+                               manifest=manifest_v2(bpms=(120,))))
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
     s.note_build(now, 6000)                                    # a 6 s BUILD spans the next clip
@@ -860,7 +898,7 @@ def test_scheduler_posts_build_during_a_build_then_drop_then_rotates(monkeypatch
     # an expired build is ignored, and a build with no build clips in the library falls back by excite
     s.note_build(t3 - 10_000_000_000, 1000)
     s2 = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {},
-                                start_latency_ns=350_000_000, log=lambda *_: None,
+                                start_latency_ns=350_000_000, log=lambda *_: None, bold=1.0,
                                 manifest=manifest_v2(tiers=("groove", "hype"), bpms=(120,))))
     s2.note_build(now, 6000)
     s2.tick(post_at + 2_000_000, True, tr, 0.8)
@@ -878,8 +916,10 @@ def test_build_needs_to_outlast_half_the_clip(monkeypatch):
     ks = kicks(120, 16)
     for k in ks: tr.feed(k)
     def fresh():
+        # bold=1.0: library posts, and the library is only reached at gen_bold() >= LIBRARY_BOLD_FLOOR
+        # (0.85). At the default 0.6 every tick below sits the clip out and posts stays empty.
         return steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"}, status=lambda: {},
-                                      start_latency_ns=350_000_000, log=lambda *_: None,
+                                      start_latency_ns=350_000_000, log=lambda *_: None, bold=1.0,
                                       manifest=manifest_v2(bpms=(120,))))
     now = ks[-1]
     s = fresh()
@@ -979,6 +1019,26 @@ def test_show_bold_from_cli_and_control(monkeypatch, capsys):
     assert not s.set_bold(0.851)                                          # two decimals, as the conductor sends it
 
 
+def test_show_dance_speed_from_control(monkeypatch, capsys):
+    """Control lamp.speed, the dance-speed dial: the operator's only way to calm a fast song from the
+    dashboard. Read exactly as `bold` is -- clamped to 0..1, two decimals, logged on change, and a
+    Control without the key keeps the dial where it is."""
+    show = bare_show(monkeypatch, [])
+    s = show.scheduler
+    assert s.speed == 1.0                                # 1.0 is the tempo's own budget: the dial off
+    show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "light", "gen": 1, "speed": 0.45}}).encode(), 0.0)
+    assert s.speed == 0.45 and "dance speed 1.00 -> 0.45" in capsys.readouterr().out
+    show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "light", "gen": 1}}).encode(), 0.0)
+    assert s.speed == 0.45                                                # missing: unchanged, nothing logged
+    assert "dance speed" not in capsys.readouterr().out
+    show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "light", "gen": 1, "speed": 9}}).encode(), 0.0)
+    assert s.speed == 1.0                                                 # clamped, never refused
+    show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "light", "gen": 1, "speed": 0}}).encode(), 0.0)
+    assert s.speed == 0.0                                                 # the calmest the arm goes
+    assert s.set_speed(0.45) and not s.set_speed(0.451)                   # two decimals, as the conductor sends it
+    assert s.speed == 0.45
+
+
 def test_the_moves_grow_with_the_bass_under_the_operators_ceiling():
     """v4.4: the clip is generated at gen_bold(), not at the slider. The operator's "Bolder moves"
     stays the CEILING and the bass rides underneath it -- a quiet passage plays at BASS_FLOOR of the
@@ -1053,26 +1113,86 @@ def test_the_show_feeds_the_panels_own_bass_to_the_dance_and_silence_floors_it(m
     assert s.bass == 0.0 and s.gen_bold() == pytest.approx(round(s.bold * L.BASS_FLOOR, 2), abs=0.011)
 
 
-def test_next_letter_and_pick_obey_the_same_never_the_last_one_rule():
+def test_next_letter_and_pick_obey_the_same_never_the_last_one_rule(tmp_path):
     """next_letter() is what prepare() asks the live generator to build; pick() is what the library
-    posts. They follow the same rule -- one of the tier's variants, never the one it just played --
-    but in v4.4 each is its own DRAW, so next_letter() no longer predicts pick() the way it did while
-    the variants rotated a -> b -> c. That the two disagree is not free: see
-    test_preparing_the_same_clip_twice_does_not_regenerate_it, which is red over it."""
+    posts; take_live() posts the generated clip. One rule for all three -- one of the tier's variants,
+    never the one it just played -- and, since the latch, ONE DRAW per post: next_letter() draws once
+    and holds the letter in scheduler.pending[tier] until played() spends it (from take_live when the
+    live clip goes out, from pick when the library's does; pick honours the held letter when the lamp
+    has that variant, else draws). So next_letter() really is the preview of what gets posted.
+
+    In v4.4 every call was its own draw. The sixty calls below then came back as all three letters,
+    pick() agreed with next_letter() only by coin toss, and prepare() -- which calls next_letter()
+    on every ~3 ms loop pass -- asked the generator for a different variant over and over: 33 builds
+    for ONE posted clip (the measurement is in test_preparing_the_same_clip_twice_does_not_regenerate_it,
+    which counts the builds). This test names them: the build is the held letter, the post is the held
+    letter, and the letter after it is another one."""
     s = L.ClipScheduler(post=lambda n: {}, status=lambda: {}, manifest=manifest_v2(bpms=(120,)))
     s.rng = random.Random(11)
-    assert {s.next_letter("groove") for _ in range(60)} == {"a", "b", "c"}     # nothing played yet: all three
-    s.last_variant["groove"] = "c"
-    assert {s.next_letter("groove") for _ in range(60)} == {"a", "b"}          # never the one just played
-    s.last_variant["hype"] = "a"
-    assert {s.next_letter("hype") for _ in range(60)} == {"b", "c"}
+    # (1) one draw per upcoming post: sixty calls, one letter. Was == {"a", "b", "c"} (a draw each
+    # call), which is exactly the churn the latch exists to stop.
+    first = s.next_letter("groove")
+    assert first in ("a", "b", "c")                                            # nothing played yet: any of the three
+    assert {s.next_letter("groove") for _ in range(60)} == {first} and s.pending == {"groove": first}
+    # each tier holds its own letter, and drawing one does not disturb the other's
+    hype = s.next_letter("hype")
+    assert {s.next_letter("hype") for _ in range(60)} == {hype} and s.next_letter("groove") == first
     assert s.next_letter("waltz") in ("a", "b", "c")                           # a tier never played: free choice
-    # pick() commits what it chose, and the next draw of either function excludes it
-    s.last_variant.clear()
+    # (2) + (3) pick() posts the letter next_letter() promised (was: two independent draws), and the
+    # post spends the latch: the tier remembers the letter as its last, the next draw is a different
+    # one, and that draw is held in its turn
+    s.pending.clear(); s.last_variant.clear()
     for _ in range(30):
+        promised = s.next_letter("groove")
         played = s.pick("groove", 120).rsplit("_", 1)[1]
-        assert s.last_variant["groove"] == played
-        assert s.next_letter("groove") != played
+        assert played == promised
+        assert s.last_variant["groove"] == played and "groove" not in s.pending
+        nxt = s.next_letter("groove")
+        assert nxt != played and s.pending["groove"] == nxt
+    # across posts the rule is still v4.4's: after a c the fresh draw is a or b, and both come up (these
+    # were the {"a", "b"} / {"b", "c"} checks over sixty free draws; now each draw is one spent latch)
+    after_c, after_a = set(), set()
+    for _ in range(60):
+        s.played("groove", "c"); after_c.add(s.next_letter("groove"))
+        s.played("hype", "a"); after_a.add(s.next_letter("hype"))
+    assert after_c == {"a", "b"} and after_a == {"b", "c"}
+    # when the lamp lacks the promised variant, pick() draws from what it has -- never the last one --
+    # and the latch is spent all the same, so prepare() does not go on building a clip nobody posts
+    s.pending.clear(); s.last_variant["groove"] = "a"
+    promised = s.next_letter("groove")                                         # b or c: never the a just played
+    s.available = {f"beat_groove_120_{l}" for l in "abc" if l != promised} | {"beat_groove_120"}
+    got = s.pick("groove", 120).rsplit("_", 1)[1]
+    assert got == ({"b", "c"} - {promised}).pop() and "groove" not in s.pending
+    s.available = None
+    # (4) through prepare() with the stand-in generator: forty loop passes ask for ONE clip, and it is
+    # the held letter; take_live() posts it and spends the latch, so the next post's build is another
+    # letter -- two posts, two builds, where the same forty passes used to cost tens of builds each
+    import time as _t
+    calls = []
+    lv, pack = live_for(tmp_path, calls)
+    s = L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
+                        manifest=manifest_v2(bpms=(128,)), live=lv)
+    s.rng = random.Random(11)
+    now = L.time.monotonic_ns()
+    post_at = now + 5_000_000_000
+    held = s.next_letter("groove")
+    for _ in range(40):
+        s.prepare("groove", 128.0, post_at, now)
+        _t.sleep(0.002)
+    assert wait_for(lambda: lv.peek() is not None, 3.0) and wait_for(lambda: lv.busy is None and lv.wanted is None, 3.0)
+    _t.sleep(0.05)
+    assert [c[1] for c in calls] == [held], calls                              # one build, of the held letter
+    assert s.next_letter("groove") == held and lv.peek().variant == held      # still held while the clip waits
+    r = s.take_live("groove", 128.0)
+    assert r is not None and r.variant == held
+    assert s.last_variant["groove"] == held and "groove" not in s.pending    # posting spent the latch
+    assert s.next_letter("groove") != held
+    for _ in range(40):
+        s.prepare("groove", 128.0, post_at, now)
+        _t.sleep(0.002)
+    assert wait_for(lambda: lv.peek() is not None, 3.0) and wait_for(lambda: lv.busy is None and lv.wanted is None, 3.0)
+    _t.sleep(0.05)
+    assert [c[1] for c in calls] == [held, s.pending["groove"]] and calls[1][1] != held
 
 
 def fake_make(calls=None, ok=True, frames=149):
@@ -1161,9 +1281,13 @@ def test_live_generation_failure_falls_back_to_library_and_disables_for_60s(tmp_
     tr = L.BeatTracker()
     ks = kicks(120, 16)
     for k in ks: tr.feed(k)
+    # bold=1.0: the fallback this test is named for is the LIBRARY, and the library only stands in for
+    # a dead generator while gen_bold() >= LIBRARY_BOLD_FLOOR (0.85) -- its clips are fixed bold-1.0
+    # CSVs. Below the floor the dance sits the clip out instead, which is the other half of the same
+    # rule and has its own test below. At the default bold 0.6 this test saw no library post at all.
     s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
                                status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True, "elapsed_seconds": 0.0},
-                               start_latency_ns=350_000_000, log=lambda *_: None,
+                               start_latency_ns=350_000_000, log=lambda *_: None, bold=1.0,
                                manifest=manifest_v2(bpms=(120,)), live=lv))
     now = ks[-1]
     post_at, beat, period = s.plan(now, tr)
@@ -1197,6 +1321,77 @@ def test_live_generation_failure_falls_back_to_library_and_disables_for_60s(tmp_
     lv4.LIST_NS = 100_000_000
     lv4.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9)
     assert wait_for(lambda: lv4.failed == 1, 3.0) and lv4.peek() is None and "not listed" in logs[-1]
+
+
+def test_below_the_library_bold_floor_the_dance_sits_the_clip_out():
+    """The other half of the library-fallback rule, and the reason the tests above ask for bold 1.0.
+
+    The library is a set of fixed bold-1.0 CSVs the runtime plays as written, so standing one in for a
+    live clip the operator asked to be SMALL answers "small moves" with a full-size dance -- the "the
+    slider does nothing" the operator reported. With the SLIDER below LIBRARY_BOLD_FLOOR the scheduler
+    therefore skips that clip: it still counts the refusal and still moves the boundary on, so the grid
+    does not slip and the next clip is planned exactly where it would have been.
+
+    The test is the SLIDER and not gen_bold(), which was the rule until 2026-09-20 and was a live-demo
+    hazard. gen_bold() is the slider times the bass, so it dips on every quiet passage -- 0.55 at a
+    slider of 1.0 with no bass, and the default slider of 0.6 is under the floor at any bass. Judging on
+    it meant the library was almost never allowed to stand in, and skipping is only defensible while the
+    generator is healthy and the next clip really is coming. When it is not -- no pool, a pack dir
+    missing for the whole run, or the 60 s disable after a failure -- the choice is not "wrong size now
+    or right size in a moment", it is "wrong size or an arm that never moves again this song", so the
+    library goes out. The bass still decides how big a LIVE clip is; it no longer decides whether the
+    lamp moves at all."""
+    from types import SimpleNamespace
+    posts = []
+    tr = L.BeatTracker()
+    ks = kicks(120, 16)
+    for k in ks: tr.feed(k)
+    assert L.DEFAULT_BOLD < L.LIBRARY_BOLD_FLOOR <= 1.0       # the default slider is BELOW the floor
+    def fresh(bold, live="healthy"):
+        """`live`: a HEALTHY generator stand-in (nothing ready this instant, but coming), a dead one, or
+        None for no pool at all. The skip is a bet that the next clip is on its way, so it only applies
+        to the healthy case -- the other two must fall back to the library rather than leave the arm
+        still, which is the 2026-09-20 fix this test pins."""
+        s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                                   status=lambda: {"current_animation": posts[-1] if posts else "",
+                                                   "playing": True, "elapsed_seconds": 0.0},
+                                   start_latency_ns=350_000_000, log=lambda *_: None, bold=bold))
+        if live == "healthy":
+            s.live = SimpleNamespace(usable=lambda *_a, **_k: True, take=lambda *_a, **_k: None,
+                                     covers=lambda *_a, **_k: True, PREP_NS=400_000_000)
+        elif live == "dead":
+            s.live = SimpleNamespace(usable=lambda *_a, **_k: False, take=lambda *_a, **_k: None,
+                                     covers=lambda *_a, **_k: True, PREP_NS=400_000_000)
+        return s
+    now = ks[-1]
+    # just under the floor: nothing is posted, but the clip's slot is still accounted for
+    s = fresh(L.LIBRARY_BOLD_FLOOR - 0.01)
+    post_at, beat, period = s.plan(now, tr)
+    assert s.gen_bold() < L.LIBRARY_BOLD_FLOOR                # full bass: gen_bold is the slider itself
+    s.tick(post_at + 2_000_000, True, tr, 0.3)
+    wait_for(lambda: s.refused == 1)
+    assert posts == [] and s.moves == 0 and s.refused == 1
+    assert s.boundary_ns == beat + L.CLIP_BEATS * period      # the grid carries on regardless
+    # at the floor: the library is close enough to what was asked for and the clip goes out
+    s2 = fresh(L.LIBRARY_BOLD_FLOOR)
+    post_at2, beat2, period2 = s2.plan(now, tr)
+    s2.tick(post_at2 + 2_000_000, True, tr, 0.3)
+    assert wait_for(lambda: posts == ["beat_groove_120"]) and s2.refused == 0
+    # A quiet passage drags gen_bold() under the floor even at a slider of 1.0. That must NOT sit the
+    # clip out: the operator asked for big moves and the bass is only shaping them, so the library still
+    # goes out. This is the 2026-09-20 fix; the old rule read gen_bold() here and left the arm still.
+    s3 = fresh(1.0)
+    s3.set_bass(0.0)
+    assert s3.gen_bold() < L.LIBRARY_BOLD_FLOOR < s3.bold     # the bass alone would have blocked it
+    post_at3, _, _ = s3.plan(now, tr)
+    s3.tick(post_at3 + 2_000_000, True, tr, 0.3)
+    assert wait_for(lambda: len(posts) == 2) and s3.refused == 0
+    # And with the slider genuinely low, a DEAD generator still gets the library rather than a still arm:
+    # the skip is only ever a bet that the next clip is coming, and a dead pool is not coming.
+    s4 = fresh(L.LIBRARY_BOLD_FLOOR - 0.01, live="dead")
+    post_at4, _, _ = s4.plan(now, tr)
+    s4.tick(post_at4 + 2_000_000, True, tr, 0.3)
+    assert wait_for(lambda: len(posts) == 3) and s4.refused == 0
 
 
 def test_scheduler_posts_live_clips_with_the_library_timing(tmp_path):
@@ -1277,9 +1472,10 @@ def test_prepare_does_not_chase_the_pll_wobble(tmp_path):
     times per clip. A ready clip within the scheduler's take-time band (LIVE_BPM_TOL) is the right clip:
     no regeneration (a worker job, a CSV write with fsync and a listing poll each), until a real re-lock.
 
-    The dice are held still here so the BPM BAND is what is under test. The variant re-draw does cause
-    a regeneration of its own, and that is a production bug rather than a fact about the band -- it has
-    its own (red) test, test_preparing_the_same_clip_twice_does_not_regenerate_it, right below."""
+    The dice are held still here so the BPM BAND is what is under test. The variant draw used to cause
+    a regeneration of its own -- a production bug, since fixed by latching the draw, rather than a fact
+    about the band -- and that has its own test, test_preparing_the_same_clip_twice_does_not_regenerate_it,
+    right below."""
     import time as _t
     calls = []
     lv, pack = live_for(tmp_path, calls)
@@ -1303,26 +1499,28 @@ def test_prepare_does_not_chase_the_pll_wobble(tmp_path):
 
 
 def test_preparing_the_same_clip_twice_does_not_regenerate_it(tmp_path):
-    """RED ON PURPOSE. This is a live bug in ClipScheduler.prepare(), not a stale test -- do not pin
-    the rng here to make it pass, and do not delete it. It goes green on its own once the scheduler
-    latches the variant it decided on.
+    """One posted clip costs ONE generation. This was red from the day it was written until the
+    scheduler latched its draw -- it is the test that found the regeneration storm -- and it stays as
+    the guard against it coming back. Do not pin the rng here: Steady's choice() answers the same
+    letter every pass, so a pinned version passed over the old code too and would see nothing.
 
     prepare() runs on EVERY pass of the show loop (~3 ms) for the whole window before a post, and it
-    opens with `letter = self.next_letter(tier)` -- a fresh random draw each time. LiveClips.covers()
-    then compares that letter with what is ready / being made / queued, so roughly two passes in three
-    disagree with the clip already in hand and ask the generator for a different variant instead. The
-    design says one posted clip costs one generation; LIVE_BPM_TOL's own comment spells it out: "only
-    a bold/tier/variant change (or a real tempo re-lock) costs a worker job, a CSV write and a listing
-    check."
+    opens with `letter = self.next_letter(tier)`. Until the latch that was a fresh random draw each
+    time; LiveClips.covers() then compared that letter with what was ready / being made / queued, so
+    roughly two passes in three disagreed with the clip already in hand and asked the generator for a
+    different variant instead. The design says one posted clip costs one generation; LIVE_BPM_TOL's
+    own comment spells it out: "only a bold/tier/variant change (or a real tempo re-lock) costs a
+    worker job, a CSV write and a listing check."
 
     MEASURED on this Mac with a 100 ms stand-in generator over one 4 s window at 120 bpm: 872 loop
     passes produced 33 generations for the single clip that gets posted. On the Pi 5 that is 33 numpy
     clip builds, 33 CSV writes with fsync into the runtime's animation pack and 33 listing polls,
     back to back, against the 50 fps panel thread and the audio decode -- for one clip.
 
-    The fix belongs in prepare(), not here: choose the letter once per upcoming post (latch it beside
-    last_variant, clear it when the clip is taken), and next_letter() becomes the preview its
-    docstring still claims it is."""
+    The fix is in the scheduler, not here: next_letter() draws once per upcoming post and holds the
+    letter in scheduler.pending[tier] until played() spends it (from take_live and pick), so the forty
+    passes below ask for one clip. test_next_letter_and_pick_obey_the_same_never_the_last_one_rule
+    pins the rest of that contract: the build, the post and the letter after it."""
     import time as _t
     calls = []
     lv, pack = live_for(tmp_path, calls)
@@ -1360,7 +1558,13 @@ def test_live_clip_end_to_end_with_the_real_generator(tmp_path):
     rows = [tuple(float(x) for x in l.split(",")[1:]) for l in lines[1:]]
     ok, report = bc.validate_rows(rows, bc.Validator(ROBOTDESC))
     assert ok, report
-    assert r.meta["multiplier"] == pytest.approx(0.87)
+    # Was 0.87 = 0.35 + 0.65 * 0.8, the multiplier at the old BOLD_MIN of 0.35. beat_clips dropped
+    # BOLD_MIN to 0.10 because the slider's whole bottom half did almost nothing visible (bold 0.05
+    # still travelled 38 % of full), so bold 0.8 is now 0.10 + 0.90 * 0.8. The clip is still generated,
+    # validated and written the same way; only how far the arm travels for a given slider changed.
+    assert bc.BOLD_MIN == 0.10
+    assert r.meta["multiplier"] == pytest.approx(0.82)
+    assert r.meta["multiplier"] == pytest.approx(bc.BOLD_MIN + (1 - bc.BOLD_MIN) * 0.8)
 
 
 def test_beat_tracker_locks_on_a_syncopated_kick_pattern():
@@ -1730,7 +1934,7 @@ def test_dance_watches_with_a_dry_run_follower_and_never_a_commanding_one(monkey
 def test_a_facing_change_regenerates_the_prepared_clip(tmp_path):
     """The facing is part of what makes a clip the right clip, like bold: the scheduler hands it to the
     generator, and a clip prepared at the old facing no longer covers the request. The dice are held
-    still so the FACING is what decides here (the variant re-draw's own regeneration is the red test
+    still so the FACING is what decides here (that the variant draw no longer regenerates on its own is
     test_preparing_the_same_clip_twice_does_not_regenerate_it, above)."""
     made = []
 
@@ -1796,18 +2000,101 @@ def test_an_older_beat_clips_without_the_facing_parameter_still_dances(tmp_path)
     assert L.LiveClips._takes_facing(max) is False                         # not introspectable: the old shape
 
 
+def test_a_speed_change_regenerates_the_prepared_clip(tmp_path):
+    """The dance-speed dial is part of what makes a clip the right clip, exactly as bold and facing
+    are: the scheduler hands it to the generator (prepare -> covers/request) and a clip prepared at the
+    old dial no longer covers the request, so it is rebuilt. The dice are held still so the DIAL is
+    what decides here."""
+    import time as _t
+    made = []
+
+    def make(tier, variant, bpm, bold, gains=None, model=None, facing=0.0, speed=1.0):
+        made.append((tier, variant, bold, facing, speed))
+        return [(0.0, -49.0, -22.0, 0.0, 30.0)] * 149, {"ok": True, "reasons": []}
+
+    lv, pack = live_for(tmp_path, make_fn=make)
+    s = steady(L.ClipScheduler(post=lambda n: {"status": "started"}, status=lambda: {}, log=lambda *_: None,
+                               manifest=manifest_v2(bpms=(128,)), live=lv))
+    now = L.time.monotonic_ns()
+    post_at = now + 5_000_000_000
+    assert s.speed == 1.0                                           # the dial starts at the tempo's own budget
+    s.prepare("groove", 128.0, post_at, now)
+    assert wait_for(lambda: lv.peek() is not None, 3.0) and made == [("groove", "a", 0.6, 0.0, 1.0)]
+    s.prepare("groove", 128.0, post_at, now); _t.sleep(0.05)        # covered: no second request
+    assert len(made) == 1
+    assert s.set_speed(0.45) and s.speed == 0.45
+    s.prepare("groove", 128.0, post_at, now)
+    assert wait_for(lambda: lv.peek() is not None and lv.peek().speed == 0.45, 3.0)
+    assert made[-1] == ("groove", "a", 0.6, 0.0, 0.45) and len(made) == 2
+    s.prepare("groove", 128.0, post_at, now); _t.sleep(0.05)        # covered again at the new dial
+    assert len(made) == 2
+    # the clip carries the dial it was built at, so covers() tells the two apart
+    assert lv.covers("groove", "a", 128.0, 0.6, 0.0, 0.45)
+    assert not lv.covers("groove", "a", 128.0, 0.6, 0.0, 1.0)
+    assert not s.set_speed(0.45)                                    # unchanged: nothing made, nothing logged
+    assert s.set_speed(7) and s.speed == 1.0                        # clamped to the dial's range
+    assert s.set_speed(-1) and s.speed == 0.0
+
+
+def test_an_older_beat_clips_without_the_speed_parameter_still_dances(tmp_path):
+    """As with `facing`: the lamp may be running a generator whose make_clip predates the speed dial.
+    The signature is probed once, at the first generation, and the dance then plays at the tempo's own
+    budget -- the dial simply does nothing -- instead of failing every clip with a TypeError and
+    disabling the generator for a minute in the middle of a show."""
+    logs, seen = [], []
+
+    def old_make(tier, variant, bpm, bold, gains=None, model=None, facing=0.0):     # no `speed`
+        seen.append((tier, variant, bold, facing))
+        return [(0.0, -49.0, -22.0, 0.0, 30.0)] * 149, {"ok": True, "reasons": []}
+
+    lv, pack = live_for(tmp_path, log=logs.append, make_fn=old_make)
+    lv.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9, facing=0.0, speed=0.3)
+    assert wait_for(lambda: lv.peek() is not None, 3.0), logs
+    assert lv.takes_speed is False and seen == [("groove", "a", 0.6, 0.0)]
+    assert lv.failed == lv.disables == 0
+    assert sum("no `speed`" in l for l in logs) == 1                       # probed once, said once
+    lv.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9, facing=0.0, speed=0.8)
+    assert wait_for(lambda: lv.generated == 2, 3.0)
+    assert sum("no `speed`" in l for l in logs) == 1
+    # the clip still carries the dial it was ASKED for, so covers() recognises the same request again
+    assert lv.peek().speed == 0.8 and lv.covers("groove", "a", 120.0, 0.6, 0.0, 0.8)
+    assert not lv.covers("groove", "a", 120.0, 0.6, 0.0, 0.3)
+
+    def new_make(tier, variant, bpm, bold, gains=None, model=None, facing=0.0, speed=1.0):
+        seen.append(("speed", speed))
+        return [(0.0, -49.0, -22.0, 0.0, 30.0)] * 149, {"ok": True, "reasons": []}
+
+    lv2, _ = live_for(tmp_path / "b", log=logs.append, make_fn=new_make)
+    lv2.request("groove", "a", 120.0, 0.6, L.time.monotonic_ns() + 10**9, speed=0.62)
+    assert wait_for(lambda: lv2.peek() is not None, 3.0), logs
+    assert lv2.takes_speed is True and seen[-1] == ("speed", 0.62)
+    assert sum("no `speed`" in l for l in logs) == 1                       # nothing said about the new one
+    assert L.LiveClips._takes_kwarg(lambda *a, **kw: None, "speed") is True   # **kwargs is taken at its word
+    assert L.LiveClips._takes_kwarg(max, "speed") is False                   # not introspectable: the old shape
+
+
 # ---- v4.3: the dance never stops ---------------------------------------------------------------------
 def free_scheduler(posts):
-    """A scheduler with no library and no manifest, so pick() names the bucket it wants."""
+    """A scheduler with no library and no manifest, so pick() names the bucket it wants. bold=1.0
+    because these tests post from the library and the library is only reached at gen_bold() >=
+    LIBRARY_BOLD_FLOOR (0.85); at the default 0.6 the scheduler sits every clip out and the timing
+    assertions below never get a post to check. The slider does not touch the timing."""
     return L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
                            status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True,
                                            "elapsed_seconds": 0.0},
-                           start_latency_ns=350_000_000, log=lambda *_: None)
+                           start_latency_ns=350_000_000, log=lambda *_: None, bold=1.0)
 
 
-def test_dance_free_runs_clip_after_clip_with_no_music_and_no_lock():
-    """No kicks have ever arrived, so the tracker has no period and no lock. Dance mode still posts one
-    clip after another, on a grid of the scheduler's own, with the same timing the locked path uses."""
+def test_dance_free_runs_clip_after_clip_with_no_lock_while_the_music_plays():
+    """No kicks have ever arrived, so the tracker has no period and no lock. While the dance is ACTIVE
+    the scheduler still posts one clip after another, on a grid of its own, with the same timing the
+    locked path uses.
+
+    This used to be "with no music and no lock", from the stretch when the dance free-ran in silence.
+    It no longer does: Show.schedule passes `self.music` as this `active` flag, so silence stops the
+    dance (test_dance_posts_without_a_lock_or_a_conductor_clock_but_stops_with_the_music pins that).
+    What survived, and is what this test is for, is that the BEAT LOCK is still not a gate -- music
+    whose beat cannot be read dances anyway, free-running at FREE_RUN_BPM on the lamp's own clock."""
     posts = []
     tr, s = L.BeatTracker(), free_scheduler(posts)
     now = 10_000_000_000
@@ -1832,6 +2119,17 @@ def test_dance_free_runs_clip_after_clip_with_no_music_and_no_lock():
     # the grid is one continuous one: every clip starts a whole number of beats after the first
     assert (s.free_grid_ns is not None and s.free_bpm == L.FREE_RUN_BPM
             and (s.boundary_ns - s.free_grid_ns) % free_period == 0)
+    # ... and the gate the free-running grid sits behind: told the music has stopped (Show.schedule
+    # passes `self.music` as this flag), the same scheduler homes ONCE and then posts nothing, however
+    # far the clock runs on. Free-running is about the missing beat lock, never about silence.
+    import time as _t
+    s.tick(now, False, tr, 0.3)
+    assert wait_for(lambda: posts[-1] == "home") and len(posts) == 5
+    assert s.boundary_ns is None and s.playing is False
+    for i in range(3):
+        s.tick(now + (i + 1) * 5_000_000_000, False, tr, 0.3)
+    _t.sleep(0.05)
+    assert len(posts) == 5 and s.moves == 4
 
 
 def test_the_free_tempo_is_the_last_one_that_locked_then_a_beat_is_rejoined_at_the_clip_boundary():
@@ -1895,6 +2193,9 @@ def test_dance_posts_without_a_lock_or_a_conductor_clock_but_stops_with_the_musi
     show = bare_show(monkeypatch, posts, mode="light", library=("beat_groove_128", "home"))
     s = steady(show.scheduler)
     s.log = lambda *_: None
+    s.set_bold(1.0)          # the clip comes from the library, which is only used at gen_bold() >=
+                             # LIBRARY_BOLD_FLOOR (0.85); at the Show's default 0.6 the dance sits every
+                             # clip out and there is no post here to tell from the music being off
     show.mode = "dance"                                        # straight in: the home hold has its own test
     show.music, show.offset_ns = True, None                    # music playing, nothing from the conductor yet
     assert show.tracker.locked(L.time.monotonic_ns()) is False  # ... and no beat it could lock on to
@@ -1916,6 +2217,73 @@ def test_dance_posts_without_a_lock_or_a_conductor_clock_but_stops_with_the_musi
         show.schedule(L.time.monotonic_ns() + 5_000_000_000)
     _t.sleep(0.05)
     assert len(posts) == 2                                     # nothing more was posted
+
+
+def test_the_wave_preset_repeats_the_greeting_and_never_runs_the_beat_scheduler(monkeypatch):
+    """The dashboard's dance picker on "wave": the lamp repeats the greeting clip instead of dancing,
+    and the beat scheduler is never asked to tick at all. Music is NOT a gate here -- a wave is a wave
+    in a silent room -- but dance mode still is, so the arm is as still as ever in light, follow and
+    off. The repeat waits out the clip's own length plus WAVE_GAP for the runtime's start latency,
+    because schedule() runs every few ms and would otherwise restart the clip on top of itself."""
+    import time as _t
+    posts, ticks = [], []
+    show = bare_show(monkeypatch, posts, mode="light", library=(L.WAVE_CLIP, "beat_groove_128", "home"))
+    s = show.scheduler
+    s.log = lambda *_: None
+    s.tick = lambda *a, **k: ticks.append(a)      # the beat scheduler must never be reached on this path
+    show.mode, show.preset = "dance", L.WAVE_PRESET
+    show.music = False                                         # silence: the wave does not care
+    t0 = L.time.monotonic_ns()
+    show.schedule(t0)
+    assert posts == [L.WAVE_CLIP] and ticks == []
+    assert show.clip_until == pytest.approx(t0 / 1e9 + L.WAVE_SECONDS + L.WAVE_GAP)
+    show.schedule(t0 + int((L.WAVE_SECONDS + L.WAVE_GAP - 0.2) * 1e9))   # still inside the clip: no restart
+    assert posts == [L.WAVE_CLIP]
+    show.schedule(t0 + int((L.WAVE_SECONDS + L.WAVE_GAP + 0.05) * 1e9))  # it has finished: wave again
+    assert posts == [L.WAVE_CLIP, L.WAVE_CLIP] and ticks == []
+    # music playing changes nothing either way, and the beat scheduler is still never ticked
+    show.music, show.clip_until = True, 0.0
+    show.schedule(t0)
+    assert posts == [L.WAVE_CLIP] * 3 and ticks == []
+    # dance mode is still the gate: nothing moves the arm in any other mode
+    for mode in ("light", "off", "follow"):
+        show.mode, show.clip_until = mode, 0.0
+        show.schedule(t0 + 20_000_000_000)
+    _t.sleep(0.05)
+    assert len(posts) == 3 and ticks == []
+    # and with the picker back on "auto" the wave stops and the beat scheduler runs again
+    show.mode, show.preset, show.clip_until = "dance", "auto", 0.0
+    show.schedule(t0 + 20_000_000_000)
+    assert len(posts) == 3 and len(ticks) == 1 and ticks[0][1] is True   # active = show.music
+
+
+def test_the_dance_picker_ends_whatever_is_playing_when_it_changes(monkeypatch):
+    """Wave and dance are exclusive, so a Control that moves the picker homes the arm once and frees
+    the clip slot immediately rather than letting the outgoing clip run on under the new preset."""
+    posts = []
+    show = bare_show(monkeypatch, posts, mode="dance", library=(L.WAVE_CLIP, "beat_groove_128", "home"))
+    s = show.scheduler
+    s.log = lambda *_: None
+    assert show.preset == "auto"                               # the dance picker's default
+    def control(**lamp_kw):
+        show.handle(b"\x0d" + json.dumps({"lat": 300, "lamp": {"mode": "dance", "lights": True, **lamp_kw}}).encode(), 0.0)
+    control(gen=1)                                             # settle the gen: only the preset moves below
+    assert wait_for(lambda: not s.inflight)
+    before = len(posts)
+    show.clip_until, s.playing, s.boundary_ns = L.time.monotonic() + 30.0, True, 12345
+    control(gen=1, preset="wave")
+    assert show.preset == "wave" and show.clip_until == 0.0     # the slot is free at once: the wave starts now
+    assert wait_for(lambda: posts[-1] == "home") and len(posts) == before + 1
+    assert s.boundary_ns is None and s.playing is False         # the beat scheduler let go of its grid
+    assert wait_for(lambda: not s.inflight)
+    # the same preset again is not a change: nothing is homed, nothing is interrupted
+    show.clip_until, posts_then = L.time.monotonic() + 30.0, len(posts)
+    control(gen=1, preset="wave")
+    assert show.clip_until > L.time.monotonic() and len(posts) == posts_then
+    # and back to "auto", which ends the wave the same way
+    control(gen=1, preset="auto")
+    assert show.preset == "auto" and show.clip_until == 0.0
+    assert wait_for(lambda: len(posts) == posts_then + 1 and posts[-1] == "home")
 
 
 # ---- v4.3: a phone the lamp can see turns it green -----------------------------------------------------
@@ -2030,3 +2398,305 @@ def test_a_phone_in_view_turns_the_panel_green_and_the_telemetry_says_so(monkeyp
     monkeypatch.setattr(L.time, "time", lambda: stamp[0] / 1e9 + 10.0)   # ... until the follower dies
     tick(100.25)
     assert show.green is False and show.lamp_status()["green"] is False
+
+
+# --------------------------------------------------------------------------- follow game: the head path
+# lamp_path turns the clip the scheduler is posting into {"t":"lpath"} telemetry: where the lamp's head
+# will be, for the ball the phones draw. The contract is apple/Shared/FollowGame.swift (struct LampPath)
+# and docs/follow-game.md; these tests hold it to the letter, because the Mac refuses anything else
+# outright and a path drawn at the wrong time is worse than no path at all.
+import lamp_path as LP  # noqa: E402
+
+
+class FakeHead:
+    """A stand-in for spatial.LampModel: the head sits `base_yaw` millimetres to the lamp's right and
+    `base_pitch` millimetres above 0.3 m. Deliberately trivial, so a test can say exactly which
+    thousandth a frame must come out as without the vendor robot description."""
+    def head(self, units):
+        return {"position": (0.001 * units["base_yaw"], 0.0, 0.3 + 0.001 * units["base_pitch"])}
+
+
+def path_sender(sent, offset=4_000_000_000_000, pack_dir="/nonexistent", model=None, log=None):
+    return LP.LampPathSender(send=sent.append, clock=lambda: offset, pack_dir=str(pack_dir),
+                             model_fn=lambda: model or FakeHead(), log=log or (lambda *_: None))
+
+
+def path_rows(frames, yaw=lambda i: 0.0, pitch=lambda i: -49.0):
+    """Clip rows in JOINTS order. Defaults sit on beat_clips.START, whose head is lamp_path's (0, 0)."""
+    return [(yaw(i), pitch(i), -22.0, 0.0, 30.0) for i in range(frames)]
+
+
+def path_csv(pack, name, rows):
+    import beat_clips as bc
+    (pack / f"{name}.csv").write_text(bc.CSV_HEADER + "\n" + "".join(
+        f"{1000.0 + i / 30:.6f}," + ",".join(f"{v:.4f}" for v in r) + "\n" for i, r in enumerate(rows)))
+
+
+def last_path(sent):
+    assert sent and sent[-1][0] == 0x04                      # the same telemetry byte as {"t":"lamp"}
+    return json.loads(sent[-1][1:])
+
+
+def test_the_path_json_is_exactly_what_the_conductor_parses():
+    """Key for key against LampPath.parse and Show.swift's lampPath(): the type byte, "t", "v", an
+    integer seq and t0, dt inside 20..250, equal-length x and y of 2..256 integer THOUSANDTHS."""
+    sent = []
+    ps = path_sender(sent)
+    # 120 units of yaw is 0.120 m, exactly half of REACH_M; 11 of pitch is 0.060 m above START's -49.
+    rows = path_rows(147, yaw=lambda i: 120.0 if i else 0.0, pitch=lambda i: 11.0 if i else -49.0)
+    assert ps.clip_posted("beat_groove_120_a", 2_000_000_000, rows) is True
+    j = last_path(sent)
+    assert set(j) == {"t", "v", "seq", "t0", "dt", "x", "y", "clip"}
+    assert j["t"] == "lpath" and j["v"] == 1 and j["clip"] == "beat_groove_120_a"
+    assert isinstance(j["seq"], int) and 0 <= j["seq"] <= 0xFFFFFFFF
+    assert isinstance(j["t0"], int) and j["t0"] > 0
+    assert isinstance(j["dt"], int) and 20 <= j["dt"] <= 250 and j["dt"] == 67
+    assert len(j["x"]) == len(j["y"]) == 73 and 2 <= len(j["x"]) <= 256
+    assert all(isinstance(v, int) and -1000 <= v <= 1000 for v in j["x"] + j["y"])
+    assert j["x"][0] == 0 and j["y"][0] == 0                 # frame 0 is START: the neutral dance pose
+    assert j["x"][1:] == [500] * 72 and j["y"][1:] == [250] * 72     # 0.120 m and 0.060 m over REACH_M
+    assert len(sent[-1]) < LP.MAX_RELAY_BYTES                # ... and the Mac will relay it
+
+
+def test_dt_and_point_count_for_the_clip_lengths_the_scheduler_posts():
+    """A clip is 0.6 s hold + 8 beats + 0.6 s hold, so 116 frames at 180 bpm to 216 at 80. Every
+    message must stay inside dt 20..250 and one datagram, and its points must be evenly spaced in
+    TIME -- the frame nearest k * dt, not k * stride (67 ms is 0.33 ms more than two frames)."""
+    ps = path_sender([])
+    assert ps.load() is True
+    assert ps.sample_frames(116)[0] == 67 and len(ps.sample_frames(116)[1]) == 58     # 180 bpm
+    assert ps.sample_frames(147)[0] == 67 and len(ps.sample_frames(147)[1]) == 73     # ~130 bpm, 4.9 s
+    assert ps.sample_frames(216)[0] == 100 and len(ps.sample_frames(216)[1]) == 72    # 80 bpm, 7.2 s
+    for frames in range(110, 230):
+        dt, idx = ps.sample_frames(frames)
+        assert 20 <= dt <= 250 and 2 <= len(idx) <= LP.MAX_POINTS
+        assert idx[0] == 0 and idx[-1] <= frames - 1 and idx == sorted(set(idx))
+        # every index within half a frame of the instant its point claims: no drift down the clip
+        assert all(abs(i / 30.0 - k * dt / 1000.0) <= 1 / 60.0 + 1e-9 for k, i in enumerate(idx))
+        assert (frames - 1 - idx[-1]) / 30.0 < dt / 1000.0                # the dropped tail is under one dt
+
+
+def test_x_and_y_clamp_rather_than_overflow():
+    """Nothing the generator could ever produce may leave -1000..1000: the Mac clamps too, but a value
+    that arrives clamped is a value we did not measure. A non-finite one becomes 0, not a NaN ball."""
+    sent = []
+    ps = path_sender(sent)
+    rows = path_rows(80, yaw=lambda i: 3000.0 if i % 2 else -3000.0, pitch=lambda i: 9000.0)
+    assert ps.clip_posted("live_0", 1_000_000_000, rows) is True
+    j = last_path(sent)
+    assert set(j["x"][1:]) == {1000, -1000} and set(j["y"][1:]) == {1000}
+    # non-finite -> 0, exactly as LampPath.init does on the phone: a ball at the centre, never a NaN one
+    assert LP.clamp_thousandths(float("nan")) == 0 and LP.clamp_thousandths(float("inf")) == 0
+    assert LP.clamp_thousandths(-1e30) == -1000 and LP.clamp_thousandths(0.4564) == 456
+
+
+def test_seq_counts_every_path_and_wraps_at_32_bits():
+    sent = []
+    ps = path_sender(sent)
+    rows = path_rows(60)
+    for _ in range(3):
+        ps.clip_posted("live_0", 1_000_000_000, rows)
+    assert [json.loads(b[1:])["seq"] for b in sent] == [0, 1, 2]
+    ps.seq = 0xFFFFFFFF
+    ps.clip_posted("live_0", 1_000_000_000, rows)
+    ps.clip_posted("live_0", 1_000_000_000, rows)
+    assert [json.loads(b[1:])["seq"] for b in sent[-2:]] == [0xFFFFFFFF, 0]     # wraps, never negative
+
+
+def test_without_a_clock_offset_nothing_is_sent_and_it_is_said_once(capsys):
+    """t0 is a Mac host instant. Without the shared clock it would be a guess on the wrong clock, which
+    the Mac refuses as "already ended" -- so send nothing, say so once, and keep dancing."""
+    sent, off = [], [None]
+    ps = LP.LampPathSender(send=sent.append, clock=lambda: off[0], pack_dir="/nonexistent",
+                           model_fn=FakeHead, log=print)
+    rows = path_rows(60)
+    assert ps.clip_posted("live_0", 1_000_000_000, rows) is False and sent == []
+    assert ps.clip_posted("live_0", 2_000_000_000, rows) is False and sent == []
+    assert capsys.readouterr().out.count("no clock offset") == 1
+    off[0] = 7_000_000_000_000                                   # the first sync lands
+    assert ps.clip_posted("live_0", 3_000_000_000, rows) is True
+    assert last_path(sent)["t0"] == 3_000_000_000 + 7_000_000_000_000
+
+
+def test_a_model_that_will_not_load_costs_one_log_line_and_no_retry(capsys):
+    sent, built = [], []
+    def boom():
+        built.append(1)
+        raise RuntimeError("no vendor checkout")
+    ps = LP.LampPathSender(send=sent.append, clock=lambda: 1, pack_dir="/nonexistent", model_fn=boom, log=print)
+    for _ in range(4):
+        assert ps.clip_posted("beat_groove_120_a", 1_000_000_000, path_rows(60)) is False
+    assert sent == [] and built == [1] and ps.off is True and ps.state() == "off"
+    assert capsys.readouterr().out.count("no vendor checkout") == 1
+
+
+def test_a_library_clip_is_read_from_the_pack_and_cached_by_name(tmp_path, monkeypatch):
+    """The same library clip is posted over and over; the CSV is read once. Live clips reuse six pooled
+    names with different contents, so they use their own rows and must NEVER come from the cache."""
+    pack, _ = fake_pack(tmp_path)
+    reads, sent = [], []
+    real = LP.read_clip_rows
+    monkeypatch.setattr(LP, "read_clip_rows", lambda p, j: reads.append(os.path.basename(p)) or real(p, j))
+    path_csv(pack, "beat_groove_120_a", path_rows(120, yaw=lambda i: 120.0))
+    path_csv(pack, "beat_hype_120_a", path_rows(120, yaw=lambda i: -240.0))
+    ps = path_sender(sent, pack_dir=pack)
+    assert ps.clip_posted("beat_groove_120_a", 1_000_000_000, None) is True
+    first = last_path(sent)
+    assert first["x"][0] == 500 and reads == ["beat_groove_120_a.csv"]
+    assert ps.clip_posted("beat_groove_120_a", 2_000_000_000, None) is True
+    assert reads == ["beat_groove_120_a.csv"]                      # served from the cache, not re-read
+    assert last_path(sent)["x"] == first["x"] and last_path(sent)["dt"] == first["dt"]
+    assert ps.clip_posted("beat_hype_120_a", 3_000_000_000, None) is True
+    assert last_path(sent)["x"][0] == -1000 and len(reads) == 2     # clamped, and a different clip is read
+    # a pooled live name is converted from its own rows every time, and never remembered under that name
+    assert ps.clip_posted("live_0", 4_000_000_000, path_rows(60, yaw=lambda i: 60.0)) is True
+    assert last_path(sent)["x"][0] == 250
+    assert ps.clip_posted("live_0", 5_000_000_000, path_rows(60, yaw=lambda i: -60.0)) is True
+    assert last_path(sent)["x"][0] == -250 and len(reads) == 2 and "live_0" not in ps.cache
+    for n in range(LP.CACHE_MAX + 8):                              # the cache is bounded
+        path_csv(pack, f"beat_groove_{n}_a", path_rows(60))
+        ps.clip_posted(f"beat_groove_{n}_a", 6_000_000_000, None)
+    assert len(ps.cache) == LP.CACHE_MAX
+
+
+def test_the_csv_columns_are_found_by_name_and_a_bad_one_is_one_log_line(tmp_path, capsys):
+    """The vendor's own clips share the pack dir; a column order assumed rather than read would map
+    pitch onto yaw silently. A file that is missing, short or not numbers must not raise at the caller."""
+    pack, _ = fake_pack(tmp_path)
+    sent = []
+    ps = LP.LampPathSender(send=sent.append, clock=lambda: 1, pack_dir=str(pack), model_fn=FakeHead, log=print)
+    (pack / "shuffled.csv").write_text(
+        "wrist_pitch.pos,base_pitch.pos,timestamp,elbow_pitch.pos,base_yaw.pos,wrist_roll.pos\n"
+        + "30.0,-49.0,1000.0,-22.0,240.0,0.0\n" * 40)
+    assert ps.clip_posted("shuffled", 1_000_000_000, None) is True
+    assert last_path(sent)["x"][0] == 1000                          # base_yaw was read from ITS column
+    (pack / "half.csv").write_text("timestamp,base_yaw.pos\n1000.0,0.0\n")   # no pitch column
+    (pack / "junk.csv").write_text("timestamp,base_yaw.pos,base_pitch.pos,elbow_pitch.pos,wrist_roll.pos,wrist_pitch.pos\n"
+                                   + "1000.0,nope,-49,-22,0,30\n" * 40)
+    (pack / "one.csv").write_text("timestamp,base_yaw.pos,base_pitch.pos,elbow_pitch.pos,wrist_roll.pos,wrist_pitch.pos\n"
+                                  "1000.0,0,-49,-22,0,30\n")
+    before = len(sent)
+    for name in ("missing", "half", "junk", "one"):
+        assert ps.clip_posted(name, 1_000_000_000, None) is False
+    assert len(sent) == before and ps.dropped == 4
+    out = capsys.readouterr().out
+    for name in ("missing", "half", "junk", "one"):
+        assert out.count(f"follow path: {name}: ") == 1
+    for name in ("missing", "half", "junk", "one"):                       # ... and not again on a second try
+        ps.clip_posted(name, 1_000_000_000, None)
+    assert capsys.readouterr().out == ""
+
+
+def test_t0_is_when_the_clips_first_frame_reaches_the_servos(monkeypatch):
+    """The scheduler POSTs, the runtime starts the clip START_LATENCY later, and the pattern's first
+    beat is HOLD after that. Point 0 is the clip's FIRST FRAME, not its first beat, so on the Mac's
+    clock t0 = post + START_LATENCY + offset -- which is the planned beat - HOLD when the post went out
+    on its instant, and that much later when it went out late."""
+    sent, posts = [], []
+    now, offset = [900_000_000_000], 4_000_000_000_000
+    monkeypatch.setattr(L.time, "monotonic_ns", lambda: now[0])
+    ps = path_sender(sent, offset=offset)
+    s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                        status=lambda: {"current_animation": posts[-1], "playing": True, "elapsed_seconds": 0.0},
+                        start_latency_ns=350_000_000, log=lambda *_: None, paths=ps)
+    beat = now[0] + 350_000_000 + L.HOLD_NS                     # post_instant(beat) is exactly now
+    assert L.ClipScheduler.post_instant(beat, s.start_latency_ns, s.hold_ns) == now[0]
+    s._post("live_0", beat, 0, rows=path_rows(147))
+    assert posts == ["live_0"]
+    j = last_path(sent)
+    assert j["t0"] == now[0] + 350_000_000 + offset
+    assert j["t0"] == beat - L.HOLD_NS + offset                 # the planned first frame, on the Mac clock
+    # the last point is where the path says it is: t0 + (n - 1) * dt, still inside the clip
+    assert (len(j["x"]) - 1) * j["dt"] * 1_000_000 <= int(147 / 30 * 1e9)
+    # a post that went out late carries its lateness into t0 instead of dropping it
+    now[0] += 80_000_000
+    s._post("live_0", beat, 80_000_000, rows=path_rows(147))
+    assert last_path(sent)["t0"] == beat - L.HOLD_NS + 80_000_000 + offset
+
+
+def test_a_missing_clip_never_stops_the_dance(monkeypatch, tmp_path, capsys):
+    """The path is a nicety; the dance is the product. A clip whose CSV is gone, or a corrupt one, must
+    still be POSTED, and the scheduler must go on exactly as it did before paths existed."""
+    pack, _ = fake_pack(tmp_path)
+    sent, posts = [], []
+    now = [900_000_000_000]
+    monkeypatch.setattr(L.time, "monotonic_ns", lambda: now[0])
+    ps = LP.LampPathSender(send=sent.append, clock=lambda: 4_000_000_000_000, pack_dir=str(pack),
+                           model_fn=FakeHead, log=print)
+    s = L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                        status=lambda: {"current_animation": posts[-1], "playing": True, "elapsed_seconds": 0.0},
+                        start_latency_ns=350_000_000, log=lambda *_: None, paths=ps)
+    s._post("beat_groove_120_a", now[0] + 950_000_000, 0)        # no rows, no CSV in the pack
+    assert posts == ["beat_groove_120_a"] and sent == [] and s.moves == 1 and s.playing is True
+    path_csv(pack, "beat_groove_120_a", path_rows(147, yaw=lambda i: 120.0))
+    s._post("beat_groove_120_a", now[0] + 950_000_000, 0)        # and it works the moment the file is there
+    assert posts == ["beat_groove_120_a"] * 2 and len(sent) == 1 and s.moves == 2
+    assert capsys.readouterr().out.count("follow path:") == 1
+    # a clip the runtime REFUSES sends no path at all: the ball must not move while the arm stands still
+    s.post_fn = lambda n: {"error": "not found"}
+    s._post("beat_groove_120_a", now[0] + 950_000_000, 0)
+    assert len(sent) == 1 and s.refused == 1
+
+
+def test_the_scheduler_sends_one_path_per_posted_clip_with_the_live_clips_own_rows(tmp_path):
+    """End to end through tick(): the live clip the generator made is posted AND its own frames go out
+    as the path, without the pooled CSV being read back (the next generation overwrites it)."""
+    import time as _t
+    sent, posts = [], []
+    lv, pack = live_for(tmp_path)
+    ps = path_sender(sent, pack_dir=pack)
+    tr = L.BeatTracker()
+    ks = kicks(120, 16)
+    for k in ks: tr.feed(k)
+    s = steady(L.ClipScheduler(post=lambda n: posts.append(n) or {"status": "started"},
+                               status=lambda: {"current_animation": posts[-1] if posts else "", "playing": True,
+                                               "elapsed_seconds": 0.0},
+                               start_latency_ns=350_000_000, log=lambda *_: None,
+                               manifest=manifest_v2(bpms=(120,)), live=lv, paths=ps))
+    now = ks[-1]
+    s.not_before_ns = now + 2_000_000_000            # in the hold behind home: the first clip is made now
+    s.tick(now, True, tr, 0.3)
+    assert wait_for(lambda: lv.peek() is not None, 3.0)
+    assert lv.peek().rows is not None and len(lv.peek().rows) == 149      # fake_make's frame count
+    s.not_before_ns = 0
+    post_at, beat, _period = s.plan(now, tr)
+    s.tick(post_at + 4_000_000, True, tr, 0.3)
+    assert wait_for(lambda: posts and sent, 3.0)
+    _t.sleep(0.05)
+    assert posts == ["live_0"] and len(sent) == 1
+    j = last_path(sent)
+    assert j["clip"] == "live_0" and len(j["x"]) == 74 and j["dt"] == 67   # 149 frames -> stride 2
+    assert j["x"] == [0] * 74 and j["y"] == [0] * 74                       # fake_make's rows sit on START
+    assert set(pack.glob("live_*.csv"))                                    # the CSV exists but was not read
+    assert "live_0" not in ps.cache and ps.sent == 1
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_the_real_choreography_maps_into_the_range_with_y_pointing_up():
+    """With the real model and the real generator: the dance uses the -1..1 range without leaving it,
+    and y is UP. The sign is load-bearing -- FollowFX.draw plots `cy - y * sy` and FollowScorer
+    correlates the path's vy with the phone's acceleration along up, so a flipped y would draw the
+    dance upside down and score an honest follower at zero."""
+    import beat_clips as bc
+    from spatial import JOINTS, LampModel
+    model = LampModel(ROBOTDESC / "pi5_feetech_r1", calibration=ROBOTDESC / "lelamp-calibration.json")
+    sent = []
+    ps = path_sender(sent, model=model)
+    assert ps.load() is True
+    rows, meta = bc.make_clip("groove", "a", 120.0, 1.0, model=None)
+    assert ps.clip_posted("beat_groove_120_a", 1_000_000_000, rows) is True
+    j = last_path(sent)
+    assert j["x"][0] == 0 and j["y"][0] == 0                    # the clip starts at the neutral dance pose
+    assert 200 <= max(abs(v) for v in j["x"]) <= 1000           # a real sway, and inside the range
+    assert 100 <= max(abs(v) for v in j["y"]) <= 1000
+    # the highest head in the clip is the most POSITIVE y, the lowest the most negative
+    zs = [float(model.head({k: float(v) for k, v in zip(JOINTS, r)})["position"][2]) for r in rows]
+    dt, idx = ps.sample_frames(len(rows))
+    sampled = [zs[i] for i in idx]
+    assert idx[sampled.index(max(sampled))] == idx[j["y"].index(max(j["y"]))]
+    assert idx[sampled.index(min(sampled))] == idx[j["y"].index(min(j["y"]))]
+    # ... and +x is the lamp's own right: a clip turned toward +base_yaw carries the head that way
+    turned, _ = bc.make_clip("groove", "a", 120.0, 1.0, facing=24.0, model=None)
+    ps.clip_posted("live_0", 1_000_000_000, turned)
+    # 24 units is 17.9 deg of base yaw, which swings the head 0.025 m to its right: a tenth of REACH_M
+    assert 80 < last_path(sent)["x"][0] < 200

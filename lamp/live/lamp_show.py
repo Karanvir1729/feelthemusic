@@ -82,9 +82,19 @@ from __future__ import annotations
 
 import argparse, atexit, colorsys, heapq, inspect, json, math, os, random, signal, socket, struct, subprocess, sys, threading, time, urllib.request
 
+# The follow game's path publisher. Stdlib only at import: it reaches for spatial (and so numpy) the
+# first time a clip is posted, on the post thread, never on the UDP loop.
+import lamp_path
+
 LAMP = "http://127.0.0.1:8081"
 KINDS = {0: "CLICK", 1: "KICK", 2: "SNARE", 3: "BASS", 4: "BUILD", 5: "DROP"}
 CLIPS = [("dance_fwd", 12.4), ("robot_dance_fwd", 10.8)]   # vendor fallback, forward-levelled: base_pitch floor -65
+# The greeting, chosen from the dashboard's dance picker as "wave". Not a dance: while it is selected the
+# lamp repeats this one clip instead of dancing, which is why it bypasses the beat scheduler entirely.
+# 4.6 s is the clip (wave_clip.py) and 0.7 s covers the runtime's start latency (the first servo frame
+# lands 250-450 ms after the POST, measured), so a repeat is not posted into the tail of the last one.
+WAVE_CLIP, WAVE_SECONDS, WAVE_GAP = "wave_hi", 4.6, 0.7
+WAVE_PRESET = "wave"
 PIXELS, PIN, HW_BRIGHTNESS = 93, "D10", 0.7   # full white ~2.35 A of a 3.0 A rating (0.6 measured at
                                               # ~2.0 A on 5.12-5.14 V; raised for a brighter room, still
                                               # a fifth of the rating in hand for the Pi and the servos)
@@ -164,6 +174,17 @@ WANDER_UNITS, WANDER_EVERY_S, SURPRISE_TIER = 20.0, 7.0, 0.25
 # Quantised to BASS_STEP because every distinct boldness is a fresh ~100 ms clip build on the Pi, and
 # a value that drifted continuously would rebuild the clip several times a second and never post one.
 BASS_FLOOR, BASS_STEP = 0.55, 0.15
+# Above this the library's fixed bold-1.0 clips are close enough to what was asked for to stand in
+# for a live clip that is not ready; below it they are not, and the dance skips a clip rather than
+# play one at full size (see schedule()).
+# Compared against the OPERATOR'S SLIDER, never against gen_bold(). gen_bold() is the slider times the
+# bass, so it dips on every quiet passage: at a slider of 1.0 and no bass it is 0.55, and the default
+# slider of 0.6 is under any floor worth having. Judging the skip on that value meant the library was
+# almost never allowed to stand in, which matters enormously when the live generator is NOT coming back
+# (a missing pack dir disables it for the whole run, an exception for 60 s) -- there the choice is not
+# "wrong size now or right size in a moment", it is "wrong size or a dead arm for the rest of the song".
+# 0.85: above it the library's bold-1.0 clips are close enough to what was asked for.
+LIBRARY_BOLD_FLOOR = 0.85
 # Restarting the follower on a track change: the outgoing follow.py settles the arm and restores the
 # runtime's idle on its way out (poster.wait_idle up to 5 s, a settle POST, idle_restore), so it is given
 # FOLLOW_EXIT_S after SIGTERM before the start is queued, the start polls another RESTART_WAIT_S for it to
@@ -586,15 +607,20 @@ class ClipScheduler:
 
     def __init__(self, post=None, status=None, start_latency_ns: int = 350_000_000, hold_ns: int = HOLD_NS,
                  available: set | None = None, log=print, manifest: dict | None = None,
-                 live: "LiveClips | None" = None, bold: float = DEFAULT_BOLD):
+                 live: "LiveClips | None" = None, bold: float = DEFAULT_BOLD, paths=None):
         self.post_fn = post or (lambda name: lamp("/api/animations/play", {"name": name}))
+        # lamp_path.LampPathSender, or None: where the head is about to be, for the phones' follow game.
+        # It is told about a clip only after the runtime has accepted it (_post), and it never raises.
+        self.paths = paths
         self.status_fn = status or (lambda: lamp("/api/animations/status", timeout=1.0))
         self.start_latency_ns, self.hold_ns, self.log = int(start_latency_ns), int(hold_ns), log
         self.available = available
         self.live, self.bold = live, clamp(float(bold))   # the operator's slider: the ceiling
         self.bass = 1.0                            # 0..1, quantised; multiplies the slider (gen_bold)
+        self.speed = 1.0                           # the operator's dance-speed dial, 0..1 (Control lamp.speed)
         self.facing = 0.0                          # base_yaw the live clips are built around; 0 = the home heading
         self.rng = random.Random()                 # variant, tier surprise and the idle wander; seedable in tests
+        self.pending: dict[str, str] = {}          # tier -> the variant drawn for its NEXT post, held until posted
         self.live_posts = 0                        # clips posted from the live generator (the rest: the library)
         self.variants: dict[str, list[str]] = {}   # beat_<tier>_<bpm> -> its a/b/c clip names (v2 manifest)
         self.last_variant: dict[str, str] = {}     # tier -> the variant letter played last (rotation state)
@@ -680,6 +706,18 @@ class ClipScheduler:
         self.bass = q
         return True
 
+    def set_speed(self, speed: float) -> bool:
+        """The dashboard's dance-speed dial (Control lamp.speed), clamped to 0..1, 2 decimals. Returns
+        whether it changed. 1.0 is the tempo's own budget, i.e. exactly what the lamp did before the dial
+        existed; lower caps how fast the arm may move, which is the only way to calm a fast song from the
+        dashboard. Lowering it only ever slows the arm, so any value is safe."""
+        v = round(clamp(float(speed)), 2)
+        if v == self.speed:
+            return False
+        self.log(f"{time.strftime('%H:%M:%S')} dance speed {self.speed:.2f} -> {v:.2f}")
+        self.speed = v
+        return True
+
     def gen_bold(self) -> float:
         """The boldness a clip is actually generated at: the operator's slider scaled by the bass, never
         above the slider. At BASS_FLOOR the quiet passages still move properly; the slider still means
@@ -706,8 +744,22 @@ class ClipScheduler:
         """The variant `tier` plays next (pick()'s rule), without committing. Chosen at RANDOM from the
         ones it did not just play, not in an a -> b -> c rotation: the rotation made eight bars repeat in
         the same order every time, which is what the operator meant by robotic. Never the variant played
-        last, so the same phrase never runs twice back to back."""
-        return self.choose_letter(tier, list(self.VARIANTS))
+        last, so the same phrase never runs twice back to back.
+
+        Drawn ONCE per upcoming post and latched in `pending` until that post happens (played(), from
+        take_live and pick). prepare() runs on every ~3 ms pass of the show loop, and a fresh draw on
+        each pass disagreed with the clip already being built two passes in three, so the generator was
+        asked for a different variant over and over: 33 builds, CSV writes and fsyncs for ONE posted clip,
+        measured with a 100 ms stand-in generator over a 4 s window at 120 bpm."""
+        if tier not in self.pending:
+            self.pending[tier] = self.choose_letter(tier, list(self.VARIANTS))
+        return self.pending[tier]
+
+    def played(self, tier: str, letter: str):
+        """A clip of `tier`/`letter` is going out: it is now the one not to repeat, and the latched
+        draw for that tier is spent so the next prepare() draws afresh."""
+        self.last_variant[tier] = letter
+        self.pending.pop(tier, None)
 
     def choose_letter(self, tier: str, letters: list[str]) -> str:
         """One of `letters` at random, never the one `tier` played last (unless that is all there is)."""
@@ -724,11 +776,11 @@ class ClipScheduler:
         if live is None or not live.usable(now_ns):
             return
         letter = self.next_letter(tier)
-        if live.covers(tier, letter, bpm, self.gen_bold(), self.facing):
+        if live.covers(tier, letter, bpm, self.gen_bold(), self.facing, self.speed):
             return
         if post_at - now_ns < live.PREP_NS:
             return
-        live.request(tier, letter, bpm, self.gen_bold(), post_at, self.facing)
+        live.request(tier, letter, bpm, self.gen_bold(), post_at, self.facing, self.speed)
 
     def take_live(self, tier: str, bpm: float):
         """The ready live clip to post now, or None (-> the library). Whatever is ready is posted even if
@@ -739,7 +791,10 @@ class ClipScheduler:
         FACING_MARGIN, so a ready clip is at most one clip behind the person, and the next one catches up."""
         if self.live is None:
             return None
-        return self.live.take(lambda r: not (tier == "drop" and r.tier != "drop") and abs(r.bpm - bpm) <= self.LIVE_BPM_TOL)
+        r = self.live.take(lambda r: not (tier == "drop" and r.tier != "drop") and abs(r.bpm - bpm) <= self.LIVE_BPM_TOL)
+        if r is not None:
+            self.played(r.tier, r.variant)
+        return r
 
     def note_build(self, now_ns: int, dur_ms: int):
         """A BUILD event with a known duration: the build tier is chosen for clips whose first half lies
@@ -762,8 +817,9 @@ class ClipScheduler:
             return base
         t = base.split("_")[1]
         letters = [n.rsplit("_", 1)[1] for n in names]
-        chosen = self.choose_letter(t, letters)
-        self.last_variant[t] = chosen
+        held = self.pending.get(t)                          # the draw prepare() was building toward, if it fits
+        chosen = held if held in letters else self.choose_letter(t, letters)
+        self.played(t, chosen)
         return names[letters.index(chosen)]
 
     @staticmethod
@@ -878,11 +934,24 @@ class ClipScheduler:
             self.prepare(tier, bpm, post_at, now_ns)               # the next clip, generated ahead of its post
             return
         live = self.take_live(tier, bpm)
+        rows = None                    # a live clip's frames, carried to _post for the follow-game path
         if live is not None:
-            name = live.name
+            name, rows = live.name, live.rows
             self.last_variant[live.tier] = live.variant             # the rotation moves on as pick() would
-        else:
+        elif self.bold >= LIBRARY_BOLD_FLOOR or self.live is None or not self.live.usable(now_ns):
+            # Either the slider is high enough that a bold-1.0 library clip answers it, or the live
+            # generator is not coming back for a while (no pool at all, the pack dir missing for the whole
+            # run, or the 60 s disable after a failure). In that second case a full-size dance is the
+            # WRONG answer to a request for small moves, and it is still the right call: the alternative
+            # is an arm that never moves again this song, which is worse than one moving too big.
             name = self.pick(tier, bpm)
+        else:
+            # The operator has asked for small moves, the generator is healthy, and no live clip of that
+            # size is ready YET. The library is bold 1.0 and nothing else -- a fixed CSV the runtime plays
+            # as written -- so posting one would answer a request for small with a full-size dance, the
+            # "the slider does nothing" the operator reported. Sit this one out; the next is on its way.
+            self.refused += 1; self.boundary_ns = beat + CLIP_BEATS * period_ns
+            return
         if name is None:
             self.refused += 1; self.boundary_ns = beat + CLIP_BEATS * period_ns
             return
@@ -892,9 +961,9 @@ class ClipScheduler:
         self.boundary_ns = beat + CLIP_BEATS * period_ns
         with self.lock:
             self.inflight = True
-        threading.Thread(target=self._post, args=(name, beat, now_ns - post_at), daemon=True).start()
+        threading.Thread(target=self._post, args=(name, beat, now_ns - post_at, rows), daemon=True).start()
 
-    def _post(self, name: str, beat_ns: int, late_ns: int):
+    def _post(self, name: str, beat_ns: int, late_ns: int, rows=None):
         t0 = time.monotonic_ns()
         r = self.post_fn(name)
         ok = r.get("status") == "started"
@@ -902,6 +971,13 @@ class ClipScheduler:
             self.moves += 1; self.playing = True
         else:
             self.refused += 1
+        if ok and self.paths is not None:
+            # The follow game's path, as soon as the runtime has taken the clip (a path for a clip that
+            # was refused would move the ball while the arm stood still). The first frame reaches the
+            # servos start_latency_ns after THIS post, which is the planned beat_ns - hold_ns when the
+            # post went out on its instant and up to LATE_NS later when it did not; t0 measured from the
+            # post carries that lateness instead of dropping it. _measure logs what the runtime really did.
+            self.paths.clip_posted(name, t0 + self.start_latency_ns, rows)
         if self.live is not None and self.live.is_pool_name(name):
             self.live.posted(name, ok)
             if ok: self.live_posts += 1
@@ -986,19 +1062,25 @@ def animation_names(r) -> set[str]:
 
 class LiveClip:
     """A clip the generator wrote into the pack: what it is and what it is called."""
-    __slots__ = ("tier", "variant", "bpm", "bold", "facing", "name", "md5", "meta")
+    __slots__ = ("tier", "variant", "bpm", "bold", "facing", "speed", "name", "md5", "meta", "rows")
 
-    def __init__(self, tier, variant, bpm, bold, name, md5, meta, facing: float = 0.0):
+    def __init__(self, tier, variant, bpm, bold, name, md5, meta, facing: float = 0.0, speed: float = 1.0,
+                 rows=None):
+        # The frames as generated, kept for the follow-game path (lamp_path): the pooled CSV under this
+        # name is overwritten by the next generation, so the path cannot be read back from it later.
+        # ~145 tuples of 5 floats, ~30 kB, and at most the ready, in-flight and playing clips hold one.
+        self.rows = rows
         self.tier, self.variant, self.bpm, self.bold = tier, variant, float(bpm), float(bold)
+        self.speed = float(speed)          # the dial the clip was built at; a different one is a different clip
         # The facing this clip was REQUESTED at, so covers() recognises it again. With a beat_clips
         # that has no `facing` parameter it is what was asked for, not what the rows do (they swing
         # around home): there the facing is ignored throughout, see LiveClips._load.
         self.facing = float(facing)
         self.name, self.md5, self.meta = name, md5, meta
 
-    def covers(self, tier, variant, bpm, bold, bpm_tol: float, facing: float = 0.0) -> bool:
+    def covers(self, tier, variant, bpm, bold, bpm_tol: float, facing: float = 0.0, speed: float = 1.0) -> bool:
         return self.tier == tier and self.variant == variant and self.bold == float(bold) \
-            and self.facing == float(facing) and abs(self.bpm - bpm) <= bpm_tol
+            and self.facing == float(facing) and self.speed == float(speed) and abs(self.bpm - bpm) <= bpm_tol
 
 
 class LiveClips:
@@ -1023,6 +1105,7 @@ class LiveClips:
         self.make_fn, self.write_fn, self.model_fn = make_fn, write_fn, model_fn
         self.model = None
         self.takes_facing = None           # probed once on the worker: does this make_clip take `facing`?
+        self.takes_speed = None            # ... and `speed`, the operator's dance-speed dial
         self.lock = threading.Lock()
         self.cond = threading.Condition(self.lock)
         self.wanted = None                 # (tier, variant, bpm, bold, facing, deadline_ns): the newest request
@@ -1084,20 +1167,21 @@ class LiveClips:
         now_ns = time.monotonic_ns() if now_ns is None else now_ns
         return now_ns >= self.disabled_until_ns
 
-    def covers(self, tier, variant, bpm, bold, facing: float = 0.0) -> bool:
+    def covers(self, tier, variant, bpm, bold, facing: float = 0.0, speed: float = 1.0) -> bool:
         """Is that clip ready, being made, or queued already?"""
         with self.lock:
-            if self.ready is not None and self.ready.covers(tier, variant, bpm, bold, self.BPM_TOL, facing):
+            if self.ready is not None and self.ready.covers(tier, variant, bpm, bold, self.BPM_TOL, facing, speed):
                 return True
             for job in (self.busy, self.wanted):
                 if job is not None and job[0] == tier and job[1] == variant and job[3] == float(bold) \
-                        and job[4] == float(facing) and abs(job[2] - bpm) <= self.BPM_TOL:
+                        and job[4] == float(facing) and job[6] == float(speed) and abs(job[2] - bpm) <= self.BPM_TOL:
                     return True
         return False
 
-    def request(self, tier: str, variant: str, bpm: float, bold: float, deadline_ns: int, facing: float = 0.0):
+    def request(self, tier: str, variant: str, bpm: float, bold: float, deadline_ns: int, facing: float = 0.0,
+                speed: float = 1.0):
         with self.cond:
-            self.wanted = (tier, variant, float(bpm), float(bold), float(facing), int(deadline_ns))
+            self.wanted = (tier, variant, float(bpm), float(bold), float(facing), int(deadline_ns), float(speed))
             if self.thread is None:
                 self.thread = threading.Thread(target=self._worker, name="live-clips", daemon=True)
                 self.thread.start()
@@ -1160,6 +1244,17 @@ class LiveClips:
                     self.busy = None
 
     @staticmethod
+    def _takes_kwarg(make_fn, name: str) -> bool:
+        """Does this beat_clips.make_clip take `name`? The lamp may be running an older generator, and
+        there the dance must still play -- without that feature -- instead of failing every clip with a
+        TypeError. Asked of the signature once, at the first generation; **kwargs is taken at its word."""
+        try:
+            params = inspect.signature(make_fn).parameters
+        except (TypeError, ValueError):                   # not introspectable: assume the old signature
+            return False
+        return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+    @staticmethod
     def _takes_facing(make_fn) -> bool:
         """Does this beat_clips.make_clip take `facing` (the base_yaw to build the clip around)? The
         lamp may be running an older generator, and there the dance must still play -- on the home
@@ -1178,6 +1273,10 @@ class LiveClips:
             self.make_fn = self.make_fn or beat_clips.make_clip
             self.write_fn = self.write_fn or beat_clips.write_clip_atomic
             self.model_fn = self.model_fn or beat_clips.Validator.for_lamp
+        if self.takes_speed is None:
+            self.takes_speed = self._takes_kwarg(self.make_fn, "speed")
+            if not self.takes_speed:
+                self.log("live clips: this beat_clips has no `speed`, the dance-speed dial is ignored")
         if self.takes_facing is None:
             self.takes_facing = self._takes_facing(self.make_fn)
             if not self.takes_facing:
@@ -1187,11 +1286,12 @@ class LiveClips:
             self.model = self.model_fn()
 
     def _run(self, job):
-        tier, variant, bpm, bold, facing, deadline = job
+        tier, variant, bpm, bold, facing, deadline, speed = job
         t0 = time.monotonic_ns()
         self._load()
         rows, meta = self.make_fn(tier, variant, bpm, bold, model=self.model,
-                                  **({"facing": facing} if self.takes_facing else {}))
+                                  **({"facing": facing} if self.takes_facing else {}),
+                                  **({"speed": speed} if self.takes_speed else {}))
         if meta.get("ok") is not True:
             with self.lock: self.failed += 1
             self.log(f"{time.strftime('%H:%M:%S')} live clip {tier} {variant} {bpm:.1f}bpm bold {bold:.2f} FAILED "
@@ -1221,7 +1321,7 @@ class LiveClips:
             self.log(f"{time.strftime('%H:%M:%S')} live clip {name}: not listed by the runtime within "
                      f"{self.LIST_NS // 1_000_000}ms -> library")
             return
-        clip = LiveClip(tier, variant, bpm, bold, name, md5, meta, facing)
+        clip = LiveClip(tier, variant, bpm, bold, name, md5, meta, facing, speed, rows)
         with self.lock:
             self.ready = clip
             self.generated += 1
@@ -1269,7 +1369,7 @@ def parse_event(d: bytes) -> dict | None:
 
 def parse_control(d: bytes) -> dict:
     """Control JSON; returns {"lat": float|None, "session": int|None,
-    "lamp": {"mode","lights","gen","bold","track"}|None}.
+    "lamp": {"mode","lights","gen","bold","speed","track"}|None}.
     The old conductor sends no lamp key (then the CLI flags stay in charge). `session` is the
     conductor's per-launch random id: a new one means its seq counters start again from 0. `bold` is
     the "Bolder moves" slider, clamped to 0..1; missing or unreadable -> None (keep the current value).
@@ -1293,6 +1393,14 @@ def parse_control(d: bytes) -> dict:
         try: gen = int(l.get("gen", 0) or 0)
         except (TypeError, ValueError): gen = 0
         bold = None
+        preset = l.get("preset")
+        preset = str(preset) if isinstance(preset, str) and preset.strip() else None
+        speed = None
+        if "speed" in l:
+            try:
+                speed = clamp(float(l["speed"]))           # NaN -> 0 by clamp(); a string that parses is fine
+            except (TypeError, ValueError):
+                speed = None
         if "bold" in l:
             try:
                 bold = clamp(float(l["bold"]))                  # NaN -> 0 by clamp(); strings that parse are fine
@@ -1301,7 +1409,8 @@ def parse_control(d: bytes) -> dict:
         track = l.get("track")
         out["lamp"] = {"mode": mode if mode in MODES else None,
                        "lights": bool(l["lights"]) if "lights" in l else None,
-                       "gen": gen, "bold": bold, "track": track if track in TRACKS else None}
+                       "gen": gen, "bold": bold, "speed": speed, "preset": preset,
+                       "track": track if track in TRACKS else None}
     return out
 
 
@@ -1576,6 +1685,7 @@ class Show:
                  live_clips: bool = True, bold: float = DEFAULT_BOLD, pack_dir: str = PACK_DIR, track: str = "face"):
         self.dst = (conductor, 47300)
         self.cli_mode, self.cli_lights, self.vendor_clips = mode, lights, vendor_clips
+        self.preset = "auto"               # the dashboard's dance picker; "wave" repeats the greeting instead
         self.mode, self.lights, self.gen = mode, lights, None
         self.track = track if track in TRACKS else "face"     # what follow.py looks for (Control lamp.track)
         self.targets, self.target = TargetFile(), dict(TargetFile.EMPTY)
@@ -1598,8 +1708,12 @@ class Show:
         self.limiter = FlashLimiter()
         self.tracker = BeatTracker()
         live = LiveClips(pack_dir) if live_clips and not vendor_clips else None
+        # The follow game's half of the lamp: one {"t":"lpath"} per posted clip, on the show's own UDP
+        # socket and the shared clock it already keeps for audio and events (None until a sync lands, and
+        # the sender simply says nothing until then). Never fatal: see lamp_path.
+        self.paths = lamp_path.LampPathSender(send=self.send, clock=lambda: self.offset_ns, pack_dir=pack_dir)
         self.scheduler = ClipScheduler(start_latency_ns=int(start_latency_ms * 1e6), manifest=load_manifest_file(manifest),
-                                       live=live, bold=bold)
+                                       live=live, bold=bold, paths=self.paths)
         self.follow_proc, self.follow_lock, self.follow_atexit = None, threading.Lock(), False
         # what the running (or queued) follower looks for; None = unknown after a failed restart, so the
         # next Control with a lamp key restarts it. follow_gen numbers start requests: a start that finds
@@ -1776,6 +1890,13 @@ class Show:
         if lights != self.lights:
             self.lights = lights
             print(f"{time.strftime('%H:%M:%S')} lights -> {'on' if lights else 'off'}", flush=True)
+        if l.get("preset") is not None and l["preset"] != self.preset:
+            print(f"{time.strftime('%H:%M:%S')} preset {self.preset} -> {l['preset']}", flush=True)
+            self.preset = l["preset"]
+            self.scheduler.stop()          # a preset change ends whatever is playing: wave and dance are exclusive
+            self.clip_until = 0.0
+        if l.get("speed") is not None:
+            self.scheduler.set_speed(l["speed"])            # logs on change; missing -> keep the current value
         if l.get("bold") is not None:
             self.scheduler.set_bold(l["bold"])                   # logs on change; missing -> keep the current value
         self.apply_lights()
@@ -1961,6 +2082,19 @@ class Show:
         if self.mode == "dance" and self.vendor_clips and kind in ("BUILD", "DROP") and now >= self.clip_until:
             self.play_clip(kind, now)
 
+    def play_named(self, name: str, secs: float, why: str, now: float):
+        """Post one named clip and reserve the slot for its length. The reservation is made BEFORE the
+        HTTP round trip (~0.6 s) because the caller runs at 20 Hz: without it a second pass posts the
+        same clip again inside that window and the runtime restarts it, a visible snap."""
+        self.clip_until = now + 3.0
+        r = lamp("/api/animations/play", {"name": name})
+        ok = r.get("status") == "started"
+        self.clip_until = now + (secs + WAVE_GAP if ok else 3.0)
+        self.counts["clips"] += 1
+        if not ok:
+            self.scheduler.refused += 1
+        print(f"{time.strftime('%H:%M:%S')} {why} -> clip {name}: {r.get('status') or r.get('error')}", flush=True)
+
     def play_clip(self, why: str, now: float):
         name, secs = CLIPS[self.clip_i % len(CLIPS)]; self.clip_i += 1
         # Reserve the slot BEFORE the HTTP round trip (~0.6 s). The tick runs at 20 Hz, so without
@@ -2063,6 +2197,14 @@ class Show:
         (run.jsonl then shows rmsDb -120 with no error). Check that before touching this.
 
         The arm still moves in no other mode -- nothing below here is reached outside dance."""
+        if self.mode == "dance" and self.preset == WAVE_PRESET:
+            # "Hi wave" is on: repeat the greeting and never run the beat scheduler. Music is not a
+            # gate here -- a wave is a wave in a silent room -- but dance mode still is, so the arm
+            # is as still as ever in light, follow and off.
+            now = now_ns / 1e9
+            if now >= self.clip_until:
+                self.play_named(WAVE_CLIP, WAVE_SECONDS, "wave", now)
+            return
         if self.mode == "dance" and not self.vendor_clips:
             self.scheduler.tick(now_ns, self.music, self.tracker, self.excite)
 
@@ -2141,7 +2283,7 @@ class Show:
                       f"note={note} conf={m.conf:.2f} loud={m.loud:.2f} excite={self.excite:.2f} "
                       f"bpm={bpm_txt} beat_err={self.tracker.phase_error_ms():+.0f}ms "
                       f"clip_phase={phase:+.0f}ms bold={s.bold:.2f} facing={s.facing:+.0f} "
-                      f"green={'y' if self.green else 'n'} live={live} "
+                      f"green={'y' if self.green else 'n'} live={live} path={self.paths.state()} "
                       f"fps={self.panel.frames / 5:.0f} "
                       f"rtt={self.min_rtt if self.rtts else -1:.1f}ms{extra}", flush=True)
                 self.panel.frames = 0; nxt["report"] = now + 5.0

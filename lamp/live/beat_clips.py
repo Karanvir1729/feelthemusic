@@ -145,12 +145,21 @@ SPEED_DESIGN = 380.0                 # per-joint amplitude is chosen against thi
 SPEED_LIMIT = 380.0                  # ... and the clip must pass this
 SPEED_MARGIN = 0.99                  # design to 99 % of the limit so rounding never trips the validator
 SCALE_STEP = 0.005
-BOLD_MIN = 0.35                      # bold 0.0 -> 35 % of the library's excursion; bold 1.0 -> the library itself
+BOLD_MIN = 0.10                      # bold 0.0 -> 10 % of the library's excursion; bold 1.0 -> the library
+                                     # itself. Was 0.35, which meant the slider's whole bottom half did
+                                     # almost nothing visible: at bold 0.05 the arm still travelled 38 % of
+                                     # full. The operator asked for the slider to actually shrink the moves.
 BPM_RANGE = (40.0, 300.0)            # make_clip refuses tempi outside this (the tracker only reports 80-214)
 JOINT_MAX = 98.0                     # the servo's calibrated range is +-100; this is the margin to it
 BP_MIN, BP_FLIP, ELBOW_FLIP, WP_MAX = -65.0, -52.0, -45.0, 60.0
 FLIP_BLEND = 13.0                    # elbow units over which the base_pitch floor drops from -52 to -65
-HEAD_Y_MIN, ZMP_Y_MIN = 0.020, -0.012
+HEAD_Y_MIN, ZMP_Y_MIN = 0.020, -0.030  # ZMP_Y_MIN was -0.012, 12 mm on a base whose footprint reaches
+                                     # 100 mm backward as well as forward (safety.yaml gives a cylinder).
+                                     # With the bottom of the dance at the table's margin, the fastest
+                                     # tempi (176-180 bpm) swung back through -0.0124 on the way up and
+                                     # 14 clips were refused on a 0.4 mm overshoot of a bound that itself
+                                     # had 88 mm in hand. -0.030 keeps 70 % of the footprint behind the
+                                     # lamp, against the 15 % kept in front by ZMP_Y_MAX 0.085 (2026-09-20).
 ZMP_Y_MAX = 0.085                    # ... and FORWARD, which is the bound that decides how low the dance
                                      # can reach. The lamp tips when the ZMP leaves its base footprint at
                                      # 0.100 (safety.yaml cylinder_radius_m via LampModel.base["radius"]).
@@ -195,7 +204,10 @@ SPEED_AT_SLOW, SPEED_AT_FAST = 260.0, 340.0   # the budget at BPM_SLOW and at BP
 BPM_SLOW, BPM_FAST = 80.0, 170.0
 
 
-def speed_for(bpm: float) -> float:
+SPEED_CALM = 150.0                            # the budget at the speed dial's bottom end
+
+
+def speed_for(bpm: float, speed: float = 1.0) -> float:
     """The speed budget for this tempo. A FIXED budget made fast songs look tamer than slow ones: a beat
     is shorter, so the same units/s buys a smaller excursion, and the rate limiter quietly shrank the
     choreography exactly when the music got more exciting. The budget therefore rises with tempo -- 260
@@ -203,17 +215,24 @@ def speed_for(bpm: float) -> float:
     as far. SPEED_LIMIT (380) is unchanged and still the hard ceiling every clip is validated against."""
     bpm = float(bpm)
     if bpm <= BPM_SLOW:
-        return SPEED_AT_SLOW
-    if bpm >= BPM_FAST:
-        return SPEED_AT_FAST
-    u = (bpm - BPM_SLOW) / (BPM_FAST - BPM_SLOW)
-    return SPEED_AT_SLOW + u * (SPEED_AT_FAST - SPEED_AT_SLOW)
+        budget = SPEED_AT_SLOW
+    elif bpm >= BPM_FAST:
+        budget = SPEED_AT_FAST
+    else:
+        u = (bpm - BPM_SLOW) / (BPM_FAST - BPM_SLOW)
+        budget = SPEED_AT_SLOW + u * (SPEED_AT_FAST - SPEED_AT_SLOW)
+    # The operator's speed dial rides on top, between SPEED_CALM and whatever the tempo asked for.
+    # It exists because letting the tempo choose alone made a fast song frantic with no way to say so
+    # from the dashboard. 1.0 is exactly the tempo's own budget, so the dial changes nothing until it
+    # is moved. Lowering it only ever slows the arm, so it is safe at any value.
+    speed = 0.0 if speed != speed else min(1.0, max(0.0, float(speed)))     # NaN -> calmest
+    return SPEED_CALM + speed * (max(budget, SPEED_CALM) - SPEED_CALM)
 
 
-def max_move(bpm: float, limit: float | None = None, move_frac: float = MOVE_FRAC) -> float:
+def max_move(bpm: float, limit: float | None = None, move_frac: float = MOVE_FRAC, speed: float = 1.0) -> float:
     """Largest commanded one-beat excursion that a cosine-eased move keeps under `limit` units/s.
     `limit` None means this tempo's own budget (speed_for)."""
-    limit = speed_for(bpm) if limit is None else limit
+    limit = speed_for(bpm, speed) if limit is None else limit
     return limit * move_frac * beat_period(bpm) / (math.pi / 2)
 
 
@@ -404,9 +423,9 @@ YAWS = {
 DEFAULT_BPM = 128.0                                          # keyframes() without a tempo: the demo tempo
 
 
-def beat_budget(bpm: float, limit: float | None = None) -> float:
+def beat_budget(bpm: float, limit: float | None = None, speed: float = 1.0) -> float:
     """The most a joint may move in ONE beat (commanded units) and stay under the speed budget."""
-    return max_move(bpm, limit) * SPEED_MARGIN * 0.995
+    return max_move(bpm, limit, speed=speed) * SPEED_MARGIN * 0.995
 
 
 def lift_profile(tier: str, variant: str, bpm: float) -> np.ndarray:
@@ -600,13 +619,40 @@ def scaled(raw: np.ndarray, scales: np.ndarray, start: np.ndarray = START) -> np
     return start + np.asarray(scales, dtype=float) * (np.asarray(raw, dtype=float) - start)
 
 
-def bold_trajectory(tier: str, bpm: float, variant: str = "a", bold: float = 1.0) -> np.ndarray:
-    """The nominal pattern with the slider's multiplier on every joint's excursion from START. Applied
-    BEFORE the speed budget (joint_scales), so a bold clip is scaled down by the budget where it must be
-    and a timid one is simply smaller. At bold 1.0 the multiplier is 1.0 and the raw trajectory is
+def speed_multiplier(raw: np.ndarray, bpm: float, gain: np.ndarray = GAIN, speed: float = 1.0) -> float:
+    """One factor, the same for every joint, that brings the commanded peak speed inside the dial's
+    budget. UNIFORM ON PURPOSE, and this is the whole point of the function.
+
+    The obvious implementation -- hand the dial to joint_scales as a lower limit -- is wrong, and wrong
+    in a way that only shows at the fast end. joint_scales picks a SEPARATE scale per joint, so lowering
+    the limit trims whichever joints happen to be fastest and leaves the others alone: measured at 180
+    bpm on hype c with the dial at 0.45, base_yaw came back 0.74 and base_pitch 0.715 while elbow_pitch
+    stayed 1.00. That is not the same dance more slowly, it is a DIFFERENT POSE -- the arm folded up and
+    back with the shoulder held in -- and its centre of mass left the footprint backwards, so the
+    Validator refused the clip (zmp_y min -0.034 against the -0.030 bound). The dial had a hole in it
+    between about 0.35 and 0.50 where the live path silently produced nothing.
+
+    A uniform factor cannot do that. Every joint keeps its share, so the trajectory is the same shape
+    scaled toward START, and shrinking a validated pose toward START only moves the centre of mass
+    toward the middle of the base. The trajectory is linear in the excursion, so the factor is exact
+    and no search is needed."""
+    speed = 0.0 if speed != speed else min(1.0, max(0.0, float(speed)))
+    if speed >= 1.0:
+        return 1.0
+    peak = float(peak_speed(apply_gain(raw, gain)).max())
+    budget = speed_for(bpm, speed) * SPEED_MARGIN
+    return 1.0 if peak <= budget or peak <= 0 else budget / peak
+
+
+def bold_trajectory(tier: str, bpm: float, variant: str = "a", bold: float = 1.0, speed: float = 1.0,
+                    gain: np.ndarray = GAIN) -> np.ndarray:
+    """The nominal pattern with the slider's multiplier on every joint's excursion from START, and then
+    the operator's speed dial's own uniform factor. Both are applied BEFORE the speed budget
+    (joint_scales), so a bold clip is scaled down by the budget where it must be and a timid one is
+    simply smaller. At bold 1.0 and speed 1.0 both multipliers are 1.0 and the raw trajectory is
     returned untouched -- not even a float round trip -- so the library stays byte-identical."""
     raw = raw_trajectory(tier, bpm, variant)
-    m = bold_multiplier(bold)
+    m = bold_multiplier(bold) * speed_multiplier(raw, bpm, gain, speed)
     return raw if m == 1.0 else scaled(raw, m)
 
 
@@ -658,10 +704,11 @@ def face_trajectory(U: np.ndarray, facing: float) -> np.ndarray:
 
 
 def commanded(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
-              scales: np.ndarray | None = None, bold: float = 1.0, facing: float = 0.0) -> np.ndarray:
+              scales: np.ndarray | None = None, bold: float = 1.0, facing: float = 0.0,
+              speed: float = 1.0) -> np.ndarray:
     """The trajectory as the runtime will be asked to play it: bold, per-joint scale, gain, the turn to
     `facing`, then the clamp. scales=None chooses them against the speed budget."""
-    raw = bold_trajectory(tier, bpm, variant, bold)
+    raw = bold_trajectory(tier, bpm, variant, bold, speed, gain)
     if scales is None:
         scales = joint_scales(raw, bpm, gain)
     U = apply_gain(scaled(raw, scales), gain)
@@ -669,7 +716,7 @@ def commanded(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN
 
 
 def build_clip(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
-               bold: float = 1.0, facing: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+               bold: float = 1.0, facing: float = 0.0, speed: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
     """(scales, commanded trajectory). The batch library is bold 1.0 facing 0.0; the live path passes the
     slider and, when it has a direction to dance at, the bearing of the person holding the light.
 
@@ -681,7 +728,7 @@ def build_clip(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAI
     The turned clip starts and ends at base_yaw = facing rather than 0. That is intended: the ends still
     match each other, so the runtime has nothing to blend when the next clip at the same facing starts.
     """
-    raw = bold_trajectory(tier, bpm, variant, bold)
+    raw = bold_trajectory(tier, bpm, variant, bold, speed, gain)
     scales = joint_scales(raw, bpm, gain)
     U = apply_gain(scaled(raw, scales), gain)
     # The turn is a constant added to one column, so every frame-to-frame difference is the same one it
@@ -800,7 +847,7 @@ def validate_rows(rows, model) -> tuple[bool, dict]:
 
 
 def make_clip(tier: str, variant: str, bpm: float, bold: float, gains: dict | None = GAINS,
-              model=None, facing: float = 0.0) -> tuple[list[tuple], dict]:
+              model=None, facing: float = 0.0, speed: float = 1.0) -> tuple[list[tuple], dict]:
     """ONE clip at an exact bpm, boldness and facing, as (rows, meta): rows are 30 fps 5-tuples of
     commanded joint values (csv_text() turns them into the runtime's CSV), meta describes it. Same maths
     as the batch generator (build_clip), so bold 1.0 facing 0.0 at a bucket bpm reproduces the library
@@ -814,7 +861,7 @@ def make_clip(tier: str, variant: str, bpm: float, bold: float, gains: dict | No
     if not (BPM_RANGE[0] <= bpm <= BPM_RANGE[1]):
         raise ValueError(f"bpm {bpm} outside {BPM_RANGE[0]:.0f}..{BPM_RANGE[1]:.0f}")
     gain = gain_vector(gains)
-    scales, U = build_clip(tier, bpm, variant, gain, bold, facing)
+    scales, U = build_clip(tier, bpm, variant, gain, bold, facing, speed)
     rows = [tuple(float(x) for x in u) for u in U]
     # The turn build_clip actually made, which facing_limit may have reduced: frame 0 is START, whose
     # base_yaw is 0, and facing_limit keeps the turned column inside the box, so the clamp leaves that

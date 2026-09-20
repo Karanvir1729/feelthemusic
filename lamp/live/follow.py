@@ -40,7 +40,12 @@ PALM_WIDTH_M = 0.08      # index knuckle to little-finger knuckle, adult
 PALM_LENGTH_M = 0.10     # wrist to middle knuckle
 FACE_WIDTH_M = 0.15
 PHONE_WIDTH_M = 0.075   # approximate visible screen width, not a calibrated distance measurement
-FRAME_TARGETS = ("face", "hand", "phone")  # sampled every frame, unlike the throttled object detector
+FRAME_TARGETS = ("face", "hand", "phone", "flashlight")  # sampled every frame, unlike the throttled
+# object detector. "flashlight" was missing from here from the day the target was added, on this branch
+# and on main: FlashlightTracker runs on EVERY frame like the other three (4-8 ms), but the omission
+# handed it the object detector's 3.5 s sighting window instead of TargetLock.LOST_S. The lamp went on
+# claiming it could see a torch, and reporting a facing to aim the dance at, for 3.5 s after the torch
+# was switched off or swept away.
 
 
 class Camera(threading.Thread):
@@ -259,13 +264,21 @@ class FlashlightTracker:
     rule, unchanged.
     """
     V_CORE, S_CORE = 254, 40
-    OPEN = 7                                 # px at 640 wide, scaled with the frame
-    MIN_AREA, MAX_AREA = 0.00003, 0.25       # of the frame: about 9 px at 640x480, up to a quarter of it.
-                                             # The floor is this low on purpose: the 7-px opening above has
-                                             # already cleared every highlight the venue itself produces
-                                             # (measured: nothing survives it), so the remaining job is to
-                                             # keep a torch held across the room, which lands around 20 px.
-    ROUNDNESS = 0.45                         # 4*pi*area/perimeter^2 of the core contour
+    OPEN = 3                                 # px at 640 wide, scaled with the frame. NOT 7: measured live on
+                                             # 2026-09-20, the operator's own phone torch across the room is a
+                                             # 220-450 px clipped blob that survives a 3 px disc (133-259 px
+                                             # left) and is erased completely by 5 or 7. The 7 was chosen from
+                                             # the room alone, which it did clear; it cleared the torch too.
+    MIN_AREA, MAX_AREA = 0.0002, 0.25        # of the frame: about 61 px at 640x480, up to a quarter of it.
+                                             # Chosen from both sides of the line, measured 2026-09-20 on
+                                             # four no-torch frames of the venue and on the live torch: after
+                                             # the 3-px opening AND the roundness and halo gates below, the
+                                             # room's biggest survivor is 25-29 px; the torch is 133-259 px.
+                                             # 61 px sits a factor of two from each.
+    ROUNDNESS = 0.35                         # 4*pi*area/perimeter^2 of the core contour. A torch's clipped
+                                             # core is a bloom, not a disc, and it dies under a 5-px opening,
+                                             # so it is not very round; the room's highlights are held off
+                                             # by MIN_AREA (they never reach 61 px), not by this gate.
     HALO_V, HALO_S = 180, 110
     HALO_MIN = 1.5                           # the halo covers at least this much of the core's own area
     NOMINAL = 1.0                            # set from the model in main(): fx / FLASHLIGHT_NOMINAL_M

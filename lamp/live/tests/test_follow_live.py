@@ -870,7 +870,13 @@ def torch_frame(*lights):
     """Synthetic torches, built the way app_screen() builds synthetic screens and never a camera
     capture: a clipped-white core (V 255, S 0) inside a halo that falls off to 45 % of full over
     `halo` pixels, which is how a torch aimed into the lens reads -- a saturated core with bloom
-    around it. Each light is ((x, y), core radius px, halo radius px) on a 640x480 black frame."""
+    around it. Each light is ((x, y), core radius px, halo radius px) on a 640x480 black frame.
+
+    Size them like the torch the tracker was tuned on. Measured live 2026-09-20, the operator's own
+    phone torch across the venue is a 220-450 px clipped-white blob, 133-259 px after the 3-px
+    opening: core radii of 8-12 px here. These are filled discs, so they stand in for a torch's SIZE
+    and POSITION only: a real core is lacy at the edges and dies under a 5- or 7-px disc, which a
+    filled disc of the same size does not -- that erasure is a hardware measurement, not modelled."""
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     for (cx, cy), core, halo in lights:
         for r in range(halo, core, -1):
@@ -880,7 +886,10 @@ def torch_frame(*lights):
     return frame
 
 
-def torch_speckles(radius, *, centres=((100, 80), (300, 60), (520, 110), (200, 400))):
+SPECKLE_CENTRES = ((100, 80), (300, 60), (520, 110), (200, 400))
+
+
+def torch_speckles(radius, *, centres=SPECKLE_CENTRES):
     """Clipped-white specks with no bloom: the venue's own ceiling panels and laptop-screen glare."""
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     for centre in centres:
@@ -888,7 +897,13 @@ def torch_speckles(radius, *, centres=((100, 80), (300, 60), (520, 110), (200, 4
     return frame
 
 
-@pytest.mark.parametrize("centre,core,halo", [((320, 240), 10, 30), ((100, 100), 4, 12), ((540, 380), 20, 60)])
+# Cores of 174 px (r 8: across the room, mid the measured 133-259 px band), 288 px (r 10) and 1200 px
+# (r 20: an arm away). The ((100, 100), 4, 12) case this held until 2026-09-20 was a 38 px core, and
+# the 61 px floor now refuses it on purpose: 38 px is the size of the room's own highlights (25-29 px
+# survivors), not of any torch -- see the floor test below. The two corner cases have their halo cut
+# off by the frame edge and are still found: that is the 'anywhere' this test is for.
+@pytest.mark.parametrize("centre,core,halo", [((320, 240), 10, 30), ((100, 100), 8, 24), ((540, 380), 20, 60),
+                                              ((12, 12), 8, 24), ((628, 468), 8, 24)])
 def test_flashlight_tracker_locates_a_torch_anywhere_in_the_frame(centre, core, halo):
     seen = F.FlashlightTracker().locate(torch_frame((centre, core, halo)))
     assert seen is not None
@@ -905,7 +920,9 @@ def test_flashlight_size_is_a_nominal_distance_not_the_blobs_span(monkeypatch):
     fx = 0.5 / math.tan(math.radians(61.0) / 2)                  # the model's horizontal focal length
     monkeypatch.setattr(F.FlashlightTracker, "NOMINAL", fx / F.FLASHLIGHT_NOMINAL_M)   # as main() sets it
     near = F.FlashlightTracker().locate(torch_frame(((320, 240), 24, 70)))
-    far = F.FlashlightTracker().locate(torch_frame(((320, 240), 4, 12)))
+    # across the room: 174 px of core, mid the measured 133-259 px band. Was ((320, 240), 4, 12) until
+    # 2026-09-20: a 38 px core, which the 61 px floor now refuses as the room's own kind of highlight.
+    far = F.FlashlightTracker().locate(torch_frame(((320, 240), 8, 24)))
     assert near is not None and far is not None
     assert near[2] == far[2] == pytest.approx(fx / F.FLASHLIGHT_NOMINAL_M)
     distance = 1.0 * fx / near[2]                                # LampModel.distance_from_size(size, 1.0)
@@ -913,25 +930,50 @@ def test_flashlight_size_is_a_nominal_distance_not_the_blobs_span(monkeypatch):
     assert 0.30 <= distance <= 3.0            # the band the loop clips a non-face, non-hand target into
 
 
-def test_flashlight_opening_clears_the_venues_own_highlights():
-    """Measured in the venue 2026-09-19: at V >= 254, S <= 40 the brightest ceiling panel survives
-    only a 5-px disc, and then as a blob under 70 px. The production opening is 7 px, which leaves
-    NOTHING in the room -- that is what lets MIN_AREA sit as low as 9 px so a torch held across the
-    hall (about 20 px of core) still counts."""
+def test_flashlight_area_floor_not_the_opening_clears_the_venues_own_highlights():
+    """Until 2026-09-20 this test asserted that the 7-px opening left NOTHING of the venue's own
+    highlights (measured 2026-09-19: the brightest panel survives only a 5-px disc). Measured live
+    that day with the operator's own phone torch across the venue, the torch is a 220-450 px
+    clipped-white blob that survives a 3-px opening (133-259 px left) and is ERASED by 5 or 7: the
+    7 cleared the room and cleared the torch with it. Production now opens with 3 px, which the
+    room's highlights survive as well, and MIN_AREA does the job the opening did: on four no-torch
+    frames of the venue the biggest survivor -- after the opening AND the roundness and halo gates --
+    is 25-29 px, the torch is 133-259 px, and the floor sits at 61 px, a factor of two from each.
+    So the check is no longer 'nothing survives the opening'; it is 'what survives is under the
+    floor', shown from both sides of the line."""
     tracker = F.FlashlightTracker()
-    assert tracker.OPEN == 7 and tracker.V_CORE == 254 and tracker.S_CORE == 40
+    assert tracker.OPEN == 3 and tracker.V_CORE == 254 and tracker.S_CORE == 40      # OPEN was 7
+    assert tracker.MIN_AREA == 0.0002 and tracker.MIN_AREA * 640 * 480 == pytest.approx(61.44)   # was 0.00003: 9 px
     speckles = torch_speckles(3)                                 # 7 px across, the panel's own size
-    raw = ((cv2.cvtColor(speckles, cv2.COLOR_BGR2HSV)[:, :, 2] >= tracker.V_CORE)
-           & (cv2.cvtColor(speckles, cv2.COLOR_BGR2HSV)[:, :, 1] <= tracker.S_CORE)).astype(np.uint8) * 255
-    five = cv2.morphologyEx(raw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
-    blobs, _, stats, _ = cv2.connectedComponentsWithStats(five)
-    assert blobs - 1 == 4 and max(stats[1:, 4]) < 70             # a 5-px disc leaves them, under 70 px
-    assert cv2.countNonZero(tracker.masks(speckles)[0]) == 0     # the 7-px disc leaves nothing
+    core, _ = tracker.masks(speckles)
+    blobs, _, stats, _ = cv2.connectedComponentsWithStats(core)
+    assert blobs - 1 == 4 and stats[1:, 4].tolist() == [25] * 4  # the 3-px disc leaves all four, 25 px each
+    contours, _ = cv2.findContours(core, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    areas = [cv2.contourArea(c) for c in contours]
+    assert areas == [18.0] * 4                                   # contour area, the number the gate reads
+    for contour in contours:                                     # shape does not stop them: little round discs
+        assert 4 * math.pi * cv2.contourArea(contour) / cv2.arcLength(contour, True) ** 2 >= tracker.ROUNDNESS
+    assert max(areas) / (640 * 480) < tracker.MIN_AREA           # the floor does
     assert tracker.candidates(speckles) == [] and tracker.locate(speckles) is None
-    # and the torch the floor is set that low for is still found in the same frame
-    with_torch = speckles.copy()
-    cv2.circle(with_torch, (320, 240), 14, (210, 210, 210), -1)
-    cv2.circle(with_torch, (320, 240), 5, (255, 255, 255), -1)
+    # Both sides of the line, with highlights that carry bloom so the halo gate passes them and the
+    # floor alone decides: 38 px cores (r 4, the old 'far torch' of this file) are refused, 66 px (r 5)
+    # are taken. Check that every other gate really does pass the refused ones first.
+    under = torch_frame(*[(centre, 4, 12) for centre in SPECKLE_CENTRES])
+    core, halo = tracker.masks(under)
+    for contour in cv2.findContours(core, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+        area, perimeter = cv2.contourArea(contour), cv2.arcLength(contour, True)
+        assert area == 38.0 and area / (640 * 480) < tracker.MIN_AREA
+        assert 4 * math.pi * area / (perimeter * perimeter) >= tracker.ROUNDNESS
+        assert min(cv2.minAreaRect(contour)[1]) >= 3
+        x, y, w, h = cv2.boundingRect(contour)
+        pad = max(w, h)
+        assert cv2.countNonZero(halo[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad]) >= tracker.HALO_MIN * area
+    assert tracker.candidates(under) == [] and tracker.locate(under) is None
+    over = torch_frame(*[(centre, 5, 15) for centre in SPECKLE_CENTRES])
+    assert len(tracker.candidates(over)) == 4                    # 66 px each: over the floor, all four count
+    # and the torch the floor is set for is still found in the same frame as the panels
+    with_torch = np.maximum(speckles, torch_frame(((320, 240), 8, 24)))   # 174 px of core: across the room
+    assert len(F.FlashlightTracker().candidates(with_torch)) == 1          # the torch, none of the panels
     seen = F.FlashlightTracker().locate(with_torch)
     assert seen is not None and seen[:2] == pytest.approx((0.5, 0.5), abs=0.01)
 
@@ -939,24 +981,46 @@ def test_flashlight_opening_clears_the_venues_own_highlights():
 def test_flashlight_rejects_a_bright_bar_that_survives_the_opening_but_is_not_round():
     """A window slit or a light batten clips white over hundreds of pixels and carries its own
     bloom, so neither the opening nor the halo gate stops it. Roundness does: measured on this
-    synthetic batten, 4*pi*A/P^2 = 0.15 against the 0.45 gate."""
+    synthetic batten, 4*pi*A/P^2 = 0.15 against the gate, which is 0.35 since 2026-09-20 (was 0.45:
+    a torch's clipped core is a bloom, not a disc, and the room's highlights are held off by the
+    area floor now, not by shape). Re-derived for 0.35: a bloomed bar w wide and L long scores about
+    pi*w*L/(w+L)^2, so the line moved from 5:1 to 7:1 -- a 140x20 bar scores 0.348 and is still
+    refused; a 100x20 stub scores 0.445, which 0.45 refused by a hair and 0.35 lets through."""
     tracker = F.FlashlightTracker()
-    batten = np.zeros((480, 640, 3), dtype=np.uint8)
-    for k in range(22, 0, -1):                                   # bloom around the bar, so only shape can reject it
-        v = int(255 * (1.0 - 0.55 * k / 22))
-        cv2.rectangle(batten, (150 - k, 230 - k), (490 + k, 248 + k), (v, v, v), -1)
-    cv2.rectangle(batten, (150, 230), (490, 248), (255, 255, 255), -1)
-    core, halo = tracker.masks(batten)
-    assert cv2.countNonZero(core) > 5000                         # it sails through the 7-px opening
-    contour = max(cv2.findContours(core, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], key=cv2.contourArea)
-    area, perimeter = cv2.contourArea(contour), cv2.arcLength(contour, True)
-    roundness = 4 * math.pi * area / (perimeter * perimeter)
-    assert roundness == pytest.approx(0.15, abs=0.03) and roundness < tracker.ROUNDNESS == 0.45
-    x, y, w, h = cv2.boundingRect(contour)
-    pad = max(w, h)
-    box = halo[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad]
-    assert cv2.countNonZero(box) >= tracker.HALO_MIN * area      # the halo gate would have passed it
+    assert tracker.ROUNDNESS == 0.35                             # was 0.45
+
+    def bar(x0, y0, x1, y1):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        for k in range(22, 0, -1):                               # bloom around the bar, so only shape can reject it
+            v = int(255 * (1.0 - 0.55 * k / 22))
+            cv2.rectangle(frame, (x0 - k, y0 - k), (x1 + k, y1 + k), (v, v, v), -1)
+        cv2.rectangle(frame, (x0, y0), (x1, y1), (255, 255, 255), -1)
+        return frame
+
+    def shape(frame):
+        """(core px after the opening, roundness, whether the halo gate passes) of the biggest blob."""
+        core, halo = tracker.masks(frame)
+        contour = max(cv2.findContours(core, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], key=cv2.contourArea)
+        area, perimeter = cv2.contourArea(contour), cv2.arcLength(contour, True)
+        x, y, w, h = cv2.boundingRect(contour)
+        pad = max(w, h)
+        box = halo[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad]
+        return cv2.countNonZero(core), 4 * math.pi * area / (perimeter * perimeter), cv2.countNonZero(box) >= tracker.HALO_MIN * area
+
+    batten = bar(150, 230, 490, 248)                             # 340 x 18: about 19:1
+    survived, roundness, halo_passes = shape(batten)
+    assert survived > 5000                                       # it sails through the 3-px opening, as it did the 7
+    assert roundness == pytest.approx(0.15, abs=0.03) and roundness < tracker.ROUNDNESS
+    assert halo_passes                                           # the halo gate would have passed it
     assert tracker.candidates(batten) == [] and tracker.locate(batten) is None
+    # the line, from both sides
+    seven_to_one, five_to_one = bar(250, 230, 390, 250), bar(270, 230, 370, 250)   # 140 x 20 and 100 x 20
+    roundness = shape(seven_to_one)[1]
+    assert roundness == pytest.approx(0.348, abs=0.01) and roundness < tracker.ROUNDNESS
+    assert tracker.candidates(seven_to_one) == []
+    roundness = shape(five_to_one)[1]
+    assert roundness == pytest.approx(0.445, abs=0.01) and tracker.ROUNDNESS <= roundness < 0.45
+    assert len(tracker.candidates(five_to_one)) == 1             # the price of 0.35: a 5:1 stub is shape enough
 
 
 def test_flashlight_rejects_a_round_clipped_blob_with_no_bloom_around_it():
@@ -1032,6 +1096,11 @@ class FakeTorch:
         return None if seen is None else (seen[0], seen[1], self.nominal)
 
 
+# The flashlight case is RED and stays red until production agrees with it: FRAME_TARGETS in follow.py
+# is ("face", "hand", "phone"), so a torch gets the once-a-second object detector's 3.5 s window and
+# target.json keeps claiming a yaw for 3.5 s after the torch goes out. Red since the flashlight commit
+# (35a9340); not a casualty of the 2026-09-20 OPEN/MIN_AREA/ROUNDNESS change, which FakeTorch never
+# touches -- it builds no image, it hands back FakeCamera's point.
 @pytest.mark.parametrize("target,tracker", [("phone", None), ("flashlight", FakeTorch)])
 def test_a_lost_target_stops_claiming_a_facing_within_the_lock_window(tmp_path, target, tracker):
     """The target file's "yaw" is what lamp_show.py dances at, and TargetReport's contract is that it
