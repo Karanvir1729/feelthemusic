@@ -7,6 +7,7 @@ import itertools
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -147,7 +148,7 @@ def test_keyframes_start_and_end_at_start_pose_for_every_variant():
         bc.keyframes("groove", "z")
 
 
-def test_accents_on_beat_one_of_each_bar_and_the_flick_on_beat_five():
+def test_accents_and_flicks_apply_to_groove_and_drop_but_not_continuous_hype():
     K = bc.keyframes("groove", "a") - bc.START
     # groove a: sway +Y alternating; beats 1 and 5 are x1.3 of beats 3 and 7
     assert K[3, bc.YAW] == pytest.approx(bc.Y) and K[7, bc.YAW] == pytest.approx(bc.Y)
@@ -156,13 +157,14 @@ def test_accents_on_beat_one_of_each_bar_and_the_flick_on_beat_five():
     # beat 5 carries the head flick on top of the accented bob (wrist_pitch up, wrist_roll)
     assert np.allclose(K[5] - bc.ACCENT * K[3], bc.FLICK)
     assert not np.allclose(K[1], K[5])
-    for tier in ("groove", "hype"):
-        for variant in bc.VARIANTS:
-            K = bc.keyframes(tier, variant) - bc.START
-            plain = _unaccented(tier, variant)
-            assert np.allclose(K[1], bc.ACCENT * plain[0])                       # beat 1: x1.3
-            assert np.allclose(K[5], bc.ACCENT * plain[4] + bc.FLICK)            # beat 5: x1.3 + the flick
-            assert np.allclose(K[3], plain[2]) and np.allclose(K[7], plain[6])   # the others: nominal
+    for variant in bc.VARIANTS:
+        K = bc.keyframes("groove", variant) - bc.START
+        plain = bc.groove_excursions(variant)
+        assert np.allclose(K[1], bc.ACCENT * plain[0])                       # beat 1: x1.3
+        assert np.allclose(K[5], bc.ACCENT * plain[4] + bc.FLICK)            # beat 5: x1.3 + the flick
+        assert np.allclose(K[3], plain[2]) and np.allclose(K[7], plain[6])   # the others: nominal
+        assert np.allclose(bc.keyframes("hype", variant)[1:8] - bc.START,
+                           bc.hype_excursions(variant))                    # continuous phrases, no impulses
     # drop: beat 1 is the spec's spring, exactly (no x1.3), and the flick is still on beat 5
     D = bc.keyframes("drop", "a")
     assert np.allclose(D[1], bc.SPRING)
@@ -178,14 +180,41 @@ def test_accents_on_beat_one_of_each_bar_and_the_flick_on_beat_five():
         wp = bc.keyframes("build", v)[:7, bc.WP]
         assert (np.diff(wp) < 0).all() and wp[0] == 30 and wp[6] == 15, (v, wp)
     assert np.allclose(B[:, bc.WR], 0.0) and np.allclose(B[:, bc.YAW], 0.0)   # a sinks straight down: no flick
-    # the accent x1.3 and the flick only ever touch groove/hype/drop
+    # the accent x1.3 and the flick only ever touch groove/drop
     for v in bc.VARIANTS:                                   # c nods on alternate beats around the ramp, no flick on 5
         C = bc.keyframes("build", v)
         assert not np.allclose(C[5] - bc.START, np.array(bc.build_excursions(v))[4] + bc.FLICK)
 
 
-def _unaccented(tier, variant):
-    return {"groove": bc.groove_excursions, "hype": bc.hype_excursions}[tier](variant)
+def test_named_patterns_select_existing_tier_and_variant_pairs():
+    assert bc.DANCE_PATTERNS == {"auto": None, "sweep": ("hype", "a"), "rise": ("hype", "b"),
+                                 "diagonal": ("hype", "c"), "wiggle": ("build", "b")}
+    assert all(pair in COMBOS for pair in bc.DANCE_PATTERNS.values() if pair is not None)
+
+
+def test_hype_sweep_spreads_yaw_across_eight_beats_without_accents():
+    yaw = bc.keyframes("hype", "a")[:, bc.YAW]
+    assert yaw[0] == yaw[4] == yaw[8] == 0.0
+    assert yaw[2] > 0 and yaw[6] < 0
+    assert np.allclose(yaw, -yaw[::-1])
+    assert (np.diff(yaw[:3]) > 0).all()
+    assert (np.diff(yaw[2:7]) < 0).all()
+    assert (np.diff(yaw[6:]) > 0).all()
+
+
+@pytest.mark.parametrize("variant", bc.VARIANTS)
+def test_hype_moves_for_the_whole_beat_but_preserves_endpoint_holds(variant):
+    bpm = 120
+    K = bc.keyframes("hype", variant)
+    U = bc.raw_trajectory("hype", bpm, variant)
+    assert np.allclose(U, bc.trajectory(K, bpm, move_frac=1.0))
+    hold = int(bc.HOLD_S * bc.FPS)
+    assert np.allclose(U[:hold], bc.START) and np.allclose(U[-hold:], bc.START)
+    for k, instant in enumerate(bc.beat_instants(bpm)):
+        i = int(round(instant * bc.FPS))
+        assert np.allclose(U[i], K[k])
+        if k < bc.BEATS and not np.allclose(K[k], K[k + 1]):
+            assert not np.allclose(U[i + 3], K[k])        # no old 30%-beat pause
 
 
 def test_hype_b_has_two_bottom_up_phrases_instead_of_a_head_circle():
@@ -248,11 +277,14 @@ def test_drop_and_build_poses_follow_the_spec():
     assert D[2, bc.YAW] == pytest.approx(bc.Y) and D[4, bc.YAW] == pytest.approx(-bc.Y)   # b sweeps right first
     assert D[3, bc.YAW] == 0 and D[3, bc.BP] < bc.START[bc.BP]                   # ... through a centre recoil on beat 3
     A = bc.keyframes("drop", "a")
-    assert A[2, bc.YAW] == pytest.approx(-bc.Y) and A[3, bc.YAW] == 0 and A[4, bc.YAW] == pytest.approx(bc.Y)
-    assert np.allclose(A[5:8], bc.keyframes("hype", "a")[5:8])                   # settles into hype
-    h = [e * bc.MIRROR for e in bc.hype_excursions("b")[4:7]]                    # b: hype b mirrored, then the
-    assert np.allclose(D[5:8] - bc.START, [bc.ACCENT * h[0] + bc.FLICK, h[1], h[2]])   # bar accent and the flick on top
-    assert np.allclose(bc.keyframes("drop", "c")[5:8], bc.keyframes("hype", "c")[5:8])
+    assert A[2, bc.YAW] == pytest.approx(bc.Y) and A[3, bc.YAW] == 0 and A[4, bc.YAW] == pytest.approx(-bc.Y)
+    for variant in bc.VARIANTS:
+        tail = np.array(bc.hype_excursions(variant)[4:7])
+        if variant == "b":
+            tail = tail * bc.MIRROR
+        # Drop keeps its beat-5 accent/flick, while hype now follows the unaccented phrase.
+        assert np.allclose(bc.keyframes("drop", variant)[5:8] - bc.START,
+                           [bc.ACCENT * tail[0] + bc.FLICK, tail[1], tail[2]])
     # no single beat carries more than 1.6 Y of yaw in any drop or groove c (the sweep and the look
     # reversals are spread over two beats, so the yaw budget is not spent on one move)
     for tier, v in (("drop", "a"), ("drop", "b"), ("drop", "c"), ("groove", "c")):
@@ -300,20 +332,20 @@ def test_per_joint_scales_fill_the_speed_budget(bpm):
         cmd = bc.commanded(tier, bpm, variant)
         speed = bc.peak_speed(cmd)
         assert speed.max() <= bc.SPEED_DESIGN, (tier, variant, speed)
-        # a joint that was scaled down sits within 2 % of the budget (the amplitude is as large as
-        # the speed limit allows); one step more would break it
+        # Quantization may leave more than 2% unused at small scales, but the next available
+        # scale must exceed the same budget. This checks maximality without a tempo-dependent guess.
         pre = bc.peak_speed(bc.apply_gain(bc.scaled(raw, s)))
         for j in range(5):
             if s[j] < 1.0:
-                assert pre[j] >= bc.SPEED_DESIGN * bc.SPEED_MARGIN * 0.98, (tier, variant, j, pre[j])
+                assert pre[j] <= bc.SPEED_DESIGN * bc.SPEED_MARGIN + 1e-9
                 s2 = s.copy()
-                s2[j] += 2 * bc.SCALE_STEP
+                s2[j] += bc.SCALE_STEP
                 assert bc.peak_speed(bc.apply_gain(bc.scaled(raw, s2)))[j] > bc.SPEED_DESIGN * bc.SPEED_MARGIN
         assert np.allclose(cmd[0], bc.START) and np.allclose(cmd[-1], bc.START)
         assert not bc.envelope_violations(cmd)
 
 
-def test_v2_is_bigger_than_v1_where_the_choreography_allows():
+def test_multi_beat_sweep_uses_more_travel_than_single_beat_reversals():
     # the 4-beat and 8-beat sweeps buy amplitude at the same speed budget: at 132 bpm the figure-eight
     # sways about twice as far as the beat-by-beat sway, and hype's wide sway is wider than groove a's
     A = {v: np.abs(bc.commanded("groove", 132, v)[:, bc.YAW]).max() for v in bc.VARIANTS}
@@ -321,9 +353,10 @@ def test_v2_is_bigger_than_v1_where_the_choreography_allows():
     assert A["c"] > 1.6 * A["a"]                          # the nod-led look reversals no longer bind the yaw scale
     H = np.abs(bc.commanded("hype", 132, "a")[:, bc.YAW]).max()
     assert H > 1.5 * A["a"]
-    # every drop swings as wide as hype at the demo tempo (the sweep no longer spends 2 Y on one beat)
+    # The dedicated eight-beat sweep has more travel than the drop's shorter accented phrases.
     for v in bc.VARIANTS:
-        assert np.abs(bc.commanded("drop", 132, v)[:, bc.YAW]).max() > 0.95 * H, v
+        drop = np.abs(bc.commanded("drop", 132, v)[:, bc.YAW]).max()
+        assert 0 < drop < H, v
     # every joint is alive in every hype/groove clip (no joint stays at START)
     for tier in ("groove", "hype"):
         for v in bc.VARIANTS:
@@ -378,25 +411,77 @@ def test_names():
 
 
 # ----------------------------------------------------------------------------- end to end
+@pytest.fixture
+def calibrated_model(monkeypatch):
+    model = SimpleNamespace(robot_dir=Path("/synthetic-robot/pi5_feetech_r1"),
+                            scale_source="servo calibration /synthetic-robot/lelamp-calibration.json",
+                            _scale={j: 0.01 for j in bc.JOINTS})
+    root = bc.ET.fromstring('<robot><link><inertial><mass value="1"/>'
+                            '<origin xyz="0 0 0"/></inertial></link></robot>')
+    monkeypatch.setattr(bc, "LampModel", lambda *args, **kwargs: model)
+    monkeypatch.setattr(bc.ET, "parse", lambda path: bc.ET.ElementTree(root))
+    return model
+
+
+@pytest.mark.parametrize("source", ["", "vendor approximate joint map"])
+def test_validator_refuses_missing_or_approximate_calibration(calibrated_model, source):
+    calibrated_model.scale_source = source
+    with pytest.raises(ValueError, match="requires finite positive servo calibration"):
+        bc.Validator(model=calibrated_model)
+
+
+@pytest.mark.parametrize("joint", bc.JOINTS)
+@pytest.mark.parametrize("scale", [0.0, -0.01, float("nan"), float("inf"), -float("inf"), np.pi / 100 + 1e-6])
+def test_validator_refuses_invalid_calibration_on_any_joint(calibrated_model, joint, scale):
+    calibrated_model._scale[joint] = scale
+    with pytest.raises(ValueError, match="requires finite positive servo calibration"):
+        bc.Validator(model=calibrated_model)
+
+
+def test_validator_accepts_finite_calibration_at_the_upper_bound(calibrated_model):
+    calibrated_model._scale = {j: np.pi / 100 for j in bc.JOINTS}
+    assert bc.Validator(model=calibrated_model).model is calibrated_model
+
+
+@pytest.mark.parametrize("source", ["vendor approximate joint map", "servo calibration /other/calibration.json"])
+def test_for_lamp_refuses_fallback_instead_of_the_requested_calibration(calibrated_model, source):
+    calibrated_model.scale_source = source
+    with pytest.raises(ValueError, match="could not load the requested lamp calibration"):
+        bc.Validator.for_lamp(calibrated_model.robot_dir, Path("/requested/calibration.json"))
+
+
+def test_for_lamp_passes_and_uses_the_exact_requested_calibration(calibrated_model, monkeypatch):
+    path = Path("/requested/calibration.json")
+    calibrated_model.scale_source = f"servo calibration {path}"
+    calls = []
+
+    def load(robot_dir, *, calibration):
+        calls.append((robot_dir, calibration))
+        return calibrated_model
+
+    monkeypatch.setattr(bc, "LampModel", load)
+    validator = bc.Validator.for_lamp(calibrated_model.robot_dir, path)
+    assert validator.model is calibrated_model
+    assert calls == [(calibrated_model.robot_dir, path)]
+
+
 @pytest.mark.parametrize("inertial", [
     '<origin xyz="0 0 0"/>',
     '<mass value="1"/>',
     '<mass/><origin xyz="0 0 0"/>',
     '<mass value="1"/><origin/>',
 ])
-def test_validator_rejects_inertial_xml_missing_required_fields(monkeypatch, inertial):
+def test_validator_rejects_inertial_xml_missing_required_fields(monkeypatch, calibrated_model, inertial):
     root = bc.ET.fromstring(f"<robot><link><inertial>{inertial}</inertial></link></robot>")
-    monkeypatch.setattr(bc, "LampModel", lambda *args, **kwargs: object())
     monkeypatch.setattr(bc.ET, "parse", lambda path: bc.ET.ElementTree(root))
     with pytest.raises(ValueError, match="inertial requires mass.*origin"):
         bc.Validator(Path("/synthetic-robot"))
 
 
-def test_validator_still_skips_links_without_inertial_data(monkeypatch):
+def test_validator_still_skips_links_without_inertial_data(monkeypatch, calibrated_model):
     root = bc.ET.fromstring('<robot><link/><link><inertial>'
                             '<mass value="2"/><origin xyz="0.1 0.2 0.3"/>'
                             '</inertial></link></robot>')
-    monkeypatch.setattr(bc, "LampModel", lambda *args, **kwargs: object())
     monkeypatch.setattr(bc.ET, "parse", lambda path: bc.ET.ElementTree(root))
     validator = bc.Validator(Path("/synthetic-robot"))
     assert len(validator.inertials) == 1
@@ -449,6 +534,9 @@ def test_generate_128_all_tiers_and_variants(tmp_path):
     b = next(c for c in manifest["clips"] if c["name"] == "beat_build_128_a")
     assert b["crouch"]["base_pitch"] < -58 and b["crouch"]["elbow_pitch"] < -50 and "START" in b["note"]
     assert b["flick_beat"] is None and b["accent_beats"] == [] and c["flick_beat"] == 5
+    for entry in real:
+        if entry["tier"] == "hype":
+            assert entry["accent_beats"] == [] and entry["flick_beat"] is None
     assert b["gain"] == manifest["gain"] == bc.GAINS
     assert b["last"] == manifest["start_pose"] == next(c for c in manifest["clips"] if c["name"] == "beat_drop_128_a")["first"]
     # the out dir holds exactly the manifest's clips (plus the manifest)
@@ -539,3 +627,188 @@ def test_partial_run_keeps_the_library_and_leaves_the_alias_alone(tmp_path):
     m = json.loads((tmp_path / "MANIFEST.json").read_text())
     assert len(m["clips"]) == 12 and m["tiers"] == ["groove", "drop", "build"]
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted([f"{c['name']}.csv" for c in m["clips"]] + ["MANIFEST.json"])
+
+
+# ----------------------------------------------------------------------------- live path: bold, make_clip, atomic writes
+def test_bold_multiplier_maps_the_slider():
+    assert bc.bold_multiplier(1.0) == 1.0                    # exactly: the library is the bold-1.0 case
+    assert bc.bold_multiplier(0.0) == pytest.approx(0.35)
+    assert bc.bold_multiplier(0.6) == pytest.approx(0.74)
+    assert bc.bold_multiplier(2.0) == 1.0 and bc.bold_multiplier(-1.0) == pytest.approx(0.35)
+    assert bc.bold_multiplier(float("nan")) == pytest.approx(0.35)
+
+
+def test_bold_sizes_the_speed_budgeted_motion_so_limited_yaw_still_responds():
+    bpm = 127.3
+    raw = bc.raw_trajectory("groove", bpm, "a")
+    budget = bc.joint_scales(raw, bpm)
+    assert budget[bc.YAW] < 1.0
+    full = bc.commanded("groove", bpm, "a", bold=1.0)
+    for bold in (0.0, 0.6, 1.0):
+        rows, meta = bc.make_clip("groove", "a", bpm, bold)
+        U = np.array(rows)
+        multiplier = bc.bold_multiplier(bold)
+        expected = bc.clamp_envelope(bc.apply_gain(bc.scaled(raw, budget * multiplier)))
+        assert np.allclose(U, expected)
+        assert np.allclose(U[:, bc.YAW], full[:, bc.YAW] * multiplier)
+        assert meta["scale"] == {j: round(float(s), 3) for j, s in zip(bc.JOINTS, budget)}
+        assert bc.peak_speed(U).max() <= bc.SPEED_DESIGN and not bc.envelope_violations(U)
+        assert np.allclose(U[0], bc.START) and np.allclose(U[-1], bc.START)
+        assert meta["ok"] is None and meta["frames"] == len(rows) == round(bc.clip_seconds(bpm) * bc.FPS)
+        assert meta["multiplier"] == pytest.approx(bc.bold_multiplier(bold))
+
+
+def _excursion(rows):
+    return np.abs(np.array(rows) - bc.START).max(axis=0)
+
+
+@pytest.mark.parametrize("bpm", [40, 80, 127.3, 132, 180, 214, 300])
+def test_all_patterns_keep_command_gates_and_effective_bold_throughout_tempo_range(bpm):
+    for tier, variant in COMBOS:
+        raw = bc.raw_trajectory(tier, bpm, variant)
+        budget = bc.joint_scales(raw, bpm)
+        previous = None
+        full = bc.commanded(tier, bpm, variant, bold=1.0)
+        for bold in (0.0, 0.5, 1.0):
+            rows, meta = bc.make_clip(tier, variant, bpm, bold)
+            U = np.array(rows)
+            context = (tier, variant, bpm, bold)
+            assert U.shape == (round(bc.clip_seconds(bpm) * bc.FPS), len(bc.JOINTS)), context
+            assert np.isfinite(U).all(), context
+            assert not bc.envelope_violations(U), context
+            assert bc.peak_speed(U).max() <= bc.SPEED_LIMIT, context
+            assert np.array_equal(U[0], bc.START) and np.array_equal(U[-1], bc.START), context
+            assert np.array_equal(U, bc.commanded(tier, bpm, variant, bold=bold)), context
+            assert meta["ok"] is None and meta["multiplier"] == pytest.approx(bc.bold_multiplier(bold))
+            # Clamp may saturate individual joints, but increasing bold must never shrink a gesture.
+            excursion = _excursion(U)
+            if previous is not None:
+                assert (excursion >= previous - 1e-9).all(), (context, previous, excursion)
+                assert excursion.sum() > previous.sum(), context
+            previous = excursion
+            pre = bc.apply_gain(bc.scaled(raw, budget * bc.bold_multiplier(bold)))
+            full_pre = bc.apply_gain(bc.scaled(raw, budget))
+            free = np.isclose(pre, U).all(axis=0) & np.isclose(full_pre, full).all(axis=0)
+            assert free.any(), context
+            assert np.allclose(U[:, free] - bc.START[free],
+                               (full[:, free] - bc.START[free]) * bc.bold_multiplier(bold)), context
+        # Batch generation and the live bold-1 path must serialize identical current choreography.
+        _, batch = bc.build_clip(tier, bpm, variant)
+        assert bc.csv_text(batch) == bc.csv_text(full), (tier, variant, bpm)
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_make_clip_at_exact_bpm_passes_validation_and_grows_with_bold():
+    v = bc.Validator(ROBOTDESC)
+    bpm = 127.3
+    for tier, variant in COMBOS:
+        prev = None
+        for bold in (0.0, 0.6, 1.0):
+            rows, meta = bc.make_clip(tier, variant, bpm, bold, model=v)
+            assert meta["ok"] is True and meta["reasons"] == [], (tier, variant, bold, meta["reasons"])
+            assert isinstance(rows, list) and len(rows[0]) == 5 and isinstance(rows[0], tuple)
+            ok, report = bc.validate_rows(rows, v)
+            assert ok and report["ok"] and report["frames"] == len(rows) and report["peak_speed"]["base_yaw"] <= 140
+            exc = _excursion(rows)
+            if prev is not None:
+                assert (exc >= prev - 1e-9).all(), (tier, variant, bold, prev, exc)
+                assert exc.sum() > prev.sum()
+            prev = exc
+        # Even speed-limited joints respond to bold. The clamp still runs last and may trim either
+        # clip, so exact proportionality is checked only on joints it does not change.
+        def unclamped(bold):
+            rows, _ = bc.make_clip(tier, variant, bpm, bold)
+            raw = bc.raw_trajectory(tier, bpm, variant)
+            scales = bc.joint_scales(raw, bpm) * bc.bold_multiplier(bold)
+            pre = bc.apply_gain(bc.scaled(raw, scales))
+            return np.array(rows), np.isclose(pre, np.array(rows)).all(axis=0)
+        U0, free0 = unclamped(0.0)
+        U1, free1 = unclamped(1.0)
+        lo, hi = _excursion(U0), _excursion(U1)
+        checked = 0
+        for j in range(5):
+            if free0[j] and free1[j] and hi[j] > 1.0:
+                assert lo[j] / hi[j] == pytest.approx(0.35, abs=0.01), (tier, variant, bc.JOINTS[j])
+                checked += 1
+        assert checked >= 1, (tier, variant)
+    # a bad row is caught, and lists of tuples are accepted like arrays
+    rows, _ = bc.make_clip("groove", "a", bpm, 0.6)
+    bad = list(rows)
+    bad[40] = (0.0, -70.0, -22.0, 0.0, 30.0)
+    ok, report = bc.validate_rows(bad, v)
+    assert not ok and any("base_pitch" in r for r in report["reasons"])
+    assert bc.validate_rows([rows[0]], v) == (False, {"ok": False, "reasons": ["rows must be (n >= 2, 5), got (1, 5)"]})
+    with pytest.raises(ValueError):
+        bc.make_clip("groove", "a", 20.0, 0.5)
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_make_clip_bold_1_at_a_bucket_is_the_batch_file_byte_for_byte(tmp_path):
+    quiet = lambda *_: None  # noqa: E731
+    entries, failures = bc.generate(tmp_path, ["groove", "drop"], [128], ROBOTDESC, log=quiet, variants=("b",), aliases=False)
+    assert failures == []
+    for e in entries:
+        rows, meta = bc.make_clip(e["tier"], e["variant"], 128.0, 1.0, model=bc.Validator(ROBOTDESC))
+        text = bc.csv_text(rows)
+        assert (tmp_path / f"{e['name']}.csv").read_bytes() == text.encode()
+        assert hashlib.md5(text.encode()).hexdigest() == e["md5"] and meta["ok"] and meta["scale"] == e["scale"]
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_validator_for_lamp_uses_the_given_checkout_and_calibration():
+    v = bc.Validator.for_lamp(ROBOTDESC / "pi5_feetech_r1", ROBOTDESC / "lelamp-calibration.json")
+    assert v.model.robot_dir == ROBOTDESC / "pi5_feetech_r1" and "lelamp-calibration.json" in v.model.scale_source
+    rows, _ = bc.make_clip("build", "c", 127.3, 1.0)
+    assert bc.validate_rows(rows, v)[0] and bc.validate_rows(rows, v.model)[0]     # a LampModel works too
+    assert bc.validate_rows(rows, v)[1] == bc.validate_rows(rows, bc.Validator(ROBOTDESC))[1]
+    assert bc.LAMP_CALIBRATION == Path("/var/lib/lelamp/user-data/v1/calibration/lelamp.json")
+
+
+def test_write_clip_atomic_leaves_nothing_behind_on_failure(tmp_path, monkeypatch):
+    rows = [(0.0, -49.0, -22.0, 0.0, 30.0)] * 40
+    path = tmp_path / "live_2.csv"
+    md5 = bc.write_clip_atomic(path, rows)
+    assert path.read_text() == bc.csv_text(rows) and md5 == hashlib.md5(bc.csv_text(rows).encode()).hexdigest()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["live_2.csv"]                # no temp left
+    before = path.read_bytes()
+    # the fsync fails (disk gone): no temp file, the old file untouched
+    def boom(*a, **k): raise OSError("simulated")
+    monkeypatch.setattr(bc.os, "fsync", boom)
+    with pytest.raises(OSError):
+        bc.write_clip_atomic(path, rows[:10])
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["live_2.csv"] and path.read_bytes() == before
+    monkeypatch.undo()
+    # the rename fails: same
+    monkeypatch.setattr(bc.os, "replace", boom)
+    with pytest.raises(OSError):
+        bc.write_clip_atomic(tmp_path / "live_3.csv", rows)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["live_2.csv"]
+    monkeypatch.undo()
+    # the re-read does not match what was written: the file is removed, not left for the runtime
+    monkeypatch.setattr(bc.Path, "read_bytes", lambda self: b"corrupt")
+    with pytest.raises(IOError):
+        bc.write_clip_atomic(tmp_path / "live_4.csv", rows)
+    monkeypatch.undo()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["live_2.csv"]
+    # the temp name starts with '.' and lives in the same dir
+    seen = []
+    real_replace = bc.os.replace
+    monkeypatch.setattr(bc.os, "replace", lambda a, b: seen.append((Path(a), Path(b))) or real_replace(a, b))
+    bc.write_clip_atomic(tmp_path / "live_5.csv", rows)
+    (tmp, dst), = seen
+    assert tmp.parent == tmp_path and tmp.name.startswith(".live_5.csv.") and tmp.name.endswith(".tmp") and dst == tmp_path / "live_5.csv"
+
+
+@pytest.mark.skipif(not HAVE_ROBOT, reason=f"vendor robot description not available at {ROBOTDESC}")
+def test_one_cli_writes_a_validated_clip_at_the_exact_bpm(tmp_path, capsys):
+    out = tmp_path / "one"
+    assert bc.main(["--one", "groove", "a", "127.3", "0.8", "--out", str(out), "--robotdesc", str(ROBOTDESC)]) == 0
+    files = sorted(p.name for p in out.iterdir())
+    assert files == ["live_groove_a_127p3_0p80.csv"]
+    lines = (out / files[0]).read_text().splitlines()
+    assert lines[0] == bc.CSV_HEADER and len(lines) - 1 == round(bc.clip_seconds(127.3) * bc.FPS)
+    rows, _ = bc.make_clip("groove", "a", 127.3, 0.8)
+    assert (out / files[0]).read_text() == bc.csv_text(rows)
+    assert "PASS" in capsys.readouterr().out
+    assert bc.main(["--one", "waltz", "a", "128", "0.5", "--out", str(out), "--robotdesc", str(ROBOTDESC)]) == 2
+    assert bc.one_name("hype", "c", 128.0, 1.0) == "live_hype_c_128_1p00"

@@ -8,7 +8,7 @@ measure against and pick from. It is not a merge candidate as it stands: see "Ru
 |---|---|
 | `lamp_show.py` | The lamp as a show peer: joins the conductor (hello `role:lamp, audio:true`), shared-clock scheduling of events, bass and Opus audio (played on the reSpeaker), colour from the decoded audio (chroma on a circle-of-fifths wheel, loudness AGC, excitement), DROP burst, BUILD ramp, the conductor's `lamp` control key (off / light / follow / dance, lights, bold), `{"t":"lamp"}` status, BeatTracker (median IOI + PLL) and ClipScheduler (beat-locked clips, variant rotation, build/drop tiers). |
 | `beat_clips.py` | Offline generator + validator for the beat-locked clips: 8 beats, 0.6 s head/tail hold at a START pose, three variants per tier (groove/hype/drop/build) per tempo, per-joint amplitude scaled to a 140 units/s budget, command gains for the runtime's under-delivery, validated against the envelope, `LampModel.problems()` and a zero-moment-point criterion on the URDF. |
-| `follow.py` | Face/hand or explicit pink-screen follower. Default path: the SDK planner (`motion.move`, ≥ 2 s moves). `--live`: closed-loop head tracking through the runtime's tracking route from the measured pose, 10-unit steps, envelope + stall guard + settle, search sweep after 3 s without a target. |
+| `follow.py` | Face/hand or explicit phone-screen (the app's purple-to-pink) follower. Default path: the SDK planner (`motion.move`, ≥ 2 s moves). `--live`: closed-loop head tracking through the runtime's tracking route from the measured pose, 30-unit steps every 0.25 s (120 units/s commanded, clamped to 140 or half the SDK's cap; `run_face.sh` takes `FOLLOW_ARGS` to change it), envelope + stall guard + settle, search sweep after 3 s without a target; writes `~/feelthemusic-lamp/target.json` (what it sees, how centred) for `lamp_show.py`. |
 | `spatial.py` | Forward kinematics, IK (`look_at`), pose checks, on the vendor description and the lamp's own calibration (read at runtime, never copied). |
 | `sdk.py` | Client for the vendor SDK gateway (token read from the lamp's environment, never printed). |
 | `ftm_discover.py` | Finds the conductor over mDNS/DNS-SD with the standard library (no zeroconf/avahi); caches the last answer. `lamp_show.py` re-discovers after 15 s of silence. |
@@ -22,8 +22,10 @@ measure against and pick from. It is not a merge candidate as it stands: see "Ru
 - Clock-locked audio on the lamp: `aud_lead −6…+4 ms, late 0` over Wi-Fi; events scheduled at `masterTs − offset` (they arrive ~267 ms early; `masterTs` already includes L). The 16-bit compact audio seq must be unwrapped from the anchor's 32-bit `seqBase`.
 - Panel: 93 px at brightness 0.6 (~2.0 A full white of a 3.0 A rating); DROP burst at 0.75 for ≤ 400 ms: 5 V rail min 5.101 V over 5 bursts. Flash limiter: ≤ 3 onsets in any 1 s, in the renderer.
 - Motion through the runtime: a single position command (timed or direct) lands 40–60 % of the delta on `base_yaw`, 75–99 % on the other joints (P 16, torque limit 500), starts 140–250 ms after the POST, and is not chased after the plan ends. Only a continuous 30 fps clip moves the arm faithfully. Clip route: POST returns in ~5 ms, first servo frame 250–450 ms later; a clip that starts where the arm already is skips the blend-in; new CSVs are listed without a restart; a half-written CSV in the pack dir blocks the whole runtime at boot.
-- Beat lock on a real track at 132 bpm: tracker ±6 ms; clips posted within 1 ms of their instant.
-- Choreography library (312 clips): min head_y +0.046 m (limit +0.020), min zmp_y −0.002 m (limit −0.012), max commanded speed 138.6 u/s (limit 140), min base_pitch −61.7 (floor −65), max wrist_pitch 60.
+- Beat lock on a real track at 132 bpm: tracker ±6 ms; clips posted within 1 ms of their instant. The lock rule is phase consistency (5 of the last 8 kicks within 15 % of a period of the grid), not uniform kick spacing: a 120 bpm track sat at a ±14 ms phase error for three minutes while a spacing test refused to lock.
+- Servo controller: with the vendor's P 16 / torque limit 500 the runtime delivered ~50 % of every commanded move on every joint at beat rates (yaw 0.42–0.51, pitch 0.47–0.60, elbow 0.51, wrist 0.47–0.57, 100–150 ms lag). At P 24 / torque 700 (operator change on the lamp, vendor file backed up): base_pitch 0.88, elbow 0.75, wrist_pitch 0.75; base_yaw and wrist_roll still ~0.48.
+- On-lamp clip generation: make + validate (FK, `problems()`, ZMP) for one 8-beat clip takes 124 ms on the Pi 5 with the lamp's calibration, so clips are generated at the exact tempo and the operator's boldness (`Control.lamp.bold`) instead of picked from bpm buckets; the pre-generated library is the fallback.
+- Choreography library (312 clips, regenerated with the bottom-up / crossing-diagonal hype variants): min head_y +0.047 m (limit +0.020), min zmp_y −0.002 m (limit −0.012), max commanded speed 138.6 u/s (limit 140), min base_pitch −61.7 (floor −65), max wrist_pitch 60.
 - Stability: the vendor `dance` clip pins base_pitch at −100 and the lamp tips; a global floor of −65 with a +8 forward bias fixed it (head_y −0.020 → +0.042). The flip region is shoulder far back AND elbow lifted.
 - Hardware not in the URDF: `wrist_pitch` stops near +94° (URDF 147°); `elbow_pitch` sags 20–29 units when extended.
 
@@ -34,6 +36,49 @@ measure against and pick from. It is not a merge candidate as it stands: see "Ru
 - Rule 1 (motion only through the SDK gateway): **not satisfied by two paths**, stated plainly. `lamp_show.py` plays clips through the runtime's dashboard route `POST /api/animations/play` (the same animation player the SDK's `animation.play` drives — that capability accepts any catalog name and is the migration path; uploading clips through the SDK is on its forbidden list, so files still go in by copy). `follow.py --live` uses the runtime's tracking route `POST /api/motors/positions` (safety-filtered, idle-suspending, not the servo bus) because the planner's ≥ 2 s moves cannot lock on a head; it enforces its own envelope and a stall guard. Whether either is acceptable for the repository is the team's decision; this directory records what was measured and run.
 
 ## Expressive gestures and explicit pink-screen tracking
+
+### Calibrated dance presets (offline candidate)
+
+The existing show launcher accepts `--pattern auto|sweep|rise|diagonal|wiggle`.
+`auto` retains music-driven tiers and variant rotation.
+The other choices pin one existing choreography: hype a, hype b, hype c, or build b respectively.
+They keep the same eight-beat clock, start/end pose, generator, calibration validator and speed ceiling.
+The `--bold 0..1` startup setting and existing dashboard Bolder moves slider control size.
+Sizing now happens after computing the full pattern's speed budget, so speed-limited yaw responds to the slider too.
+A changed size or pattern cannot substitute an already prepared clip with the old settings.
+Pre-generated library clips are full-sized, so a smaller requested size waits for a matching live-generated clip instead of silently playing larger movements.
+Pinned patterns also wait rather than substitute another pattern if the exact library variant is missing.
+The largest sweep takes eight beats rather than reversing each beat; fast wrist wiggles remain smaller.
+Higher tempos reduce travel to keep the same speed ceiling.
+
+This is calibrated workspace use, not a command to reach every mechanical end stop.
+The validator requires a real servo calibration with finite positive scales for all five joints, never the approximate joint-map fallback.
+It checks every sampled commanded frame against joint margins, table/base clearance, the existing stability criterion and the 140-unit/s ceiling.
+Those limits, gains and torque settings have not been raised.
+The regenerated choreography intentionally differs from the previously generated library; old CSVs and the example manifest are not evidence for these new paths.
+
+The native dashboard source is absent from this repository.
+The startup selector is implemented, but a dashboard pattern picker is not yet wired; no unused `lamp.pattern` wire field or second UI has been introduced.
+The inherited raw-route transport and outstanding safety-audit findings still block live activation under the SDK-only repository rule.
+No candidate files, clips or processes have been installed or started on the lamp.
+
+Read-only validation against the lamp's own calibration covered 252 trajectories: all twelve tier/variant combinations at 40, 80, 127.3, 132, 180, 214 and 300 BPM, with bold 0, 0.5 and 1.
+All passed the current sampled command gates: minimum head-y 0.02076 m, minimum y-ZMP -0.00231 m and maximum speed 138.593 units/s.
+At 132 BPM and full size, modeled wide-sweep lateral head travel is about 16.7 cm versus 5.9 cm in the previous generator; rise and diagonal vertical travel are about 10.5 and 10.7 cm versus 7.5 and 7.7 cm.
+These are model predictions, not measured physical travel or hardware acceptance.
+
+Verification for this candidate:
+
+- `python -m pytest lamp/live/tests -q`: 267 passed and 18 private-asset skips on Python 3.11 and 3.12.
+- `python -m pytest -q`: the nine root tests require private model assets and skip locally.
+- `ruff check --select F,E9` on the four changed Python files: passed.
+- Full Ruff on `beat_clips.py` and mypy on that generator and its tests: passed.
+- Full Ruff on the show and its tests still reports 224 pre-existing findings; scoped show mypy still reports 42 existing errors, with no new diagnostic messages versus the base revision.
+- Three rise/diagonal regressions and the all-variant size regression also passed with the lamp's real geometry and calibration, executing public candidate code in memory with network calls disabled.
+- Independent review checked 1,296 serialized trajectories for finite values, joint envelope, endpoints and speed; maximum speed was 138.597 units/s.
+- `lamp_show.py --help` and `git diff --check`: passed without starting the show.
+
+Physical movement and the dashboard end-to-end flow were not tested.
 
 The new choreography and detector are offline-tested candidates, not a claim of deployment or physical acceptance.
 The hardware measurements above describe the earlier event build, not these changes.
@@ -80,3 +125,11 @@ On that Pi, 200 synthetic 640x480 pink-screen detections took a median 1.70 ms a
 The two gesture functions were also checked in memory against the newer `make_clip(..., bold=...)` generator: all 144 sampled tempo/boldness cases passed the numerical command gates.
 That compatibility check does not replace full calibrated geometry and physical acceptance of the newer runtime.
 Integrate the focused gesture changes into that runtime, not this older full generator file.
+
+## Reconciled tree (2026-09-19, branch `meharsclaude/lamp-live-reconciled`)
+
+This directory is one tree with both lines of work; nothing was dropped from either side.
+
+- From the deployed runtime (PR #28 head `19d245c`, what runs on the lamp): `lamp_show.py` with the Bolder-moves slider (`Control.lamp.bold` → `ClipScheduler.set_bold`), on-lamp clip generation (`beat_clips.make_clip` + the `live_0..5` pool, `write_clip_atomic`), the phase-consistency `BeatTracker` (5 of the last 8 kicks within 15 % of a period; the PLL ignores kicks more than 20 % off; lock expires after 4 s); `beat_clips.py` `make_clip` / `validate_rows` / `write_clip_atomic` / `bold_multiplier` (0.35 + 0.65·bold, applied before the per-joint speed scaling) and `Validator.for_lamp`; `follow.py --live` with `StallGuard(fraction 0.15, strikes 4, retry 3 s)`, `land_settle = 0.65 s + duration`, and idle restore posting `none` when `current_idle` was null.
+- From `main` (PR #31): hype `b` = bottom-up phrases and hype `c` = crossing diagonals (the drop tails reuse them), `TargetLock` (same-face association, 6°/4° correction hysteresis), `PhoneTracker` (`--target phone`), `phone_frame_is_fresh` / `_require_fresh_phone`, the default SDK mode leaving the raw idle routes alone, the stricter URDF inertial checks, and its tests.
+- Where both touched the same logic (`LiveFollower._feed_guard` / `_send`): the cadence is the deployed one, a step every `period` (0.25 s) without waiting for the previous one to land (the runtime replaces an unfinished move; each step is planned from the pose measured when it is sent; up to 8 pending), and main's landing rule is kept per command: `LivePoster` numbers every submit and records its own completion time and success, so each step is judged `land_settle` after the runtime accepted THAT step (`max(sent, completed) + 0.65 s + duration`, one allowance, not two stacked) and a refused or failed POST is never a stall sample. Serializing the two rules instead (one step in flight, judged 0.9 s later) was measured at one POST per second, four times slower than the lamp runs today, and was not kept. Two tests were rewritten against the allowance instead of the old 0.30 s number. The byte-for-byte library check holds every clip, hype/drop `b`/`c` included, to the manifest md5s: the library at `beat_clips.DEFAULT_OUT` was regenerated from this generator.

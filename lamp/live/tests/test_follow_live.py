@@ -172,12 +172,12 @@ def test_step_with_the_real_model_never_returns_a_problem_pose(model):
 
 
 # ---- stall guard ----------------------------------------------------------------------------------
-def test_stall_guard_trips_on_the_third_under_delivery_and_resets_on_a_big_aim_change():
+def test_stall_guard_trips_on_the_fourth_under_delivery_and_resets_on_a_big_aim_change():
     g = F.StallGuard()
     before, asked = pose(), pose(base_yaw=10)
-    barely = pose(base_yaw=1.5)                         # 15 % of what was asked
-    assert not g.record(before, asked, barely, 20.0)
-    assert not g.record(before, asked, barely, 20.0)
+    barely = pose(base_yaw=1.0)                         # 10 % of what was asked (the runtime's honest 40-60 % is fine)
+    for _ in range(3):
+        assert not g.record(before, asked, barely, 20.0)
     assert g.record(before, asked, barely, 20.0)
     assert g.stalled and g.blocked(22.0)                # 2 deg is not "the target moved"
     assert not g.blocked(36.0)                          # 16 deg is
@@ -186,7 +186,8 @@ def test_stall_guard_trips_on_the_third_under_delivery_and_resets_on_a_big_aim_c
 
 def test_stall_guard_needs_consecutive_misses_and_ignores_tiny_asks():
     g = F.StallGuard()
-    before, asked, barely, fine = pose(), pose(base_yaw=10), pose(base_yaw=1.5), pose(base_yaw=5)
+    before, asked, barely, fine = pose(), pose(base_yaw=10), pose(base_yaw=1.0), pose(base_yaw=5)
+    g.record(before, asked, barely, 10.0)
     g.record(before, asked, barely, 10.0)
     g.record(before, asked, barely, 10.0)
     assert not g.record(before, asked, fine, 10.0)      # a good delivery resets the count
@@ -197,7 +198,7 @@ def test_stall_guard_needs_consecutive_misses_and_ignores_tiny_asks():
 
 def test_stall_guard_tripped_without_an_aim_takes_the_first_aim_as_reference():
     g = F.StallGuard()
-    for _ in range(3):
+    for _ in range(4):
         g.record(pose(), pose(base_yaw=10), pose(base_yaw=0.5), None)
     assert g.blocked(None) and g.blocked(30.0) and g.blocked(40.0)
     assert not g.blocked(46.0)
@@ -409,15 +410,23 @@ def test_fake_motors_include_transport_latency_and_motion_duration():
     assert motors.positions()[0]["base_yaw"] == pytest.approx(5)
 
 
-def test_live_loop_waits_for_landing_before_another_correction(one_axis_follow):
+def test_live_loop_steps_at_the_period_and_judges_every_step_after_its_own_acceptance(one_axis_follow):
     follower, clock, motors, _ = one_axis_follow
+    judged, record = [], follower.guard.record
+    follower.guard.record = lambda *a: (judged.append(clock.t), record(*a))[1]
     run_cycles(follower, clock, 60)
     assert len(motors.posts) >= 3
-    assert motors.superseded == 0
-    assert all(b[0] - a[0] >= follower.cfg.land_settle - 1e-9
-               for a, b in zip(motors.posts, motors.posts[1:]))
+    # steps go out at the period (the deployed cadence), not one per landing: a later step planned
+    # from the measured pose replaces an unfinished move
+    gaps = [b[0] - a[0] for a, b in zip(motors.posts, motors.posts[1:])]
+    assert all(g >= follower.cfg.period - 1e-9 for g in gaps) and min(gaps) < follower.cfg.land_settle
+    assert motors.superseded >= 1
     assert follower.aim_error < follower.cfg.deadband_deg
-    assert not follower.guard.stalled and follower.fatal is None
+    assert not follower.guard.stalled and follower.guard.misses == 0 and follower.fatal is None
+    # ... and every step was judged, none before its own landing allowance had run
+    assert len(judged) == follower.commands and follower.pending == []
+    for (sent, _, _), when in zip(motors.posts, judged):
+        assert when >= sent + follower.cfg.land_settle - 1e-9
 
 
 def test_delivered_half_steps_do_not_false_stall_when_target_direction_changes(one_axis_follow):
@@ -426,10 +435,12 @@ def test_delivered_half_steps_do_not_false_stall_when_target_direction_changes(o
         camera.point[0] = 8.0 if index % 2 else -8.0
         run_cycles(follower, clock, 1)
     assert follower.commands >= 4
+    # a step sent back the other way supersedes the one before it (the target moved): the arm did
+    # move when asked, so that is not an obstruction, however far it ends up from where it started
+    assert motors.superseded >= 1
     assert not follower.guard.stalled
     assert follower.guard.misses == 0
     assert follower.settles == 0 and follower.fatal is None
-    assert motors.superseded == 0
 
 
 def test_deadband_noise_does_not_start_repeated_corrections(one_axis_follow):
@@ -445,22 +456,37 @@ def test_correction_continues_inside_start_band_then_stays_stopped(one_axis_foll
     follower, clock, motors, camera = one_axis_follow
     camera.point[0] = 10.0
     run_cycles(follower, clock, 20)
-    # First half-step leaves a 5-degree error: keep correcting until inside the 4-degree stop band.
-    assert len(motors.posts) == 2
-    assert motors.positions()[0]["base_yaw"] == pytest.approx(7.5)
-    camera.point[0] = 12.5                             # a new 5-degree error must not restart corrections
+    # Each half-step leaves an error: keep stepping (at the period) until inside the 4-degree stop band.
+    assert 2 <= len(motors.posts) <= 4
+    assert abs(motors.positions()[0]["base_yaw"] - 10.0) < follower.cfg.deadband_deg
+    assert motors.positions()[0]["base_yaw"] < 10.0 - 1.0           # short of the target: half steps
+    sent = len(motors.posts)
+    camera.point[0] = motors.positions()[0]["base_yaw"] + 5.0      # a new 5-degree error must not restart corrections
     run_cycles(follower, clock, 12)
-    assert len(motors.posts) == 2
+    assert len(motors.posts) == sent
 
 
-def test_missing_face_requires_three_fresh_consecutive_sightings(one_axis_follow):
+def test_a_brief_miss_keeps_the_sightings(one_axis_follow):
+    """One missed frame is detector noise, not a lost target: the earlier sighting still counts.
+    (Clearing on every miss made a real detector that drops every third frame never confirm a face.)"""
     follower, clock, motors, camera = one_axis_follow
     run_cycles(follower, clock, 1)
     camera.point[1] = -1.0
     run_cycles(follower, clock, 1)
     camera.point[1] = 1.0
+    run_cycles(follower, clock, 2)                    # 1 pre-miss + 2 fresh = 3 sightings inside LOST_S
+    assert len(motors.posts) == 1
+
+
+def test_missing_face_longer_than_the_lost_window_requires_three_fresh_sightings(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    run_cycles(follower, clock, 1)
+    camera.point[1] = -1.0
+    run_cycles(follower, clock, 1)
+    clock.sleep(F.TargetLock.LOST_S + 0.01)           # gone for longer than the lock window
+    camera.point[1] = 1.0
     run_cycles(follower, clock, 2)
-    assert motors.posts == []                         # the pre-loss sighting must not count
+    assert motors.posts == []                         # the pre-loss sighting has aged out
     run_cycles(follower, clock, 1)
     assert len(motors.posts) == 1
 
@@ -547,7 +573,11 @@ def test_slow_post_gets_a_full_landing_allowance_after_completion(one_axis_follo
     follower, clock, motors, camera = one_axis_follow
 
     def slow_post(commanded, ms):
-        clock.sleep(0.8)                              # runtime accepts only after the original deadline
+        # The runtime accepts only after the original deadline. Written against the allowance itself
+        # rather than a number: it was 0.30 s + duration when this test was authored and is 0.65 s +
+        # duration now (measured: the tracking route starts 140-250 ms after the POST and the servos
+        # lag ~150 ms after the move ends).
+        clock.sleep(follower.cfg.land_settle + 0.25)
         motors.post(commanded, ms)
 
     follower.poster = F.LivePoster(slow_post, follower.cfg.period, clock=clock)
@@ -566,7 +596,7 @@ def test_slow_post_gets_a_full_landing_allowance_after_completion(one_axis_follo
     follower.cycle()
     assert follower.pending == [] and follower.guard.last
     assert follower.guard.misses == 0 and not follower.guard.stalled
-    assert motors.positions()[0]["base_yaw"] == pytest.approx(5.0)
+    assert motors.positions()[0]["base_yaw"] == pytest.approx(follower.cfg.step * motors.delivery)  # one step landed
     assert len(motors.posts) == 1 and follower.settles == 0
 
 
@@ -586,6 +616,45 @@ def test_rejected_post_is_not_assessed_as_a_failed_landing(one_axis_follow):
     assert follower.guard.last == "" and follower.guard.misses == 0
     assert not follower.guard.stalled and follower.settles == 0
     assert motors.posts == [] and follower.poster.posts == 0
+
+
+def test_pipelined_steps_are_judged_by_their_own_post_and_a_failed_one_is_no_sample(one_axis_follow):
+    follower, clock, motors, camera = one_axis_follow
+    camera.point[0] = 40.0                            # far off: several capped steps are needed
+    calls = []
+
+    def post(commanded, ms):
+        calls.append(clock.t)
+        if len(calls) == 2:
+            raise F.LiveRefused(422, "fixture refusal")         # the second step is refused ...
+        if len(calls) == 3:
+            clock.sleep(follower.cfg.land_settle + 0.2)         # ... and the third is accepted late
+        motors.post(commanded, ms)
+
+    follower.poster = F.LivePoster(post, follower.cfg.period, clock=clock)
+    judged, record = [], follower.guard.record
+    follower.guard.record = lambda *a: (judged.append((clock.t, a[1]["base_yaw"])), record(*a))[1]
+    while follower.commands < 3:
+        run_cycles(follower, clock, 1)
+    assert len(calls) == 3 and follower.refusals == 1 and follower.fatal is None
+    # the refused step left no sample; the two accepted ones are still pending, each with its own POST
+    seqs = [p[3] for p in follower.pending]
+    assert len(follower.pending) == 2 and seqs == [1, 3]
+    first, third = follower.poster.outcome(1), follower.poster.outcome(3)
+    assert follower.poster.outcome(2) == (pytest.approx(calls[1]), False)
+    assert first[1] and third[1] and third[0] - calls[2] > follower.cfg.land_settle
+    # the first is judged land_settle after ITS acceptance, not after the slow third one's
+    camera.point[1] = -1.0                            # no more steps while the pending ones are judged
+    clock.t = max(first[0], calls[0]) + follower.cfg.land_settle - 0.01
+    follower.cycle()
+    assert len(judged) == 0
+    clock.sleep(0.02)
+    follower.cycle()
+    assert len(judged) == 1 and [p[3] for p in follower.pending] == [3]
+    clock.t = third[0] + follower.cfg.land_settle + 0.01
+    follower.cycle()
+    assert len(judged) == 2 and follower.pending == []
+    assert follower.guard.misses == 0 and not follower.guard.stalled
 
 
 def test_throttled_object_detections_still_acquire_three_sightings(one_axis_follow):
@@ -711,16 +780,177 @@ def test_phone_tracker_locates_pink_screen_and_uses_its_narrow_span(angle):
 
 
 @pytest.mark.parametrize("color", [(0, 0, 255), (0, 128, 255), (0, 255, 0),
-                                  (255, 0, 0), (200, 200, 220), (40, 10, 60)])
+                                  (255, 110, 0), (200, 200, 220), (40, 10, 60)])
 def test_phone_tracker_rejects_nonpink_unsaturated_or_dark_regions(color):
+    # (255, 110, 0) is a cyan-blue (hue ~107): pure blue (hue 120) is inside the measured screen
+    # gradient's low end (118) and is accepted by design.
     assert F.PhoneTracker().locate(phone_frame(((320, 240), (60, 130), 0), color=color)) is None
 
 
-@pytest.mark.parametrize("center,size", [((320, 240), (4, 9)), ((320, 240), (90, 90)),
+@pytest.mark.parametrize("center,size", [((320, 240), (4, 9)), ((320, 240), (30, 140)),
                                        ((320, 240), (10, 150)), ((10, 240), (60, 130)),
                                        ((320, 30), (60, 130)), ((320, 240), (430, 600))])
 def test_phone_tracker_rejects_small_wrong_shape_or_clipped_regions(center, size):
+    # (30, 140) is a stick (aspect 4.7): a square is inside the 0.3..3.5 aspect gate (a screen seen
+    # foreshortened, or the app's purple filling only part of it) and is accepted by design.
     assert F.PhoneTracker().locate(phone_frame((center, size, 0))) is None
+
+
+def app_screen(width=300, height=260, hue=(118, 165), sat=190, val=200, glyphs=True):
+    """A synthetic Feel the Music screen: the blue-violet-to-pink gradient measured on the lamp's
+    camera (OpenCV hue 118..165, S ~190, V ~200) with white UI text and a white dot."""
+    hsv = np.zeros((height, width, 3), dtype=np.uint8)
+    hsv[..., 0] = np.linspace(hue[0], hue[1], width).astype(np.uint8)[None, :]
+    hsv[..., 1], hsv[..., 2] = sat, val
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    if glyphs:
+        for i, text in enumerate(("FEEL THE MUSIC", "128 bpm", "KICK  SNARE", "vibe 0.8")):
+            cv2.putText(bgr, text, (18, 50 + 52 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+        cv2.circle(bgr, (240, 215), 10, (255, 255, 255), -1)
+    return bgr
+
+
+def frame_with_screen(center, screen, angle=0.0):
+    """`screen` pasted into a black 640x480 frame, its centre at `center`, turned by `angle` degrees."""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    h, w = screen.shape[:2]
+    m = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    m[:, 2] += (center[0] - w / 2, center[1] - h / 2)
+    return cv2.warpAffine(screen, m, (640, 480), dst=frame, borderMode=cv2.BORDER_TRANSPARENT)
+
+
+@pytest.mark.parametrize("center,angle", [((200, 200), 0), ((320, 240), 0), ((450, 300), 0), ((320, 240), 48)])
+def test_phone_tracker_locates_the_apps_purple_gradient_screen_with_white_text(center, angle):
+    frame = frame_with_screen(center, app_screen(), angle)
+    seen = F.PhoneTracker().locate(frame)
+    assert seen is not None
+    assert abs(seen[0] - center[0] / 640) <= 0.02                # within 0.02 of the frame width ...
+    assert abs(seen[1] * 480 - center[1]) <= 0.02 * 640         # ... on both axes
+
+
+@pytest.mark.parametrize("hue", [(134, 134), (118, 122), (160, 165)])
+def test_phone_tracker_accepts_the_measured_median_and_both_ends_of_the_gradient(hue):
+    seen = F.PhoneTracker().locate(frame_with_screen((320, 240), app_screen(hue=hue, sat=190, val=199)))
+    assert seen is not None and seen[:2] == pytest.approx((0.5, 0.5), abs=0.01)
+
+
+def test_phone_mask_closes_the_text_holes_but_not_a_real_hole():
+    tracker = F.PhoneTracker()
+    frame = frame_with_screen((320, 240), app_screen())
+    inside = tracker.mask(frame)[110:370, 170:470]
+    assert cv2.countNonZero(inside) / inside.size >= 0.97        # the glyphs are closed over
+    cv2.rectangle(frame, (230, 150), (410, 330), (0, 0, 0), -1)  # a 180x180 hole (fill < 65 %): not a screen
+    assert tracker.locate(frame) is None
+
+
+def test_phone_tracker_is_lost_in_a_purple_stage_wash_but_not_a_dim_one():
+    """Documents the limit: the colour gate cannot tell the screen from surroundings lit the same
+    purple (measured on the real frame: with the background recoloured to hue 140 and its saturation
+    raised, the mask floods 56 % of the frame and nothing screen-shaped is left). A wash below the
+    gate's saturation (80) is fine."""
+    screen = app_screen()
+    washed = np.zeros((480, 640, 3), dtype=np.uint8)
+    washed[:] = cv2.cvtColor(np.uint8([[[140, 150, 140]]]), cv2.COLOR_HSV2BGR)[0, 0]
+    frame = frame_with_screen((320, 240), screen)
+    frame[np.all(frame == 0, axis=2)] = washed[0, 0]
+    assert F.PhoneTracker().locate(frame) is None                  # the screen merges with the wash
+    dim = frame_with_screen((320, 240), screen)
+    dim[np.all(dim == 0, axis=2)] = cv2.cvtColor(np.uint8([[[140, 60, 140]]]), cv2.COLOR_HSV2BGR)[0, 0]
+    seen = F.PhoneTracker().locate(dim)
+    assert seen is not None and seen[:2] == pytest.approx((0.5, 0.5), abs=0.01)
+
+
+def test_live_config_defaults_move_fast_but_the_step_is_capped_by_the_speed_budget():
+    cfg = F.LiveConfig()
+    assert (cfg.step, cfg.period, cfg.live_ms) == (F.LIVE_STEP, F.LIVE_PERIOD, F.LIVE_MS) == (30.0, 0.25, 250)
+    assert cfg.speed == pytest.approx(120.0) and cfg.speed <= F.LIVE_SPEED_CAP < 300  # the runtime refuses above 300
+    big = F.LiveConfig(step=100.0, live_ms=250)                    # FOLLOW_ARGS="--live-step 100": clamped
+    assert big.step == pytest.approx(35.0) and big.step_asked == 100.0 and big.speed == pytest.approx(140.0)
+    assert F.LiveConfig(step=100.0, live_ms=1000).step == 100.0    # a slow move may take a big step
+    cfg = F.LiveConfig(step=30.0)
+    assert cfg.limit_speed(300.0 / 2) is False and cfg.step == 30.0   # the SDK reports 300: half of it, no change
+    assert cfg.limit_speed(80.0) is True and cfg.step == pytest.approx(20.0) and cfg.speed == pytest.approx(80.0)
+    assert cfg.limit_speed(1000.0) is True and cfg.step == pytest.approx(20.0)  # a cap never loosens
+
+
+def test_center_score_is_one_in_the_dead_zone_and_falls_linearly_to_the_edge():
+    assert F.center_score(0.5, 0.5) == 1.0
+    assert F.center_score(0.54, 0.46) == 1.0 and F.center_score(0.549, 0.5) == 1.0
+    assert F.center_score(0.551, 0.5) < 1.0
+    assert F.center_score(0.25, 0.5) == pytest.approx((0.5 - 0.25) / 0.45)      # a quarter of the way in
+    assert F.center_score(0.5, 0.75) == pytest.approx((0.5 - 0.25) / 0.45)
+    assert F.center_score(0.5, 0.125) == pytest.approx((0.5 - 0.375) / 0.45)
+    assert F.center_score(1.0, 0.5) == 0.0 and F.center_score(0.0, 0.0) == 0.0 and F.center_score(0.5, 1.2) == 0.0
+
+
+def test_target_report_writes_atomically_with_the_fields_and_reuses_the_last_sighting(tmp_path, monkeypatch):
+    import json
+    clock = FakeClock()
+    path = tmp_path / "deep" / "target.json"
+    replaced, real_replace = [], os.replace
+
+    def replace(src, dst):
+        assert os.path.exists(src) and str(src).endswith(".tmp") and not os.path.exists(dst) or replaced
+        replaced.append((str(src), str(dst)))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(F.os, "replace", replace)
+    report = F.TargetReport(path, clock=clock)
+    body = report.write("phone", (0.52, 0.49), 3.2, "tracking")
+    assert json.loads(path.read_text()) == body == {"t": 1000.0, "kind": "phone", "seen": True, "x": 0.52, "y": 0.49,
+                                                     "aim_deg": 3.2, "center": 1.0, "state": "tracking"}
+    assert replaced == [(str(path) + ".tmp", str(path))] and not (tmp_path / "deep" / "target.json.tmp").exists()
+    clock.sleep(0.1)
+    body = report.write(None, None, None, "holding")             # unseen: the last sighting still gives the centre
+    assert json.loads(path.read_text()) == body
+    assert body == {"t": pytest.approx(1000.1), "kind": "phone", "seen": False, "x": 0.52, "y": 0.49,
+                    "aim_deg": None, "center": 1.0, "state": "holding"}
+    clock.sleep(0.1)
+    body = report.write("face", (0.2, 0.5), float("nan"), "tracking")
+    assert body["kind"] == "face" and body["aim_deg"] is None and body["center"] == pytest.approx((0.5 - 0.3) / 0.45)
+    fresh = F.TargetReport(tmp_path / "t2.json", clock=clock)     # before any sighting
+    assert fresh.write(None, None, None, "searching") == {"t": pytest.approx(1000.2), "kind": None, "seen": False,
+                                                          "x": None, "y": None, "aim_deg": None, "center": 0.0,
+                                                          "state": "searching"}
+    assert report.writes == 3 and report.errors == 0
+
+
+def test_target_report_writes_at_most_twenty_times_a_second(tmp_path):
+    import json
+    clock = FakeClock()
+    report = F.TargetReport(tmp_path / "target.json", clock=clock)
+    for k in range(5):                                            # cycles at 33 Hz
+        clock.t = 1000.0 + k * 0.03
+        report.write("face", (0.5, 0.5), 0.0, "tracking")
+    assert report.writes == 3                                     # t = 1000.00, 1000.06, 1000.12
+    assert json.loads((tmp_path / "target.json").read_text())["t"] == pytest.approx(1000.12)
+
+
+def test_target_report_survives_an_unwritable_path(tmp_path, capsys):
+    report = F.TargetReport(tmp_path / "file.txt" / "target.json", clock=FakeClock())
+    (tmp_path / "file.txt").write_text("not a directory")
+    for _ in range(3):
+        assert report.write("face", (0.5, 0.5), 0.0, "tracking")["seen"] is True
+    assert report.writes == 0 and report.errors == 1              # throttled: one attempt in this 50 ms
+    assert "cannot write" in capsys.readouterr().out
+
+
+def test_live_follower_reports_the_target_every_cycle(one_axis_follow, tmp_path):
+    import json
+    follower, clock, motors, camera = one_axis_follow
+    path = tmp_path / "target.json"
+    follower.report = F.TargetReport(path, clock=clock)
+    run_cycles(follower, clock, 3)
+    body = json.loads(path.read_text())
+    assert body["kind"] == "face" and body["seen"] is True and body["state"] == "tracking"
+    assert 0.5 < body["x"] < 1.0 and body["y"] == 0.5 and body["t"] == pytest.approx(clock() - 0.12)
+    assert body["aim_deg"] == pytest.approx(follower.aim_error) and 0.0 <= body["center"] < 1.0
+    assert body["center"] == pytest.approx(F.center_score(body["x"], body["y"]))
+    camera.point[1] = -1.0                                        # the face leaves
+    run_cycles(follower, clock, 1)
+    gone = json.loads(path.read_text())
+    assert gone["seen"] is False and gone["kind"] == "face" and (gone["x"], gone["y"]) == (body["x"], body["y"])
+    assert gone["t"] == pytest.approx(clock() - 0.12) and follower.report.writes == 4
 
 
 def test_phone_tracker_rejects_blank_irregular_and_hollow_regions():
@@ -788,6 +1018,7 @@ def test_phone_following_requires_three_fresh_sightings_after_loss(one_axis_foll
     if loss == "missing":
         camera.point[1] = -1.0
         run_cycles(follower, clock, 1)
+        clock.sleep(F.TargetLock.LOST_S + 0.01)       # missing for longer than the lock window
         camera.point[1] = 1.0
     else:
         clock.sleep(0.61)
@@ -810,7 +1041,10 @@ def test_phone_tracker_drives_existing_controller_with_synthetic_frames_and_dry_
     assert follower.commands == 0 and motors.posts == []
     frame[:] = 0
     run_cycles(follower, clock, 1)
-    assert follower.sightings == [] and follower.aim_error is None
+    assert len(follower.sightings) == 3 and follower.aim_error is not None   # one blank frame is kept
+    clock.sleep(F.TargetLock.LOST_S + 0.01)
+    run_cycles(follower, clock, 1)
+    assert follower.sightings == [] and follower.aim_error is None           # gone past the window
 
 
 @pytest.mark.parametrize("slow_stage", ["receipt", "detector", "joints", "ik"])
@@ -920,7 +1154,7 @@ def test_sdk_phone_cli_dry_run_uses_pixels_without_moving_or_raw_idle(sdk_phone_
     frame = phone_frame(((160, 240), (60, 130), 0))
     run([frame] * 3, "--dry-run")
     output = capsys.readouterr().out
-    assert "watching for a bright pink phone screen (dry run: will not move)" in output
+    assert "watching for a phone screen showing the app (purple to pink) (dry run: will not move)" in output
     assert "phone " in output and "base_yaw +0->-22" in output
     assert sdk.moves == [] and not camera.running
 

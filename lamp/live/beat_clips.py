@@ -9,20 +9,21 @@ ClipScheduler triggers so the pattern's beats fall on the music's beats.
 
 Shape of every clip (FPS 30), unchanged from v1 because the scheduler depends on it:
     0.6 s hold at START  |  8 beats of pattern, poses landing ON k*60/bpm after the hold  |  0.6 s hold at START
-Between two beats the arm holds 30 % of the beat, then a cosine-eased move takes the last 70 %, so it
-arrives exactly on the next beat instant. Starting and ending at START (a neutral-ish pose) means a
+Between two beats the arm normally holds 30 % of the beat, then moves for the last 70 %.
+The large hype phrases use the whole beat for a cosine-eased move, buying travel without raising speed.
+Starting and ending at START (a neutral-ish pose) means a
 re-trigger blends nothing: the runtime skips its blend-in when the first frames equal the current pose.
 
 v2 -- what changed and why (the v1 dance was timid on the arm: at 132 bpm it gave base_yaw +-12..18):
 * THREE variants per tier and bpm, beat_<tier>_<bpm>_<a|b|c>, that differ in choreography, not just
-  amplitude (groove: sway+bob / figure-eight / nod-led; hype: wide sway with elbow pump / bottom-up /
+  amplitude (groove: sway+bob / figure-eight / nod-led; hype: eight-beat wide sweep / bottom-up /
   crossing diagonals; drop: spring + sweep, then the matching hype; build: a progressive crouch with shivers on a
   different joint). The scheduler rotates a -> b -> c so the audience never sees the same 8 beats twice
   in a row. The unsuffixed v1 names stay as ALIASES (an identical copy of variant a, listed in the
   manifest with "alias_of") so a v4 scheduler that only knows beat_<tier>_<bpm> keeps working.
 * Bar accents: beat 1 of each bar (beats 1 and 5) moves x1.3; beat 5 adds a head flick (wrist_pitch up,
   wrist_roll). The drop's beat 1 is the spring itself (the spec's pose, exactly) so it carries no x1.3,
-  and the build's crouch is a progressive ramp that carries neither the accent nor the flick.
+  and the build's crouch and hype's large phrases carry neither the accent nor the flick.
 * Amplitude per JOINT, not one A for all: every pattern is written at its nominal (envelope-sized)
   size and each joint's excursion from START is then scaled by the largest s_j <= 1 whose commanded
   (post-gain) trajectory keeps that joint <= 140 units/s -- the vendor simulation limit and the design
@@ -52,6 +53,17 @@ dir always equals the manifest; the exit status is non-zero on any failure.
 
 Writes are atomic (temp name in the same dir, fsync, os.replace, os.sync, md5 re-read) because a corrupt
 CSV in the runtime's animations dir blocks the whole runtime at boot.
+
+LIVE generation (the operator's "Bolder moves" slider): lamp_show's ClipScheduler calls make_clip() on the
+lamp itself, at the tracker's exact bpm and the slider's `bold`, and writes the result into the runtime's
+pack with write_clip_atomic(). bold maps to an amplitude multiplier m = 0.35 + 0.65 * bold on every joint's
+excursion from START, applied AFTER choosing the full pattern's per-joint speed-budget scale.
+Thus a speed-limited joint still responds to the slider instead of every setting hitting the same ceiling.
+bold 1.0 is exactly the current generator's library and 0.0 is about a third of it; the budget, the gains,
+the envelope clamp and the validation are the same code. Validator.for_lamp() builds the model from the
+lamp's own vendor checkout and servo calibration (10 ms; a 145-frame validation takes ~57 ms on the Pi 5).
+
+    .venv/bin/python beat_clips.py --one groove a 127.3 0.8 --out /tmp/x   # one live-style clip, exact bpm
 
     .venv/bin/python beat_clips.py                                  # all tiers, bpm 80..180 step 4, default out dir
     .venv/bin/python beat_clips.py --bpm 128 --tier drop --out /tmp/x --gains '{"base_yaw": 1.6}'
@@ -83,6 +95,7 @@ from spatial import JOINTS, LampModel, _rot_z  # noqa: E402
 SCRATCH = Path("/private/tmp/claude-501/-Users-meharkhanna-feelthemusic/a2b4cfc6-081d-4df6-b3d6-864bf6cf8fa1/scratchpad")
 DEFAULT_OUT = SCRATCH / "beat_clips"
 DEFAULT_ROBOTDESC = Path(os.environ.get("LAMP_ROBOTDESC", SCRATCH / "robotdesc"))
+LAMP_CALIBRATION = Path("/var/lib/lelamp/user-data/v1/calibration/lelamp.json")   # the lamp's own servo calibration
 
 # ----------------------------------------------------------------------------- GAIN TABLE
 # Command gain per joint: the runtime under-delivers step-like moves (base_yaw worst), so the commanded
@@ -95,6 +108,13 @@ BEATS = 8
 MOVE_FRAC = 0.7                      # the last 70 % of each beat is the move; the first 30 % a hold
 TIERS = ("groove", "hype", "drop", "build")
 VARIANTS = ("a", "b", "c")
+DANCE_PATTERNS: dict[str, tuple[str, str] | None] = {
+    "auto": None,
+    "sweep": ("hype", "a"),
+    "rise": ("hype", "b"),
+    "diagonal": ("hype", "c"),
+    "wiggle": ("build", "b"),
+}
 ALIAS_VARIANT = "a"                  # the unsuffixed v1 name is a copy of this variant
 BPMS = tuple(range(80, 181, 4))
 CSV_HEADER = "timestamp," + ",".join(f"{j}.pos" for j in JOINTS)
@@ -107,6 +127,8 @@ SPEED_DESIGN = 140.0                 # per-joint amplitude is chosen against thi
 SPEED_LIMIT = 140.0                  # ... and the clip must pass this
 SPEED_MARGIN = 0.99                  # design to 99 % of the limit so rounding never trips the validator
 SCALE_STEP = 0.005
+BOLD_MIN = 0.35                      # bold 0.0 -> 35 % of the library's excursion; bold 1.0 -> the library itself
+BPM_RANGE = (40.0, 300.0)            # make_clip refuses tempi outside this (the tracker only reports 80-214)
 JOINT_MAX = 94.0
 BP_MIN, BP_FLIP, ELBOW_FLIP, WP_MAX = -65.0, -52.0, -45.0, 60.0
 FLIP_BLEND = 13.0                    # elbow units over which the base_pitch floor drops from -52 to -65
@@ -224,6 +246,15 @@ def peak_speed(U: np.ndarray, fps: float = FPS) -> np.ndarray:
     return np.abs(np.diff(U, axis=0)).max(axis=0) * fps
 
 
+def bold_multiplier(bold: float) -> float:
+    """The "Bolder moves" slider as an excursion multiplier: BOLD_MIN + (1 - BOLD_MIN) * bold, clamped to
+    0..1 on the way in. Exactly 1.0 at bold 1.0 (0.35 + 0.65 is 1.0 in binary floating point too), so the
+    library clips are the bold-1.0 case and nothing else."""
+    b = float(bold)
+    b = 0.0 if b != b else min(1.0, max(0.0, b))          # NaN -> 0
+    return BOLD_MIN + (1.0 - BOLD_MIN) * b
+
+
 # ----------------------------------------------------------------------------- patterns
 def _pose(yaw=0.0, bp=0.0, el=0.0, wr=None, wp=0.0, roll=-0.4) -> np.ndarray:
     """An excursion from START. wrist_roll defaults to a counter-tilt of the yaw (head stays level-ish)."""
@@ -236,26 +267,31 @@ FOLD = dict(bp=-8.0, el=-20.0, wp=-10.0)   # deeper: elbow -46 commanded lets ba
 
 
 def hype_excursions(variant: str) -> list[np.ndarray]:
-    """Hype beats 1..7 as excursions from START (nominal size, no accents yet)."""
-    s4 = [math.sin(k * math.pi / 2) for k in range(8)]                  # 4-beat sine: 0 +1 0 -1 ...
-    if variant == "a":      # wide sway (4-beat sine) with the elbow pumping every beat
-        return [_pose(yaw=1.2 * Y * s4[k], roll=-0.35, **(UP if k % 2 else FOLD)) for k in range(1, 8)]
+    """Large hype phrases at beats 1..7, without one-beat accents that shrink the entire sweep."""
+    up = dict(bp=12.0, el=22.0, wp=18.0)
+    down = dict(bp=-10.0, el=-32.0, wp=-18.0)
+    if variant == "a":      # eight-beat sweep: two beats out, four across, two home
+        yaws = [0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5]
+        heights = [0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5]
+        return [_pose(yaw=52.0 * yaw, bp=8.0 * max(height, 0),
+                      el=18.0 * height, wp=12.0 * height, roll=-0.35)
+                for yaw, height in zip(yaws, heights)]
     if variant == "b":      # bottom-up phrases on each side, spread over two beats per rise
-        return [_pose(yaw=-0.5 * Y, **DOWN),           # 1 lower-left
+        return [_pose(yaw=-0.5 * Y, **down),           # 1 lower-left
                 _pose(yaw=-0.5 * Y, bp=1.0),          # 2 halfway up
-                _pose(yaw=-0.5 * Y, **UP),            # 3 upper-left
+                _pose(yaw=-0.5 * Y, **up),            # 3 upper-left
                 _pose(),                              # 4 centre before changing sides
-                _pose(yaw=0.5 * Y, **DOWN),           # 5 lower-right
+                _pose(yaw=0.5 * Y, **down),           # 5 lower-right
                 _pose(yaw=0.5 * Y, bp=1.0),           # 6 halfway up
-                _pose(yaw=0.5 * Y, **UP)]             # 7 upper-right
+                _pose(yaw=0.5 * Y, **up)]             # 7 upper-right
     if variant == "c":      # crossing diagonals: each stroke passes through centre, never a one-beat reversal
-        return [_pose(yaw=Y, roll=0.3, **DOWN),        # 1 lower-right
+        return [_pose(yaw=Y, roll=0.3, **down),        # 1 lower-right
                 _pose(),                              # 2 centre of the first diagonal
-                _pose(yaw=-Y, roll=0.3, **UP),        # 3 upper-left
+                _pose(yaw=-Y, roll=0.3, **up),        # 3 upper-left
                 _pose(yaw=-Y, bp=1.0, roll=0.3),      # 4 lower on the same side
-                _pose(yaw=-Y, roll=0.3, **DOWN),      # 5 lower-left
+                _pose(yaw=-Y, roll=0.3, **down),      # 5 lower-left
                 _pose(),                              # 6 centre of the second diagonal
-                _pose(yaw=Y, roll=0.3, **UP)]          # 7 upper-right
+                _pose(yaw=Y, roll=0.3, **up)]          # 7 upper-right
     raise ValueError(f"unknown variant {variant!r}")
 
 
@@ -292,11 +328,11 @@ def drop_excursions(variant: str) -> list[np.ndarray]:
     """Drop: beat 1 the spring (the spec's pose); beats 2-4 a wide sweep that crosses the centre on beat 3
     (the spring's recoil) so no single beat carries more than Y of yaw (+Y -> -Y in one beat bound the
     yaw scale at half the size); beats 5-7 the matching hype, the sweep's direction chosen so the hype's
-    first beat continues it. a sweeps left first and lands in hype a; b sweeps right first and plays
+    first beat continues it. a sweeps right first and lands in hype a; b sweeps right first and plays
     hype b mirrored (the bottom-up phrase changes sides); c sweeps right in a fold then crosses diagonally."""
     hype = hype_excursions(variant)
     if variant == "a":
-        sign, roll, sweep, tail = -1.0, -0.4, UP, hype[4:7]
+        sign, roll, sweep, tail = 1.0, -0.4, UP, hype[4:7]
     elif variant == "b":
         sign, roll, sweep, tail = 1.0, 0.3, UP, [e * MIRROR for e in hype[4:7]]
     elif variant == "c":
@@ -331,9 +367,9 @@ def build_excursions(variant: str) -> list[np.ndarray]:
 
 def keyframes(tier: str, variant: str = "a") -> np.ndarray:
     """(BEATS+1, 5) RAW poses, pose k landing on beat instant k. Pose 0 and pose BEATS are START.
-    Bar accents (x1.3 on beats 1 and 5) and the beat-5 head flick are applied here, except on the
-    drop's spring (already the accent, and the spec's exact pose) and the build tier, whose crouch is a
-    progressive ramp and carries neither the accent nor the flick (a flick on beat 5 made it stutter)."""
+    Groove/drop carry bar accents and a beat-5 head flick, except the drop's already-accented spring.
+    Build and hype use unaccented phrases: a short extra jump would restrict the whole trajectory's size.
+    """
     if tier not in TIERS:
         raise ValueError(f"unknown tier {tier!r}")
     if variant not in VARIANTS:
@@ -343,9 +379,9 @@ def keyframes(tier: str, variant: str = "a") -> np.ndarray:
     K = np.tile(START, (BEATS + 1, 1))
     for k, e in enumerate(exc, start=1):
         e = np.array(e, dtype=float)
-        if tier not in ("build",) and k in ACCENT_BEATS and not (tier == "drop" and k == 1):
+        if tier not in ("build", "hype") and k in ACCENT_BEATS and not (tier == "drop" and k == 1):
             e = e * ACCENT
-        if k == FLICK_BEAT and tier != "build":
+        if k == FLICK_BEAT and tier not in ("build", "hype"):
             e = e + FLICK
         K[k] = START + e
     return K
@@ -395,7 +431,7 @@ def trajectory(keys: np.ndarray, bpm: float, fps: float = FPS, hold_s: float = H
 
 def raw_trajectory(tier: str, bpm: float, variant: str = "a") -> np.ndarray:
     """The nominal-size pattern sampled at fps: keyframe path plus the build's shiver overlay."""
-    U = trajectory(keyframes(tier, variant), bpm)
+    U = trajectory(keyframes(tier, variant), bpm, move_frac=1.0 if tier == "hype" else MOVE_FRAC)
     t = np.arange(len(U)) / FPS
     return U + shiver_overlay(tier, variant, bpm, t)
 
@@ -417,30 +453,44 @@ def scaled(raw: np.ndarray, scales: np.ndarray, start: np.ndarray = START) -> np
 
 
 def commanded(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
-              scales: np.ndarray | None = None) -> np.ndarray:
-    """The trajectory as the runtime will be asked to play it: per-joint scale, gain, then the clamp.
-    scales=None chooses them against the speed budget."""
+              scales: np.ndarray | None = None, bold: float = 1.0) -> np.ndarray:
+    """Budget the full authored motion, then size it with bold before the envelope clamp.
+
+    Choosing scales before bold keeps the size control effective even on speed-limited joints.
+    """
     raw = raw_trajectory(tier, bpm, variant)
     if scales is None:
         scales = joint_scales(raw, bpm, gain)
-    return clamp_envelope(apply_gain(scaled(raw, scales), gain))
+    return clamp_envelope(apply_gain(scaled(raw, scales * bold_multiplier(bold)), gain))
 
 
-def build_clip(tier: str, bpm: int, variant: str = "a", gain: np.ndarray = GAIN) -> tuple[np.ndarray, np.ndarray]:
-    """(scales, commanded trajectory)."""
+def build_clip(tier: str, bpm: float, variant: str = "a", gain: np.ndarray = GAIN,
+               bold: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    """(scales, commanded trajectory). The batch library is bold 1.0; the live path passes the slider."""
     raw = raw_trajectory(tier, bpm, variant)
     scales = joint_scales(raw, bpm, gain)
-    return scales, clamp_envelope(apply_gain(scaled(raw, scales), gain))
+    return scales, commanded(tier, bpm, variant, gain, scales, bold)
 
 
 # ----------------------------------------------------------------------------- validation
 class Validator:
     """LampModel.problems() on every frame + the ZMP criterion of analysis/clip_zmp.py."""
 
-    def __init__(self, robotdesc: Path = DEFAULT_ROBOTDESC):
-        robotdesc = Path(robotdesc)
-        self.robot = robotdesc / "pi5_feetech_r1"
-        self.model = LampModel(self.robot, calibration=robotdesc / "lelamp-calibration.json")
+    def __init__(self, robotdesc: Path = DEFAULT_ROBOTDESC, *, model: LampModel | None = None,
+                 robot_dir: Path | None = None):
+        """From a robotdesc dir (the Mac: pi5_feetech_r1/ + lelamp-calibration.json read in place), or
+        from an existing LampModel plus the robot dir its URDF inertials come from (the lamp)."""
+        if model is not None:
+            self.model = model
+            self.robot = Path(robot_dir if robot_dir is not None else model.robot_dir)
+        else:
+            robotdesc = Path(robotdesc)
+            self.robot = robotdesc / "pi5_feetech_r1"
+            self.model = LampModel(self.robot, calibration=robotdesc / "lelamp-calibration.json")
+        if not self.model.scale_source.startswith("servo calibration ") or any(
+                not math.isfinite(self.model._scale[j]) or not 0 < self.model._scale[j] <= math.pi / 100
+                for j in JOINTS):
+            raise ValueError("dance validation requires finite positive servo calibration for all five joints")
         root = ET.parse(self.robot / "robot.urdf").getroot()
         self.inertials = []
         for link in root.findall("link"):
@@ -454,6 +504,18 @@ class Validator:
             if mass_value is None or xyz is None:
                 raise ValueError(f"{self.robot / 'robot.urdf'}: inertial requires mass value and origin xyz")
             self.inertials.append((float(mass_value), np.array([float(v) for v in xyz.split()])))
+
+    @classmethod
+    def for_lamp(cls, robot_dir: Path | None = None, calibration: Path = LAMP_CALIBRATION) -> "Validator":
+        """The validator lamp_show uses on the lamp itself: the vendor checkout at spatial.DEFAULT_ROBOT_DIR
+        and the lamp's own servo calibration (the calibrated span IS the physical span). Loads in ~10 ms."""
+        from spatial import DEFAULT_ROBOT_DIR
+        robot_dir = Path(robot_dir if robot_dir is not None else DEFAULT_ROBOT_DIR)
+        calibration = Path(calibration)
+        model = LampModel(robot_dir, calibration=calibration)
+        if model.scale_source != f"servo calibration {calibration}":
+            raise ValueError("dance validation could not load the requested lamp calibration")
+        return cls(model=model, robot_dir=robot_dir)
 
     def com_and_head(self, u) -> tuple[np.ndarray, np.ndarray]:
         model = self.model
@@ -499,6 +561,49 @@ class Validator:
                 "zmp_y_min": float(zmp_y.min()), "peak_speed": speed, "problem_frames": len(bad)}
 
 
+def validate_rows(rows, model) -> tuple[bool, dict]:
+    """(ok, report) for a clip given as rows (list of 5-tuples, or an (n, 5) array) -- the batch
+    generator's exact checks: envelope, START at both ends, LampModel.problems() per frame, peak speed,
+    ZMP. `model` is a Validator, or a LampModel whose robot_dir holds the URDF. The report is plain
+    Python (json-able) so the scheduler can log it."""
+    v = model if isinstance(model, Validator) else Validator(model=model)
+    U = np.asarray(rows, dtype=float)
+    if U.ndim != 2 or U.shape[1] != len(JOINTS) or len(U) < 2:
+        return False, {"ok": False, "reasons": [f"rows must be (n >= 2, {len(JOINTS)}), got {U.shape}"]}
+    r = v.validate(U)
+    report = {"ok": r["ok"], "reasons": list(r["reasons"]), "frames": int(len(U)),
+              "head_y_min": round(r["head_y_min"], 4), "zmp_y_min": round(r["zmp_y_min"], 4),
+              "peak_speed": {j: round(float(sp), 1) for j, sp in zip(JOINTS, r["peak_speed"])},
+              "problem_frames": int(r["problem_frames"])}
+    return bool(r["ok"]), report
+
+
+def make_clip(tier: str, variant: str, bpm: float, bold: float, gains: dict | None = GAINS,
+              model=None) -> tuple[list[tuple], dict]:
+    """ONE clip at an exact bpm and boldness, as (rows, meta): rows are 30 fps 5-tuples of commanded
+    joint values (csv_text() turns them into the runtime's CSV), meta describes it. Same maths as the
+    batch generator (build_clip), so bold 1.0 at a bucket bpm reproduces the library file byte for byte.
+    With `model` (a Validator or a LampModel) the clip is validated and meta carries ok/reasons/report;
+    without it meta["ok"] is None and the caller must validate before the file reaches the runtime."""
+    bpm = float(bpm)
+    if not (BPM_RANGE[0] <= bpm <= BPM_RANGE[1]):
+        raise ValueError(f"bpm {bpm} outside {BPM_RANGE[0]:.0f}..{BPM_RANGE[1]:.0f}")
+    gain = gain_vector(gains)
+    scales, U = build_clip(tier, bpm, variant, gain, bold)
+    rows = [tuple(float(x) for x in u) for u in U]
+    meta = {"tier": tier, "variant": variant, "bpm": bpm, "bold": float(bold), "multiplier": bold_multiplier(bold),
+            "frames": int(len(U)), "seconds": round(len(U) / FPS, 4), "first_beat_s": HOLD_S + beat_period(bpm),
+            "beats": BEATS, "amplitude": round(float(np.abs(U[:, YAW]).max()), 2),
+            "scale": {j: round(float(sc), 3) for j, sc in zip(JOINTS, scales)},
+            "gain": dict(zip(JOINTS, gain.tolist())),
+            "range": {j: [round(float(lo), 4), round(float(hi), 4)] for j, lo, hi in zip(JOINTS, U.min(axis=0), U.max(axis=0))},
+            "first": _pose_dict(U[0]), "last": _pose_dict(U[-1]), "ok": None, "reasons": []}
+    if model is not None:
+        ok, report = validate_rows(U, model)
+        meta.update(ok=ok, reasons=report["reasons"], report=report)
+    return rows, meta
+
+
 # ----------------------------------------------------------------------------- files
 def csv_text(U: np.ndarray, t0: float = T0, fps: float = FPS) -> str:
     lines = [CSV_HEADER]
@@ -508,22 +613,48 @@ def csv_text(U: np.ndarray, t0: float = T0, fps: float = FPS) -> str:
 
 
 def write_atomic(path: Path, text: str) -> str:
-    """Temp name in the same dir, fsync, os.replace, os.sync, then re-read and md5-verify."""
+    """Temp name in the same dir (starting with '.', so the runtime never lists it), fsync, os.replace,
+    os.sync, then re-read and md5-verify against the bytes written. Returns the md5. A failure anywhere
+    leaves neither the temp file nor a half-written target: the runtime's animations dir must only ever
+    hold complete CSVs (a corrupt one blocks the whole runtime at boot)."""
     path = Path(path)
     data = text.encode()
     want = hashlib.md5(data).hexdigest()
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp, "wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     if hasattr(os, "sync"):
         os.sync()
     got = hashlib.md5(path.read_bytes()).hexdigest()
     if got != want:
+        try:
+            os.unlink(path)                                  # not what we wrote: it must not be played
+        except OSError:
+            pass
         raise IOError(f"{path}: md5 mismatch after write ({got} != {want})")
     return want
+
+
+def write_clip_atomic(path: Path, rows) -> str:
+    """A clip (rows from make_clip) into the runtime's pack dir, atomically; returns the md5 of the
+    bytes written (and re-read). The caller checks the runtime lists the name before posting it."""
+    return write_atomic(path, csv_text(rows))
+
+
+def one_name(tier: str, variant: str, bpm: float, bold: float) -> str:
+    """File stem for a --one clip: live_<tier>_<variant>_<bpm>_<bold> with '.' -> 'p' (the runtime plays
+    by stem, so the stem must not look like an extension)."""
+    return f"live_{tier}_{variant}_{bpm:g}_{bold:.2f}".replace(".", "p")
 
 
 def remove_stale(path: Path) -> bool:
@@ -594,8 +725,8 @@ def generate(out: Path, tiers=TIERS, bpms=BPMS, robotdesc: Path = DEFAULT_ROBOTD
                      "range": {j: [round(float(lo), 4), round(float(hi), 4)]
                                for j, lo, hi in zip(JOINTS, U.min(axis=0), U.max(axis=0))},
                      "first_beat_s": HOLD_S + beat_period(bpm), "beats": BEATS,
-                     "accent_beats": [] if tier == "build" else ([5] if tier == "drop" else list(ACCENT_BEATS)),
-                     "flick_beat": None if tier == "build" else FLICK_BEAT,
+                     "accent_beats": [] if tier in ("build", "hype") else ([5] if tier == "drop" else list(ACCENT_BEATS)),
+                     "flick_beat": None if tier in ("build", "hype") else FLICK_BEAT,
                      "head_y_min": round(v["head_y_min"], 4), "zmp_y_min": round(v["zmp_y_min"], 4),
                      "peak_speed": {j: round(float(sp), 1) for j, sp in zip(JOINTS, v["peak_speed"])}}
                 if tier == "build":
@@ -679,6 +810,29 @@ def write_manifest(out: Path, entries: list[dict], gains: dict | None = None,
     return path
 
 
+def one(spec: list[str], out: Path, robotdesc: Path, gains: dict | None = None, log=print) -> int:
+    """--one TIER VARIANT BPM BOLD: make_clip + validate + write_clip_atomic, one table row, exit status."""
+    tier, variant, bpm, bold = spec[0], spec[1], float(spec[2]), float(spec[3])
+    if tier not in TIERS or variant not in VARIANTS:
+        log(f"--one: tier must be one of {TIERS} and variant one of {VARIANTS}")
+        return 2
+    rows, meta = make_clip(tier, variant, bpm, bold, {**GAINS, **(gains or {})}, Validator(robotdesc))
+    name = one_name(tier, variant, bpm, bold)
+    r = meta["report"]
+    scales = "/".join(f"{meta['scale'][j]:.2f}" for j in JOINTS)
+    speeds = "".join(f"{r['peak_speed'][j]:>6.0f}" for j in JOINTS)
+    row = (f"{name:<28}{meta['frames']:>7}{meta['seconds']:>6.2f}{meta['amplitude']:>6.1f}  x{meta['multiplier']:.2f}  "
+           f"{scales:<26}{r['head_y_min']:>+7.3f}{r['zmp_y_min']:>+7.3f}  {speeds}")
+    if not meta["ok"]:
+        log(row + "  FAIL  " + "; ".join(meta["reasons"]))
+        return 1
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    md5 = write_clip_atomic(out / f"{name}.csv", rows)
+    log(row + f"  PASS  {out / name}.csv md5 {md5}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -689,6 +843,9 @@ def main(argv=None) -> int:
     ap.add_argument("--variant", nargs="*", default=list(VARIANTS), choices=VARIANTS)
     ap.add_argument("--gains", help='per-joint command gain override, JSON object or @file, e.g. \'{"base_yaw": 1.6}\'')
     ap.add_argument("--no-aliases", action="store_true", help="do not write the unsuffixed v1 names")
+    ap.add_argument("--one", nargs=4, metavar=("TIER", "VARIANT", "BPM", "BOLD"),
+                    help="ONE clip at an exact bpm and boldness (what lamp_show generates live), written to "
+                         "--out as live_<tier>_<variant>_<bpm>_<bold>.csv; no manifest")
     args = ap.parse_args(argv)
     if not (args.robotdesc / "pi5_feetech_r1" / "robot.urdf").exists():
         print(f"robot description not found under {args.robotdesc}", file=sys.stderr)
@@ -698,6 +855,8 @@ def main(argv=None) -> int:
     except (ValueError, OSError) as exc:
         print(f"--gains: {exc}", file=sys.stderr)
         return 2
+    if args.one:
+        return one(args.one, args.out, args.robotdesc, gains)
     print("gains: " + ", ".join(f"{j} x{g:.2f}" for j, g in zip(JOINTS, gain_vector(gains))))
     entries, failures = generate(args.out, args.tier, args.bpm, args.robotdesc, variants=args.variant,
                                  gains=gains, aliases=not args.no_aliases)

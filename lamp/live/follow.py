@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make the LeLamp turn toward a face, hand, or pink phone screen. Runs on the lamp, needs no internet.
+"""Make the LeLamp turn toward a face, hand, or a phone screen showing the app. Runs on the lamp, needs no internet.
 
   see     camera frames from the lamp's SDK gateway, MediaPipe finds the palm or the face
   locate  picture position + apparent size -> a 3D point in the lamp's base frame (spatial.py)
@@ -20,6 +20,7 @@ On the lamp:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import signal
@@ -172,20 +173,39 @@ class FaceTracker:
 
 
 class PhoneTracker:
-    """Follow a bright pink, screen-shaped region without models or runtime downloads.
+    """Follow a purple-to-pink, screen-shaped region without models or runtime downloads.
 
-    A color/shape match is not proof of a phone, identity, handedness, or beat accuracy. Rotated
-    screens use their narrow span for rough distance; clipped screens are not distance samples.
+    Measured on the lamp's own camera with the Feel the Music app up: the screen is a blue-violet
+    to pink gradient (OpenCV hue ~118..165, median 134, S ~190, V ~200) with white UI text and
+    small glare spots. Text and glare punch holes in the colour mask, so the mask is closed
+    morphologically (a ~2 % of frame width disc) before the contour is taken; a hole a real
+    screen cannot have (the fill checks below) still rejects the blob. A colour/shape match is
+    not proof of a phone, identity, handedness, or beat accuracy. Rotated screens use their
+    narrow span for rough distance; clipped screens are not distance samples. Which candidate is
+    followed from frame to frame is TargetLock's rule, unchanged.
     """
-    HSV_LOW = (140, 90, 90)
+    HSV_LOW = (118, 80, 80)
     HSV_HIGH = (175, 255, 255)
+    MIN_AREA, MAX_AREA = 0.005, 0.6          # of the frame
+    ASPECT = (0.3, 3.5)                      # width / height of the min-area rectangle, either way up
+    CLOSE = 0.02                             # of the frame width: the disc that closes text and glare
+    CORNERS = (4, 6)                         # a rounded, glare-nicked rectangle approximates to 4..6 vertices
+    MIN_RECT_FILL, MIN_MASK_FILL = 0.75, 0.65
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self.lock = TargetLock(clock=clock)
 
-    def locate(self, bgr: np.ndarray) -> tuple[float, float, float] | None:
-        height, width = bgr.shape[:2]
+    def mask(self, bgr: np.ndarray) -> np.ndarray:
+        """Screen-coloured pixels, with text-sized holes closed."""
+        width = bgr.shape[1]
         mask = cv2.inRange(cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV), self.HSV_LOW, self.HSV_HIGH)
+        k = max(3, int(round(self.CLOSE * width)) | 1)
+        return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+
+    def candidates(self, bgr: np.ndarray) -> list[tuple[float, float, float]]:
+        """Every screen-shaped blob as (x, y, narrow span), all in picture widths/heights."""
+        height, width = bgr.shape[:2]
+        mask = self.mask(bgr)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         boxes: list[tuple[float, float, float]] = []
         for contour in contours:
@@ -195,17 +215,25 @@ class PhoneTracker:
             center, sides, _ = cv2.minAreaRect(contour)
             narrow, long = sorted(sides)
             area = narrow * long
-            if narrow < 8 or not 0.002 <= area / (width * height) <= 0.6 or not 1.35 <= long / narrow <= 2.8:
+            if narrow < 8 or not self.MIN_AREA <= area / (width * height) <= self.MAX_AREA:
+                continue
+            if not self.ASPECT[0] <= sides[0] / sides[1] <= self.ASPECT[1]:
                 continue
             corners = cv2.approxPolyDP(contour, 0.03 * cv2.arcLength(contour, True), True)
-            if len(corners) != 4 or not cv2.isContourConvex(corners) or cv2.contourArea(contour) / area < 0.75:
+            if not self.CORNERS[0] <= len(corners) <= self.CORNERS[1] or not cv2.isContourConvex(corners):
+                continue
+            if cv2.contourArea(contour) / area < self.MIN_RECT_FILL:
                 continue
             region = np.zeros((h, w), dtype=np.uint8)
             cv2.drawContours(region, [contour - np.array([x, y])], -1, 255, cv2.FILLED)
-            if cv2.countNonZero(cv2.bitwise_and(mask[y:y + h, x:x + w], region)) / area < 0.65:
+            if cv2.countNonZero(cv2.bitwise_and(mask[y:y + h, x:x + w], region)) / area < self.MIN_MASK_FILL:
                 continue
             boxes.append((center[0] / width, center[1] / height, narrow / width))
-        selected = self.lock.select(boxes, height / width)
+        return boxes
+
+    def locate(self, bgr: np.ndarray) -> tuple[float, float, float] | None:
+        height, width = bgr.shape[:2]
+        selected = self.lock.select(self.candidates(bgr), height / width)
         if selected is None:
             return None
         return selected[0], selected[1], selected[2] / PHONE_WIDTH_M
@@ -271,7 +299,8 @@ class ObjectTracker:
 def idle_off(base: str) -> str | None:
     import requests
     try:
-        was = requests.get(f"{base}/api/animations/status", timeout=4).json().get("current_idle") or "idle"
+        # None means the runtime's idle is already off (the "none" sentinel): restore exactly that, never "idle".
+        was = requests.get(f"{base}/api/animations/status", timeout=4).json().get("current_idle") or "none"
         requests.post(f"{base}/api/animations/idle", json={"name": "none"}, timeout=8).raise_for_status()
         print(f"idle animation '{was}' switched off while tracking (restored on exit)", flush=True)
         return was
@@ -334,6 +363,13 @@ class Thermal:
 # the MEASURED pose (read at the start of each cycle) toward the IK pose, never from the last
 # command, and the envelope below is enforced on every step before it leaves this process.
 LIVE_BASE = "http://127.0.0.1:8081"
+# The default step: 30 units per 250 ms move, a new one every 0.25 s = 120 units/s commanded (the arm lands
+# 40-60 % of it on base_yaw, so ~50-70 units/s seen), the cadence the lamp is deployed with and inside the
+# clip generator's 140 units/s budget, which the URDF stability check validated. The runtime refuses a
+# command above 300 units/s; LiveConfig clamps the step to LIVE_SPEED_CAP whatever --live-step asks, and
+# main() lowers the cap to half of what the SDK reports (max_velocity_units_s) when that is smaller.
+LIVE_MS, LIVE_PERIOD, LIVE_STEP = 250, 0.25, 30.0
+LIVE_SPEED_CAP = 140.0        # units/s commanded, at most
 VENDOR_NEUTRAL = {"base_yaw": 4.4, "base_pitch": -49.3, "elbow_pitch": -22.5, "wrist_roll": 0.0, "wrist_pitch": 30.0}
 SEARCH_POSTURE = {"base_pitch": -49.0, "elbow_pitch": -22.0, "wrist_roll": 0.0, "wrist_pitch": 30.0}
 BASE_PITCH_MIN = -65.0        # the lamp tips backwards past this
@@ -419,8 +455,11 @@ class StallGuard:
     below 25 % of an asked delta over 3 units, three commands in a row, is an obstruction. Then we
     stop commanding and hold until the target has moved by more than 15 deg of aim error."""
 
-    def __init__(self, min_ask: float = 3.0, fraction: float = 0.25, strikes: int = 3, release_deg: float = 15.0):
+    def __init__(self, min_ask: float = 3.0, fraction: float = 0.15, strikes: int = 4, release_deg: float = 15.0,
+                 retry_s: float = 3.0):
         self.min_ask, self.fraction, self.strikes, self.release_deg = min_ask, fraction, strikes, release_deg
+        self.retry_s = retry_s
+        self.stalled_at: float | None = None
         self.misses, self.stalled = 0, False
         self.aim_at_stall: float | None = None
         self.last = ""                                   # commanded vs landed, for the log line
@@ -433,6 +472,7 @@ class StallGuard:
             self.misses = self.misses + 1 if got < self.fraction * asked else 0
             if self.misses >= self.strikes and not self.stalled:
                 self.stalled, self.aim_at_stall = True, aim_error
+                self.stalled_at = time.monotonic()
         return self.stalled
 
     def blocked(self, aim_error: float | None) -> bool:
@@ -443,10 +483,14 @@ class StallGuard:
                 self.aim_at_stall = aim_error
             elif abs(aim_error - self.aim_at_stall) > self.release_deg:
                 self.reset()
+        # A person standing still must not leave the lamp frozen: try again after retry_s (one
+        # step; if it stalls again the strikes accumulate again).
+        if self.stalled and self.stalled_at is not None and time.monotonic() - self.stalled_at > self.retry_s:
+            self.reset()
         return self.stalled
 
     def reset(self) -> None:
-        self.misses, self.stalled, self.aim_at_stall = 0, False, None
+        self.misses, self.stalled, self.aim_at_stall, self.stalled_at = 0, False, None, None
 
 
 class Search:
@@ -478,7 +522,11 @@ class Search:
 
 class LivePoster:
     """Runs each POST on a worker thread so the perception loop never blocks on the network.
-    At most one command in flight, and at most one every `period` seconds."""
+    At most one request in flight, and at most one every `period` seconds. Each accepted submit
+    gets a sequence number (`seq` after submit()) and records its own completion time and success
+    in `outcome(seq)`, so a caller can judge every command against the time the runtime accepted
+    THAT command, several commands deep."""
+    KEEP = 16                                             # outcomes remembered behind the newest
 
     def __init__(self, post, period: float, clock=time.monotonic):
         self._post, self.period, self.clock = post, period, clock
@@ -486,6 +534,7 @@ class LivePoster:
         self._thread: threading.Thread | None = None
         self.last_sent, self.posts = float("-inf"), 0
         self.last_completed = float("-inf")
+        self.seq, self._outcomes = 0, {}                  # seq -> (completed at, ok)
         self.rtt_ms: float | None = None
         self._error: Exception | None = None
 
@@ -502,21 +551,33 @@ class LivePoster:
             if self._busy or (not force and now - self.last_sent < self.period):
                 return False
             self._busy, self.last_sent = True, now
-        self._thread = threading.Thread(target=self._run, args=(pose, duration_ms), daemon=True)
+            self.seq += 1
+            seq = self.seq
+        self._thread = threading.Thread(target=self._run, args=(seq, pose, duration_ms), daemon=True)
         self._thread.start()
         return True
 
-    def _run(self, pose: dict, duration_ms: int) -> None:
-        t0 = time.perf_counter()
+    def outcome(self, seq: int) -> tuple[float, bool] | None:
+        """(when the runtime answered, whether it accepted) for submit number `seq`, None while it
+        is still in flight (or was forgotten: older than KEEP submits ago)."""
+        with self._lock:
+            return self._outcomes.get(seq)
+
+    def _run(self, seq: int, pose: dict, duration_ms: int) -> None:
+        t0, ok = time.perf_counter(), False
         try:
             self._post(pose, duration_ms)
             self.posts += 1
+            ok = True
         except Exception as exc:                          # surfaced to the loop by take_error()
             self._error = exc
         finally:
             self.rtt_ms = (time.perf_counter() - t0) * 1000
             with self._lock:
                 self.last_completed = self.clock()
+                self._outcomes[seq] = (self.last_completed, ok)
+                for old in [k for k in self._outcomes if k <= seq - self.KEEP]:
+                    del self._outcomes[old]
                 self._busy = False
 
     def take_error(self) -> Exception | None:
@@ -558,25 +619,113 @@ class LiveLink:
 
 
 class LiveConfig:
+    """Steps go out at the `period` cadence (one every 0.25 s by default) without waiting for the
+    previous one to land: the runtime replaces an unfinished move with the next command, and each
+    step is planned from the pose measured when it is sent, so pipelining loses nothing. Landing is
+    judged per command, `land_settle` after the runtime accepted it (see LiveFollower._feed_guard),
+    which is what the stall guard samples."""
+
     def __init__(self, target: str = "face", deadband_deg: float = 4.0, prefer_distance: float = 0.45,
-                 live_ms: int = 250, period: float = 0.25, step: float = 10.0, search: bool = True,
-                 dry_run: bool = False, seconds: float = 0.0, land_settle: float | None = None):
+                 live_ms: int = LIVE_MS, period: float = LIVE_PERIOD, step: float = LIVE_STEP, search: bool = True,
+                 dry_run: bool = False, seconds: float = 0.0, land_settle: float | None = None,
+                 speed_cap: float = LIVE_SPEED_CAP):
         self.target, self.deadband_deg, self.prefer_distance = target, deadband_deg, prefer_distance
-        self.live_ms, self.period, self.step, self.search = int(live_ms), period, step, search
+        self.live_ms, self.period, self.search = int(live_ms), period, search
+        self.step_asked, self.speed_cap = float(step), float(speed_cap)
+        self.step = self.step_asked
+        self.limit_speed(speed_cap)
         self.dry_run, self.seconds = dry_run, seconds
         # motion starts 140-250 ms after the POST and plays for live_ms: read "landed" after that
-        self.land_settle = (0.30 + live_ms / 1000.0) if land_settle is None else land_settle
+        # Measured: the runtime starts 140-250 ms after the POST and the servos lag ~100-150 ms after the
+        # move ends, so a command is judged only 0.65 s + its duration after it was sent.
+        self.land_settle = (0.65 + live_ms / 1000.0) if land_settle is None else land_settle
+
+    @property
+    def speed(self) -> float:
+        """Units per second a full step commands: the step over the move's duration."""
+        return self.step / (self.live_ms / 1000.0)
+
+    def limit_speed(self, units_s: float) -> bool:
+        """Clamps the step so a full step never asks the runtime for more than `units_s` (the
+        smaller of the cap so far and this one). Returns whether the asked step was reduced."""
+        self.speed_cap = min(self.speed_cap, float(units_s))
+        self.step = min(self.step_asked, self.speed_cap * self.live_ms / 1000.0)
+        return self.step < self.step_asked
+
+
+DEFAULT_TARGET_FILE = "~/feelthemusic-lamp/target.json"
+CENTER_DEAD = 0.05             # within this of the middle, on both axes, a target counts as fully centred
+
+
+def center_score(x: float, y: float, dead: float = CENTER_DEAD) -> float:
+    """How centred a picture point (0..1, 0..1) is: 1 within `dead` of the middle on both axes,
+    falling linearly to 0 at the frame edge. The conductor turns this into vibration strength."""
+    d = max(abs(float(x) - 0.5), abs(float(y) - 0.5))
+    if d <= dead:
+        return 1.0
+    return float(min(1.0, max(0.0, (0.5 - d) / (0.5 - dead))))
+
+
+class TargetReport:
+    """What the follower sees, for the show process (lamp_show.py) next door: one small JSON file,
+    rewritten atomically (tmp + os.replace, so a reader never sees half a file) every cycle, at
+    most `min_interval` apart. {"t": monotonic, "kind": "face"|"phone"|None, "seen": bool,
+    "x", "y": last sighting in picture 0..1, "aim_deg": float|None, "center": 0..1 (from the last
+    sighting, even while unseen), "state": the follower's state}. A disk problem is counted and
+    printed once; it never stops the loop."""
+
+    def __init__(self, path: str | os.PathLike = DEFAULT_TARGET_FILE, *, clock: Callable[[], float] = time.monotonic,
+                 min_interval: float = 0.05, out=print) -> None:
+        self.path = Path(path).expanduser()
+        self.clock, self.min_interval, self.out = clock, min_interval, out
+        self.last: dict | None = None                    # the last sighting: kind, x, y
+        self.body: dict | None = None                    # the last body written (or throttled)
+        self.last_write, self.writes, self.errors = float("-inf"), 0, 0
+
+    def write(self, kind: str | None, seen_px: tuple[float, float] | None, aim_deg: float | None, state: str) -> dict:
+        """Records the sighting, writes the file unless one went out less than min_interval ago."""
+        now = self.clock()
+        if seen_px is not None:
+            self.last = {"kind": kind, "x": float(seen_px[0]), "y": float(seen_px[1])}
+        last = self.last
+        aim = float(aim_deg) if aim_deg is not None and math.isfinite(float(aim_deg)) else None
+        self.body = {"t": now, "kind": last["kind"] if last else None, "seen": seen_px is not None,
+                     "x": last["x"] if last else None, "y": last["y"] if last else None, "aim_deg": aim,
+                     "center": center_score(last["x"], last["y"]) if last else 0.0, "state": state}
+        if now - self.last_write >= self.min_interval:
+            self.last_write = now
+            self._replace(self.body)
+        return self.body
+
+    def _replace(self, body: dict) -> None:
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "w") as f:
+                f.write(json.dumps(body, separators=(",", ":")))
+            os.replace(tmp, self.path)
+            self.writes += 1
+        except OSError as exc:
+            self.errors += 1
+            if self.errors == 1:
+                self.out(f"     cannot write {self.path}: {exc} (the show will not see the target)", flush=True)
 
 
 class LiveFollower:
     """The locked-on loop. Everything with a side effect is injected (camera, trackers, motor link,
-    clock, sleep) so the whole loop runs against fakes on a laptop."""
+    clock, sleep) so the whole loop runs against fakes on a laptop. With a `report` every cycle
+    ends by writing what was seen to the target file (TargetReport) for the show process."""
     FACE_STICKY_S = 5.0            # with --target auto: once a face is seen, faces only for this long
     SIGHTINGS = 3
+    PENDING_MAX = 8                # steps awaiting judgement (about four are in play at the period)
 
     def __init__(self, model: LampModel, link, frames, trackers, thermal, cfg: LiveConfig, *,
-                 clock=time.monotonic, sleep=None, out=print, poster: LivePoster | None = None):
+                 clock=time.monotonic, sleep=None, out=print, poster: LivePoster | None = None,
+                 report: TargetReport | None = None):
         self.model, self.link, self.frames, self.trackers, self.thermal, self.cfg = model, link, frames, trackers, thermal, cfg
+        self.report = report
+        self.seen_px: tuple[float, float] | None = None   # this cycle's sighting, picture 0..1
+        self.seen_kind: str | None = None
         self.stop = threading.Event()                     # run() swaps in the caller's
         # pauses go through stop.wait so Ctrl-C ends them at once; tests inject a fake-clock sleep
         self.clock, self.sleep, self.out = clock, sleep or (lambda s: self.stop.wait(s)), out
@@ -585,7 +734,7 @@ class LiveFollower:
         self.search: Search | None = None                 # made on the first measured pose
         self.sightings: list[tuple[float, np.ndarray, str]] = []
         self.history: list[tuple[float, dict]] = []
-        self.pending: list[tuple[float, dict, dict]] = []
+        self.pending: list[tuple[float, dict, dict, int, float]] = []   # (earliest judgement, before, commanded, seq, sent)
         self.face_hold_until, self.fresh_after, self.last_note = float("-inf"), float("-inf"), float("-inf")
         self.state = "holding"
         self.aim_error: float | None = None
@@ -629,16 +778,29 @@ class LiveFollower:
         return True
 
     def _feed_guard(self, now: float, measured: dict) -> None:
-        """Commands whose motion has had time to play: compare where the arm landed with what was asked."""
-        if not self.poster.ready(now):
-            return
-        # A slow request must not spend the landing allowance before the runtime accepts it.
-        completed = self.poster.last_completed + self.cfg.land_settle
-        due = [p for p in self.pending if now >= max(p[0], completed)]
-        self.pending = [p for p in self.pending if now < max(p[0], completed)]
-        for _, before, commanded in due:
+        """Commands whose motion has had time to play: compare where the arm landed with what was asked.
+        Several commands may be pending (they go out at the period, not one per landing); each one is
+        judged `land_settle` after the runtime accepted THAT command, so a slow request never spends
+        its landing allowance before it is accepted, and a refused or failed POST is not a sample.
+        The sample is the FARTHEST the arm got from where it was when the step was sent (the poses
+        read since, and the one read now): a later step that sent the arm back the other way (the
+        target moved) superseded the step, it did not obstruct it."""
+        due, waiting = [], []
+        for p in self.pending:
+            outcome = self.poster.outcome(p[3])
+            if outcome is None:                           # still in flight
+                waiting.append(p)
+                continue
+            completed, ok = outcome
+            if not ok:                                    # a failed POST is not a landed movement sample
+                continue
+            (due if now >= max(p[0], completed + self.cfg.land_settle) else waiting).append(p)
+        self.pending = waiting
+        for _, before, commanded, _, sent in due:
+            since = [h for stamp, h in self.history if stamp > sent] + [measured]
+            landed = max(since, key=lambda h: moved_units(h, before))
             tripped_before = self.guard.stalled
-            self.guard.record(before, commanded, measured, self.aim_error)
+            self.guard.record(before, commanded, landed, self.aim_error)
             if self.guard.stalled and not tripped_before:
                 self.out("stalled: something is in the way", flush=True)
                 self.stalled_noted = True
@@ -647,8 +809,6 @@ class LiveFollower:
 
     def _send(self, now: float, measured: dict, goal: dict) -> tuple[dict | None, str]:
         """Step from the measured pose toward `goal` and post it. Returns (step or None, note)."""
-        if self.pending:
-            return None, "waiting for the last step to land"
         step = step_towards(measured, goal, self.cfg.step, self.model)
         if moved_units(step, measured) < 0.05:
             return None, "hold"
@@ -659,7 +819,9 @@ class LiveFollower:
         if not self.poster.submit(step, self.cfg.live_ms):
             return None, "busy"
         self.commands += 1
-        self.pending.append((self.poster.last_sent + self.cfg.land_settle, dict(measured), dict(step)))
+        self.pending.append((self.poster.last_sent + self.cfg.land_settle, dict(measured), dict(step),
+                             self.poster.seq, self.poster.last_sent))
+        del self.pending[:-self.PENDING_MAX]
         return step, "sent"
 
     def _post_errors(self) -> None:
@@ -667,7 +829,7 @@ class LiveFollower:
         if exc is None:
             self.consecutive_refusals = self.post_failures = 0     # both counters mean "in a row"
             return
-        self.pending.clear()                            # a failed POST is not a landed movement sample
+        # (the failed POST's step is dropped by _feed_guard from its own outcome: not a landed sample)
         if isinstance(exc, LiveRefused):
             self.refusals += 1
             self.consecutive_refusals += 1
@@ -682,6 +844,15 @@ class LiveFollower:
 
     # -------------------------------------------------------------- one perception cycle
     def cycle(self) -> str:
+        """One perception cycle, then the target report (whatever path the cycle took)."""
+        self.seen_px = self.seen_kind = None
+        try:
+            return self._cycle()
+        finally:
+            if self.report is not None:
+                self.report.write(self.seen_kind, self.seen_px, self.aim_error, self.state)
+
+    def _cycle(self) -> str:
         cfg, model = self.cfg, self.model
         if self.thermal is not None and self.thermal.too_hot():
             self.out(f"SoC is {self.thermal.celsius():.0f} C: pausing vision for 20 s to let it cool", flush=True)
@@ -743,6 +914,7 @@ class LiveFollower:
         ik_ms, note, goal = 0.0, "", None
         if seen is not None:
             x, y, size = seen
+            self.seen_px, self.seen_kind = (float(x), float(y)), kind
             near, far = {"face": (0.30, 2.5), "hand": (0.20, 1.2)}.get(kind, (0.30, 3.0))
             distance = float(np.clip(model.distance_from_size(size, 1.0), near, far))
             point = model.target_point(self._pose_at(stamp), (x, y), distance)
@@ -778,8 +950,8 @@ class LiveFollower:
                     self.state, note = "holding", "behind me: no reachable pose"
                 elif not self.correcting:
                     self.state, note = "tracking", "on target"
-                elif self.pending or not self.poster.ready(now):
-                    self.state, note = "tracking", "waiting for the last step"
+                elif not self.poster.ready(now):
+                    self.state, note = "tracking", "next step at the period"
                 else:
                     t1 = time.perf_counter()
                     goal, report = model.look_at(target, prefer_distance=cfg.prefer_distance)
@@ -791,10 +963,15 @@ class LiveFollower:
                     if report["rejected"]:
                         note += " (whole-arm pose refused; yaw+tilt from neutral)"
         else:
-            self.aim_error = None
-            self.correcting = False
-            if cfg.target in FRAME_TARGETS or (self.sightings and self.sightings[-1][2] in FRAME_TARGETS):
-                self.sightings.clear()
+            # A missed frame is not a lost target. Keep the sightings and the correction latch for the
+            # LOST_S window (the next detection filters them by age, as above); clearing them here made
+            # aim need three CONSECUTIVE detections and abandoned corrections mid-move: with a detector
+            # missing every third frame the lamp never confirmed a face and searched with one in view.
+            frame_kind = cfg.target in FRAME_TARGETS or (self.sightings and self.sightings[-1][2] in FRAME_TARGETS)
+            window = TargetLock.LOST_S if frame_kind else 3.5
+            self.sightings = [s for s in self.sightings if now - s[0] < window]
+            if not self.sightings:
+                self.aim_error, self.correcting = None, False
             self.state, want = self.search.want(now)
             if self.state == "stalled" or self.guard.blocked(None):
                 self.state, note = "stalled", "holding until the target moves"
@@ -805,10 +982,10 @@ class LiveFollower:
                 if not self.parked_noted:
                     self.out("no face for a minute: parked at neutral, still looking", flush=True)
                     self.parked_noted = True
-            elif not self.pending and self.poster.ready(now):
+            elif self.poster.ready(now):
                 step, note = self._send(now, measured, want)
             else:
-                note = "waiting for the last step"
+                note = "next step at the period"
 
         rtt = self.poster.rtt_ms
         aim = f"{self.aim_error:5.1f}" if self.aim_error is not None else "  -- "
@@ -863,7 +1040,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--target", choices=["auto", "face", "hand", "object", "phone"], default=None,
                     help="auto = a face if one is in view, otherwise a hand, otherwise a person or a thing "
-                         "(default: auto; face with --live); phone = bright pink screen, selected explicitly")
+                         "(default: auto; face with --live); phone = a screen showing the app (purple to pink), "
+                         "selected explicitly")
     ap.add_argument("--dry-run", action="store_true", help="see, locate and decide, but never move")
     ap.add_argument("--seconds", type=float, default=0, help="stop after this long (0 = until Ctrl-C)")
     ap.add_argument("--deadband-deg", type=float, default=None,
@@ -872,12 +1050,18 @@ def main() -> None:
     live = ap.add_argument_group("live mode", "locked-on tracking through the runtime's tracking route instead of planned SDK moves")
     live.add_argument("--live", action="store_true",
                       help="small closed-loop steps through POST /api/motors/positions, several a second")
-    live.add_argument("--live-ms", type=int, default=250, help="duration_ms of each timed step")
-    live.add_argument("--live-period", type=float, default=0.25, help="seconds between commands, at least")
-    live.add_argument("--live-step", type=float, default=10.0, help="largest per-joint change per command, units")
+    live.add_argument("--live-ms", type=int, default=LIVE_MS, help=f"duration_ms of each timed step (default {LIVE_MS})")
+    live.add_argument("--live-period", type=float, default=LIVE_PERIOD,
+                      help=f"seconds between commands, at least (default {LIVE_PERIOD:g})")
+    live.add_argument("--live-step", type=float, default=LIVE_STEP,
+                      help=f"largest per-joint change per command, units (default {LIVE_STEP:g}; clamped so a step "
+                           f"never commands more than {LIVE_SPEED_CAP:g} units/s, or half the SDK's velocity cap)")
     live.add_argument("--live-base", default=LIVE_BASE, help="the runtime's dashboard (motor routes)")
     live.add_argument("--no-search", action="store_true",
                     help="with no target in view, hold still instead of the slow yaw sweep")
+    live.add_argument("--target-file", default=DEFAULT_TARGET_FILE,
+                      help="where to write what is seen and how centred it is, every cycle, for lamp_show.py "
+                           f"(default {DEFAULT_TARGET_FILE}; 'none' to write nothing)")
     ap.add_argument("--prefer-distance", type=float, default=0.45, help="viewing distance to aim for, metres")
     ap.add_argument("--fps", type=float, default=10)
     ap.add_argument("--min-interval", type=float, default=1.5, help="seconds to watch between moves")
@@ -937,7 +1121,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     watching = {"auto": "a face, then a hand, then a person or a thing", "face": "a face", "hand": "a hand",
-                "object": "a person or a thing", "phone": "a bright pink phone screen"}[args.target]
+                "object": "a person or a thing", "phone": "a phone screen showing the app (purple to pink)"}[args.target]
     print(f"watching for {watching}{' (dry run: will not move)' if args.dry_run else ''}. Ctrl-C to stop.", flush=True)
     idle_was = idle_off(sdk.base) if args.live and not (args.dry_run or args.keep_idle) else None
 
@@ -945,8 +1129,19 @@ def main() -> None:
         cfg = LiveConfig(target=args.target, deadband_deg=args.deadband_deg, prefer_distance=args.prefer_distance,
                          live_ms=args.live_ms, period=args.live_period, step=args.live_step,
                          search=not args.no_search, dry_run=args.dry_run, seconds=args.seconds)
-        print(f"live: one step of <= {cfg.step:g} units every {cfg.period:g} s ({cfg.live_ms} ms moves) from the "
-              f"measured pose, deadband {cfg.deadband_deg:g} deg, search {'on' if cfg.search else 'off'}", flush=True)
+        try:
+            reported = float(info.get("max_velocity_units_s"))
+        except (TypeError, ValueError):
+            reported = None
+        if reported and cfg.limit_speed(reported / 2.0):
+            print(f"live: --live-step {cfg.step_asked:g} would command {cfg.step_asked / (cfg.live_ms / 1000.0):.0f} "
+                  f"units/s; the runtime's cap is {reported:g}, so the step is {cfg.step:g} units", flush=True)
+        elif cfg.step < cfg.step_asked:
+            print(f"live: --live-step {cfg.step_asked:g} would command {cfg.step_asked / (cfg.live_ms / 1000.0):.0f} "
+                  f"units/s, over the {cfg.speed_cap:g} units/s budget: the step is {cfg.step:g} units", flush=True)
+        print(f"live: one step of <= {cfg.step:g} units every {cfg.period:g} s ({cfg.live_ms} ms moves, "
+              f"{cfg.speed:.0f} units/s) from the measured pose, deadband {cfg.deadband_deg:g} deg, "
+              f"search {'on' if cfg.search else 'off'}", flush=True)
         try:
             link = LiveLink(args.live_base)
             link.positions()
@@ -955,7 +1150,10 @@ def main() -> None:
             if idle_was:
                 idle_restore(sdk.base, idle_was)
             sys.exit(f"the runtime's motor route is not usable at {args.live_base}: {type(exc).__name__}: {exc}")
-        follower = LiveFollower(model, link, cam, trackers, thermal, cfg)
+        report = None if args.target_file.lower() == "none" else TargetReport(args.target_file)
+        if report is not None:
+            print(f"target report: {report.path} (every cycle, at most 20/s)", flush=True)
+        follower = LiveFollower(model, link, cam, trackers, thermal, cfg, report=report)
         follower.run(stop)
         cam.running = False
         if idle_was:
