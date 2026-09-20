@@ -26,13 +26,14 @@ import cv2
 import numpy as np
 
 from sdk import LampSDK, SDKError, read_token
+from follow import FlashlightTracker      # the same detector follow.py tracks a phone torch with
 
 FPS = 6.0           # frames a second asked of the camera stream: plenty for "is anyone there"
 HOLD_S = 2.0        # a face seen this recently keeps the green: a blink or a turned head must not flash red
                     # (1.0 s flickered at the edge of detection, 2026-09-20 05:00)
 ACTIVE_S = 8.0      # paint only while the Cha Cha Slide is on: a cha_* clip started within this long ago
                     # (operator: "only for this demo"); otherwise the strand is the show's, not ours
-REFRESH_S = 0.25    # re-send the colour this often: something on the lamp posts a light command about
+REFRESH_S = 0.5     # re-send the colour this often: something on the lamp posts a light command about
                     # once a second through the runtime's web route (source robot_runtime_web, unidentified
                     # 2026-09-20 05:04; the vendor light/stop does not silence it) and the last writer wins,
                     # so this paints four times a second through the SAME route and stays on top
@@ -63,8 +64,10 @@ def main() -> int:
     import mediapipe as mp
     sdk = LampSDK(read_token())
     faces = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.35)
+    torch = FlashlightTracker()           # operator 2026-09-20: "you can even look for a flashlight" -- a phone torch in frame counts as you
     shown, sent_at, last_seen = None, 0.0, -1e9
     active, checked_at = False, -1e9
+    seen_as = ""
     frames = 0
     while True:
         try:
@@ -75,8 +78,9 @@ def main() -> int:
                 frames += 1
                 now = time.monotonic()
                 result = faces.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-                if result.detections:
-                    last_seen = now
+                seen_how = "face" if result.detections else ("flashlight" if torch.locate(img) is not None else "")
+                if seen_how:
+                    last_seen, seen_as = now, seen_how
                 state = (now - last_seen) <= HOLD_S
                 if now - checked_at >= 0.5:
                     active, checked_at = demo_active(), now
@@ -86,15 +90,20 @@ def main() -> int:
                 if not active:
                     continue
                 if state != shown or now - sent_at >= REFRESH_S:
+                    # Both routes, every time: the web route is what the vendor dashboard uses, the SDK glow
+                    # carries a lifecycle the runtime's light manager honours; on 2026-09-20 the strand stayed
+                    # blue through a demo painted only by the web route.
                     try:
                         paint(GREEN if state else RED)
                     except Exception as exc:
                         print(f"{time.strftime('%H:%M:%S')} light route: {exc}", flush=True)
-                    if state != shown:
-                        sdk.glow(GREEN if state else RED, LUMINANCE)   # and the SDK's glow, for the brightness
+                    try:
+                        sdk.glow(GREEN if state else RED, LUMINANCE)
+                    except SDKError as exc:
+                        print(f"{time.strftime('%H:%M:%S')} sdk glow: {exc}", flush=True)
                     sent_at = now
                     if state != shown:
-                        print(f"{time.strftime('%H:%M:%S')} {'GREEN: person in view' if state else 'RED: nobody in view'} (frame {frames})", flush=True)
+                        print(f"{time.strftime('%H:%M:%S')} {('GREEN: ' + seen_as + ' in view') if state else 'RED: nobody in view'} (frame {frames})", flush=True)
                     shown = state
         except SDKError as exc:
             print(f"{time.strftime('%H:%M:%S')} camera/light: {exc}; retrying", flush=True)
